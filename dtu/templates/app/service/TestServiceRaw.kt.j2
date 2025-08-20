@@ -1,0 +1,55 @@
+package {{ app_pkg }}
+
+{% let service_class_short = service_class|class_simple_name %}
+
+import android.content.Context
+import android.os.IBinder
+import android.os.Bundle
+
+class {{ class }}Test(context: Context) : AbstractServiceTest(context) {
+
+    // To be used with [createFromBundle] to allow calling this test from the
+    // command line. Everything should have a default value!
+    class Args()
+
+    override fun doTestConnected(binder: IBinder, extras: Bundle?): Boolean {
+      logger.info("Running test for service $SERVICE_PACKAGE/$SERVICE_CLASS")
+
+      return doRawBinder(binder, TXN_CODE, false, { data ->
+          data.writeInterfaceToken(INTERFACE_TOKEN)
+          val args = createFromBundle(extras, Args::class)
+          // TODO Fill data parcel
+      }) { reply ->
+          // TODO Read reply parcel here
+          reply.readException()
+          true
+      }
+    }
+
+    // These can be ignored
+    override val interfaceToken = INTERFACE_TOKEN
+
+    companion object {
+      const val INTERFACE_TOKEN = "{{ iface }}"
+      const val SERVICE_PACKAGE =  "{{ service_pkg|unwrap_or(service_class|class_pkg) }}"
+      const val SERVICE_CLASS = "{{ service_class }}"
+      const val SERVICE_CLASS_SHORT = "{{ service_class_short }}"
+      const val TXN_CODE = {{ txn_number }}
+    }
+
+    override fun getTargetPackage() : String = SERVICE_PACKAGE
+    override fun getTargetClassFull() : String = SERVICE_CLASS
+}
+
+/**
+ * The activity for this test, generally you don't need to modify this
+ */
+class {{ class }} : AbstractTestActivity() {
+    override val serviceClass: Class<*> = {{ class }}Service::class.java
+    override val testName = "{{ class }}"
+}
+
+/**
+ * The service for this test, generally you don't need to modify this
+ */
+ class {{ class }}Service : TestService({ ctx -> {{ class }}Test(ctx) })

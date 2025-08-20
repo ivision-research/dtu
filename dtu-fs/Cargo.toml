@@ -1,0 +1,9 @@
+[package]
+name = "dtu-fs"
+edition = "2024"
+version.workspace = true
+
+[dependencies]
+clap = { workspace = true }
+anyhow = { workspace = true }
+dtu = { path = "../dtu", features = ["filestore"], default-features = false }

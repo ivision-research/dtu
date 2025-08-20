@@ -1,0 +1,152 @@
+package {{ app_pkg }}
+
+// Automatically generated. Changes may be overwritten!
+
+import android.os.Bundle
+import android.os.IBinder
+import android.content.Intent
+import android.content.Context
+import android.content.ComponentName
+import android.content.ServiceConnection
+import android.os.Handler
+import android.os.HandlerThread
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
+
+/**
+ * Abstract class for exploiting generic services. This sets up a
+ * ServiceConnection that simply calls doTest if a binder is received.
+ *
+ * You can reimplement onNullBinder to do more than just report a null binder
+ */
+abstract class AbstractServiceTest(
+    context: Context
+) : AbstractBinderTest(context), ServiceConnection {
+    protected var binder: IBinder? = null
+
+    abstract fun getTargetPackage(): String
+    abstract fun getTargetClassFull(): String
+
+    private val thread = ExecutionThread("ServiceTestRunner").also {
+        it.start()
+    }
+    private val handler = Handler(thread.looper) { msg ->
+        val binder = msg.obj as IBinder
+        lock.withLock {
+            success = try {
+                doTestConnected(binder, msg.data)
+            } catch (e: Exception) {
+                logger.error("generic failure", e)
+                false
+            }
+            cond.signal()
+        }
+        true
+    }
+
+    private val connecting = AtomicBoolean(false)
+    private val lock = ReentrantLock()
+    private var extra: Bundle? = null
+    private val cond = lock.newCondition()
+    private var success: Boolean = false
+
+    /**
+     * Since these tests need to bind a service before being able to do
+     * anything, the default `doTest` will just ensure the service is
+     * bound and then call this.
+     */
+    abstract fun doTestConnected(binder: IBinder, extras: Bundle?): Boolean
+
+    open fun updateIntent(it: Intent, extras: Bundle?) {}
+
+    override fun doTest(extras: Bundle?): Boolean {
+        if (connecting.get()) {
+            alogw("already waiting for connection")
+            return false
+        }
+        return binder?.let {
+            return@let try {
+                doTestConnected(it, extras)
+            } catch (e: Exception) {
+                logger.error("Test failed due to exception", e)
+                false
+            }
+        } ?: run {
+            connecting.set(true)
+            extra = extras
+            val pkg = getTargetPackage()
+            val cls = getTargetClassFull()
+            logger.info("Binding $pkg/$cls")
+
+            val intent = Intent().also {
+                it.setClassName(pkg, cls)
+                updateIntent(it, extras)
+            }
+            if (!context.bindService(intent, this, Context.BIND_AUTO_CREATE)) {
+                logger.error("failed to bind service")
+                connecting.set(false)
+                return@run false
+            }
+
+            lock.withLock {
+                if (!cond.await(2, TimeUnit.SECONDS)) {
+                    return@run false
+                }
+            }
+            return@run success
+
+        }
+    }
+
+    /**
+     * onNullBinder is called when the ServiceConnection receives a null binder.
+     */
+    open fun onNullBinder() {
+        val pkg = getTargetPackage()
+        val cls = getTargetClassFull()
+        logger.error("received a null service for $pkg/$cls")
+    }
+
+    private fun submitTestRun(binder: IBinder, extras: Bundle?) {
+        val msg = handler.obtainMessage()
+        msg.obj = binder
+        msg.data = extras
+        handler.sendMessage(msg)
+    }
+
+    class ExecutionThread(name: String) : HandlerThread(name)
+
+
+    // Implementing ServiceConnection
+
+    override fun onNullBinding(name: ComponentName?) {
+        connecting.set(false)
+        lock.withLock {
+            success = false
+            cond.signal()
+        }
+        onNullBinder()
+    }
+
+    override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+        connecting.set(false)
+        if (service == null) {
+            onNullBinder()
+            lock.withLock {
+                success = false
+                cond.signal()
+            }
+        } else {
+            logger.debug("Got binder for $name")
+            binder = service
+            submitTestRun(service, extra)
+        }
+    }
+
+    override fun onServiceDisconnected(name: ComponentName?) {
+        logger.warn("service $name disconnected")
+        binder = null
+    }
+}

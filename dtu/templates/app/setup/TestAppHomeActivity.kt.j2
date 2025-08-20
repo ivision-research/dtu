@@ -1,0 +1,51 @@
+package {{ app_pkg }}
+
+// Automatically generated. Changes may be overwritten!
+
+import androidx.appcompat.app.AppCompatActivity
+import android.os.Bundle
+import android.content.Intent
+
+import {{ app_pkg }}.databinding.HomeActivityBinding
+
+class TestAppHomeActivity : AppCompatActivity() {
+
+    private lateinit var binding: HomeActivityBinding
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        binding = HomeActivityBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+
+        GlobalConfig.initConfig(this)
+
+        binding.gotoExperimentingBtn.setOnClickListener {
+            Intent(
+                this@TestAppHomeActivity,
+                TestAppExperimentingActivity::class.java
+            ).also {
+                startActivity(it)
+            }
+        }
+
+        binding.gotoConfirmedBtn.setOnClickListener {
+            Intent(
+                this@TestAppHomeActivity,
+                TestAppConfirmedActivity::class.java
+            ).also {
+                startActivity(it)
+            }
+        }
+
+        binding.gotoFailedBtn.setOnClickListener {
+            Intent(
+                this@TestAppHomeActivity,
+                TestAppFailedActivity::class.java
+            ).also {
+                startActivity(it)
+            }
+        }
+
+    }
+}

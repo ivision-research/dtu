@@ -1,0 +1,19 @@
+package {{ app_pkg }}
+
+class AndroidLogger : AbstractLogger() {
+    override fun info(input: String) {
+        alogi(input)
+    }
+
+    override fun debug(input: String) {
+        alogd(input)
+    }
+
+    override fun warn(input: String) {
+        alogw(input)
+    }
+
+    override fun error(input: String) {
+        aloge(input)
+    }
+}

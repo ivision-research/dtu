@@ -1,0 +1,22 @@
+package {{ app_pkg }}
+
+import java.lang.Exception
+
+sealed class DeviceTestException(val msg: String) : Exception(msg)
+
+class NoSystemServiceBinderException(
+    val serviceName: String
+) : DeviceTestException("failed to get binder for service $serviceName")
+
+class NoBinderException(
+    val target: String
+) : DeviceTestException("failed to get binder for target $target")
+
+class TransactionFailedException(
+    val txn: Int
+): DeviceTestException("transaction failed")
+
+class GenericTransactionException(
+    val txn: Int,
+    val ex: Exception
+) : DeviceTestException("transaction $txn failed: $ex") 

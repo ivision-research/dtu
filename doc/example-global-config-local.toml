@@ -1,0 +1,6 @@
+[filestore.local]
+# The path to a directory to store files in
+base = "/path/to/filestore"
+# This is the default, if set to true all files pulled out of the store
+# will be symlinks instead of copies
+get-is-link = false

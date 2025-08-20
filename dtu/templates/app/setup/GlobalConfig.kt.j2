@@ -1,0 +1,132 @@
+package {{ app_pkg }}
+
+// Automatically generated. Changes may be overwritten!
+
+import android.content.Context
+import android.content.SharedPreferences
+
+class GlobalConfig private constructor() {
+
+    private val mMap: MutableMap<String, Any> = mutableMapOf()
+    private lateinit var mPrefs: SharedPreferences
+
+    private fun initialize(ctx: Context) {
+        mPrefs = ctx.getSharedPreferences(
+            GLOBAL_PREFS_NAME, Context.MODE_PRIVATE
+        )
+
+        mPrefs.all.forEach { e ->
+            e.value?.let {
+                mMap[e.key] = it
+            }
+        }
+    }
+
+    companion object {
+        const val GLOBAL_PREFS_NAME: String = "global_prefs"
+
+        private var initialized = false
+        private val mConfig: GlobalConfig = GlobalConfig()
+
+        @Synchronized
+        fun initConfig(ctx: Context) {
+            if (initialized) {
+                return
+            }
+            mConfig.initialize(ctx)
+            initialized = true
+        }
+
+        fun getString(key: String) : String {
+            return mConfig.getString(key)
+        }
+
+        fun putString(key: String, value: String) {
+            return mConfig.putString(key, value)
+        }
+
+        fun getInt(key: String) : Int {
+            return mConfig.getInt(key)
+        }
+
+        fun putInt(key: String, value: Int) {
+            return mConfig.putInt(key, value)
+        }
+
+        fun getLong(key: String) : Long {
+            return mConfig.getLong(key)
+        }
+
+        fun putLong(key: String, value: Long) {
+            return mConfig.putLong(key, value)
+        }
+
+        fun getBool(key: String) : Boolean {
+            return mConfig.getBool(key)
+        }
+
+        fun putBool(key: String, value: Boolean) {
+            return mConfig.putBool(key, value)
+        }
+    }
+
+    fun putString(key: String, value: String) {
+        val ed = mPrefs.edit()
+        ed.putString(key, value)
+        ed.apply()
+        mMap[key] = value
+    }
+
+    fun getString(key: String) : String {
+        mMap[key]?.let {
+            return it as String
+        }
+        throw KeyError(key)
+    }
+
+    fun putInt(key: String, value: Int) {
+        val ed = mPrefs.edit()
+        ed.putInt(key, value)
+        ed.apply()
+        mMap[key] = value
+    }
+
+    fun getInt(key: String) : Int {
+        mMap[key]?.let {
+            return it as Int
+        }
+        throw KeyError(key)
+    }
+
+    fun putLong(key: String, value: Long) {
+        val ed = mPrefs.edit()
+        ed.putLong(key, value)
+        ed.apply()
+        mMap[key] = value
+    }
+
+    fun getLong(key: String) : Long {
+        mMap[key]?.let {
+            return it as Long
+        }
+        throw KeyError(key)
+    }
+
+    fun putBool(key: String, value: Boolean) {
+        val ed = mPrefs.edit()
+        ed.putBoolean(key, value)
+        ed.apply()
+        mMap[key] = value
+    }
+
+    fun getBool(key: String) : Boolean {
+        mMap[key]?.let {
+            return it as Boolean
+        }
+        throw KeyError(key)
+    }
+}
+
+class KeyError(val key: String) : RuntimeException(
+    "key $key not defined in global config"
+)

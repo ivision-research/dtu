@@ -1,0 +1,63 @@
+package {{ app_pkg }}
+
+import android.content.Context
+import android.os.Bundle
+import android.os.IBinder
+import android.os.Parcel
+
+abstract class AbstractSystemServiceTest(
+    context: Context
+) : AbstractBinderTest(context) {
+
+    abstract val serviceName: String
+
+    private var _binder: IBinder? = null
+    protected val binder: IBinder
+        get() {
+            return _binder ?: run {
+                val tmpBinder =
+                    binderForSystemService(serviceName) ?: throw NoSystemServiceBinderException(
+                        serviceName
+                    )
+                _binder = tmpBinder
+                tmpBinder
+            }
+        }
+
+
+    abstract fun doSystemServiceTest(extras: Bundle?): Boolean
+
+    override fun doTest(extras: Bundle?): Boolean {
+        return try {
+            doSystemServiceTest(extras)
+        } catch (e: NoSystemServiceBinderException) {
+            logger.error("Failed to get an IBinder for service $serviceName")
+            false
+        } catch (e: Exception) {
+            logger.error("Test failed due to exception", e)
+            false
+        }
+    }
+
+    protected fun<T> doRawBinder(
+        txnNumber: Int,
+        onReply: (Parcel) -> T
+    ): T =
+        doRawBinder(binder, txnNumber, true, null, onReply)
+
+
+    protected fun<T> doRawBinder(
+        txnNumber: Int,
+        fillData: ((Parcel) -> Unit)?,
+        onReply: (Parcel) -> T
+    ): T =
+        doRawBinder(binder, txnNumber, true, fillData, onReply)
+
+    protected fun<T> doRawBinder(
+        txnNumber: Int,
+        withToken: Boolean,
+        fillData: ((Parcel) -> Unit)?,
+        onReply: (Parcel) -> T
+    ): T =
+        doRawBinder(binder, txnNumber, withToken, fillData, onReply)
+}

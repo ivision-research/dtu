@@ -1,0 +1,47 @@
+package {{ app_pkg }}
+
+import android.content.Context
+import android.os.Bundle
+
+class {{ class }}Test(context: Context) : AbstractProviderTest(context) {
+
+    override val authority: String = AUTHORITHY
+
+    // To be used with [createFromBundle] to allow calling this test from the
+    // command line. Everything should have a default value!
+    class Args()
+
+    override fun doTest(extras: Bundle?): Boolean {
+        logger.info("Running test for provider $AUTHORITHY")
+
+        val args = createFromBundle(extras, Args::class)
+
+        return try {
+           // TODO Test code here
+
+           true
+        } catch (e: Exception) {
+          logger.error("Failed provider $AUTHORITHY doTest", e)
+          false
+        }
+    }
+
+    // These can be ignored
+
+    companion object {
+        const val AUTHORITHY = "{{ authority }}"
+    }
+}
+
+/**
+ * The activity for this test, generally you don't need to modify this
+ */
+class {{ class }} : AbstractTestActivity() {
+    override val serviceClass: Class<*> = {{ class }}Service::class.java
+    override val testName = "{{ class }}"
+}
+
+/**
+ * The service for this test, generally you don't need to modify this
+ */
+class {{ class }}Service : TestService({ ctx -> {{ class }}Test(ctx) })

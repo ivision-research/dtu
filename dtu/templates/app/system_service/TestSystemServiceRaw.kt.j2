@@ -1,0 +1,55 @@
+package {{ app_pkg }}
+
+{% let txn_num_var_name = "{}_TXN_CODE"|format(method|upper) %}
+
+import android.content.Context
+import android.os.Bundle
+
+class {{ class }}Test(context: Context) : AbstractSystemServiceTest(context) {
+
+    // To be used with [createFromBundle] to allow calling this test from the
+    // command line. Everything should have a default value!
+    class Args()
+
+    override fun doSystemServiceTest(extras: Bundle?): Boolean {
+      logger.info("Running test for $SERVICE_NAME.$METHOD_NAME")
+
+      return doRawBinder({{ txn_num_var_name }}, true, { data ->
+        // TODO Fill the data Parcel here -- the interface name should already
+        //  be written to the parcel
+
+        val args = createFromBundle(extras, Args::class)
+
+      }) { reply ->
+          // Probably need to read an exception
+          reply.readException()
+
+          // TODO Read the reply Parcel here
+
+          true
+      }
+    }
+
+    override val serviceName = SERVICE_NAME
+    override val interfaceToken = SERVICE_CLASS
+
+    companion object {
+        const val SERVICE_NAME = "{{ service }}"
+        const val METHOD_NAME = "{{ method }}"
+        const val SERVICE_CLASS = "{{ iface }}"
+        const val {{ txn_num_var_name }} = {{ txn_number }}
+    }
+}
+
+/**
+ * The activity for this test, generally you don't need to modify this
+ */
+class {{ class }} : AbstractTestActivity() {
+    override val serviceClass: Class<*> = {{ class }}Service::class.java
+    override val testName = "{{ class }}"
+}
+
+/**
+ * The service for this test, generally you don't need to modify this
+ */
+ class {{ class }}Service : TestService({ ctx -> {{ class }}Test(ctx) })

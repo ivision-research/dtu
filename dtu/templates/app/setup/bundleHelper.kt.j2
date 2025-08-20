@@ -1,0 +1,27 @@
+package {{ app_pkg }}
+
+import android.os.Bundle
+import kotlin.reflect.KClass
+import kotlin.reflect.KFunction
+import kotlin.reflect.full.primaryConstructor
+
+/**
+ * Create an instance of a class from a bundle.
+ *
+ * The class must have a primary constructor with only optional parameters.
+ * The keys in the bundle must be the names of the fields to set.
+ */
+fun <T : Any> createFromBundle(bundle: Bundle?, clazz: KClass<T>): T {
+    val cons =
+        clazz.primaryConstructor ?: throw Exception("class $clazz has no primary constructor")
+    if (bundle == null) {
+        return cons.callBy(emptyMap())
+    }
+    val args =
+        cons.parameters.filter { it.name != null && bundle.containsKey(it.name) }.associateWith {
+            val value = bundle.get(it.name!!)
+            value
+        }
+
+    return cons.callBy(args)
+}

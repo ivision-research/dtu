@@ -1,0 +1,52 @@
+[package]
+name = "dtu-cli"
+version.workspace = true
+edition = "2021"
+
+[[bin]]
+name = "dtu"
+path = "src/main.rs"
+
+[[bin]]
+name = "dtu-decompile"
+path = "src/decompile.rs"
+required-features = ["decompile-bin"]
+
+[dependencies]
+dtu = { path = "../dtu", features = ["filestore", "app", "setup", "reexport_askama"] }
+ratatui = "0.29"
+crossterm = "0.29"
+flexi_logger = "0.30"
+unicode-width = "0.2"
+promptly = "0.3"
+rustyline = "15.0"
+signal-hook = "0.3"
+
+clap = { workspace = true }
+sha2 = { workspace = true }
+lazy_static = { workspace = true }
+itertools = { workspace = true }
+base64 = { workspace = true }
+rand = { workspace = true }
+anyhow = { workspace = true }
+regex = { workspace = true }
+crossbeam = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+
+[target.'cfg(not(windows))'.dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+rstest = { workspace = true }
+mockall = { workspace = true }
+
+[features]
+default = ["unicode", "emoji"]
+neo4j = ["dtu/neo4j"]
+trace_db = ["dtu/trace_db"]
+decompile-bin = []
+unicode = []
+emoji = []

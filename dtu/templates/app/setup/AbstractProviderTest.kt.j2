@@ -1,0 +1,57 @@
+package {{ app_pkg }}
+
+// Automatically generated. Changes may be overwritten!
+
+import android.content.Context
+import android.net.Uri
+import android.os.Bundle
+import android.database.Cursor
+
+abstract class AbstractProviderTest(context: Context) : AbstractTest(context) {
+
+    abstract val authority: String
+
+    protected val uriBuilder: Uri.Builder
+        get() = Uri.Builder().scheme("content").authority(authority)
+
+    protected val plainUri: Uri
+        get() = uriBuilder.build()
+
+    protected fun call(uri: Uri, method: String, args: String?, extras: Bundle?): Bundle? {
+        logger.debug("Performing call $uri $method args = $args extras = $extras")
+        return try {
+            context.contentResolver.call(uri, method, args, extras)
+        } catch (e: Exception) {
+            logger.error("failed to call $uri $method args = $args extras = $extras")
+            null
+        }
+    }
+
+    protected fun query(
+        uri: Uri,
+        projection: Array<String>?,
+        selection: String,
+        selectionArgs: Array<String>?,
+        sortOrder: String?
+    ): Cursor? {
+        logger.debug("Performing query: $uri")
+        return try {
+            context.contentResolver.query(uri, projection, selection, selectionArgs, sortOrder)
+        } catch (e: Exception) {
+            logger.error("failed query", e)
+            null
+        }
+    }
+
+
+    protected fun makeUri(path: String? = null, query: String? = null): Uri {
+        var builder = uriBuilder
+        if (path != null) {
+            builder = builder.appendPath(path)
+        }
+        if (query != null) {
+            builder = builder.encodedQuery(query)
+        }
+        return builder.build()
+    }
+}

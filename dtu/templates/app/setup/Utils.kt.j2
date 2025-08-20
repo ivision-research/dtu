@@ -1,0 +1,318 @@
+package {{ app_pkg }}
+
+// Automatically generated. Changes may be overwritten!
+
+import android.util.Log
+import android.view.View
+import android.os.IBinder
+import android.util.Base64
+import android.widget.Toast
+import android.app.Activity
+import android.content.Intent
+import android.content.Context
+import android.os.Parcel
+
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.ByteArrayOutputStream
+import java.nio.charset.Charset
+import java.lang.Exception
+import java.nio.charset.StandardCharsets
+
+const val LOG_TAG = "DeviceTestApp"
+
+fun alogd(s: String) {
+    Log.d(LOG_TAG, s)
+}
+
+fun aloge(s: String, e: Throwable? = null) {
+    // Sometimes this is being weird and not showing the stack trace unless
+    // I explicitly do this. The downside is that this goes to System.err
+    e?.let {
+        e.printStackTrace()
+    }
+    Log.e(LOG_TAG, s, e)
+}
+
+fun alogi(s: String) {
+    Log.i(LOG_TAG, s)
+}
+
+fun alogw(s: String) {
+    Log.w(LOG_TAG, s)
+}
+
+fun alogv(s: String) {
+    Log.v(LOG_TAG, s)
+}
+
+fun onClickListenerForActivity(ctx: Context, cls: Class<*>): View.OnClickListener {
+    return View.OnClickListener {
+        Intent(ctx, cls).also {
+            ctx.startActivity(it)
+        }
+    }
+}
+
+fun getOutputFile(ctx: Context, name: String = "output.txt"): File {
+    return ctx.filesDir.absoluteFile.resolve(name)
+}
+
+fun Activity.toast(msg: CharSequence, len: Int = Toast.LENGTH_SHORT) {
+    runOnUiThread {
+        alogi(msg.toString())
+        Toast.makeText(this, msg, len).show()
+    }
+}
+
+fun Activity.toastError(msg: CharSequence, e: Exception? = null, len: Int = Toast.LENGTH_SHORT) {
+    runOnUiThread {
+        aloge(msg.toString(), e)
+        Toast.makeText(this, msg, len).show()
+    }
+}
+
+fun Activity.toastOnly(msg: CharSequence, len: Int = Toast.LENGTH_SHORT) {
+    runOnUiThread {
+        Toast.makeText(this, msg, len).show()
+    }
+}
+
+fun File.write(s: String, truncate: Boolean = true) {
+    return this.write(s.toByteArray(StandardCharsets.UTF_8), truncate)
+}
+
+fun File.write(ba: ByteArray, truncate: Boolean = true) {
+    var fos: FileOutputStream? = null
+    try {
+        fos = FileOutputStream(this, !truncate)
+        if (truncate) {
+            fos.channel.truncate(0)
+            fos.channel.force(true)
+        }
+        fos.write(ba)
+    } finally {
+        fos?.close()
+    }
+}
+
+fun FileInputStream.readAll(): ByteArray {
+    val tmp = ByteArray(4096)
+    val bytes = ByteArrayOutputStream(4096)
+    while (true) {
+        val nRead = read(tmp)
+        if (nRead == -1) {
+            break
+        }
+        bytes.write(tmp, 0, nRead)
+    }
+    return bytes.toByteArray()
+}
+
+fun File.read(): ByteArray {
+    val fis = FileInputStream(this)
+    return fis.readBytes()
+}
+
+fun File.readString(): String {
+    val ba = this.read()
+    return ba.toString(StandardCharsets.UTF_8)
+}
+
+fun binderForSystemService(name: String): IBinder? {
+    val clazz = Class.forName("android.os.ServiceManager")
+    val method = clazz.getMethod("getService", String::class.java)
+    return method.invoke(null, name) as IBinder?
+}
+
+private val HEX_CHARS = "0123456789abcdef".toCharArray()
+
+fun String.hexToBytes(): ByteArray {
+    if (this.length.and(1) != 0) {
+        throw IllegalArgumentException("length of $this is not divisible by 2")
+    }
+    val b = ByteArray(this.length / 2)
+    val lc = this.lowercase()
+    var j = 0
+
+    for (i in 0.until(lc.length).step(2)) {
+        b[j] = byteFromHexNibbles(lc[i], lc[i + 1])
+        j++
+    }
+    return b
+}
+
+fun List<Byte>.toHex(): String {
+    if (size == 0) {
+        return ""
+    }
+    val hex = CharArray(size * 2)
+    for (i in 0..(size - 1)) {
+        val bv = this[i].toInt().and(0xFF)
+        hex[i.shl(1)] = HEX_CHARS[bv.ushr(4).and(0xF)]
+        hex[i.shl(1) + 1] = HEX_CHARS[bv.and(0xF)]
+    }
+    return String(hex)
+}
+
+fun List<Byte>.toBase64(): String {
+    return this.toByteArray().toBase64()
+}
+
+fun ByteArray.toBase64(charset: Charset? = null): String {
+    return Base64.encode(this, Base64.NO_WRAP).toString(
+        charset ?: StandardCharsets.UTF_8
+    )
+}
+
+fun String.fromBase64(): ByteArray {
+    return Base64.decode(this, Base64.NO_WRAP)
+}
+
+fun ByteArray.toHex(): String {
+    return toList().toHex()
+}
+
+fun byteFromHexNibbles(high: Char, low: Char): Byte {
+    val highNibble = hexCharIdx(high)
+    val lowNibble = hexCharIdx(low)
+    return highNibble.and(0x0F).shl(4).or(lowNibble.and(0x0F)).toByte()
+}
+
+private fun hexCharIdx(c: Char): Int {
+    for (i in 0.until(16)) {
+        if (c == HEX_CHARS[i]) {
+            return i
+        }
+    }
+    throw IllegalArgumentException("couldn't find $c in $HEX_CHARS")
+}
+
+private const val VALID_HEX = "0123456789abcdefABCDEF"
+
+fun String.isHex(): Boolean {
+    if (this.length % 2 != 0) return false
+    for (c in this) {
+        if (c !in VALID_HEX) {
+            return false
+        }
+    }
+    return true
+}
+
+
+fun ByteArray.toHexDump(prefix: String? = null): String {
+    var lines = 0
+    val hexDump = StringBuilder()
+    val workingHex = StringBuilder()
+    val workingAscii = StringBuilder()
+    var i = 0
+    this.forEach {
+        workingHex.append("%02x".format(it))
+        workingAscii.append(it.toAsciiChar())
+        if (i == 7) {
+            workingHex.append("  ")
+            i += 1
+        } else if (i == 15) {
+            lines += 1
+            i = 0
+            prefix?.let { pre ->
+                hexDump.append(pre)
+            }
+            hexDump.append(workingHex)
+            hexDump.append("  |")
+            hexDump.append(workingAscii)
+            hexDump.append("|\n")
+            workingAscii.clear()
+            workingHex.clear()
+        } else {
+            workingHex.append(' ')
+            i++
+        }
+    }
+    if (i != 0) {
+        prefix?.let { pre ->
+            hexDump.append(pre)
+        }
+        // If we only have one line, there is no reason for padding
+        if (lines > 0) {
+            hexDump.append(workingHex.toString().padEnd(48))
+        } else {
+            hexDump.append(workingHex.toString())
+        }
+        hexDump.append("  |")
+        if (lines > 0) {
+            hexDump.append(workingAscii.padEnd(16))
+        } else {
+            hexDump.append(workingAscii)
+        }
+        hexDump.append("|")
+    }
+    return hexDump.toString()
+}
+
+fun Byte.toAsciiChar(): Char {
+    val it = this.toInt().and(0xFF)
+    return if (it in 33..125) {
+        it.toChar()
+    } else {
+        '.'
+    }
+}
+
+fun <T> doRawBinder(
+    rawBinder: IBinder,
+    txnNumber: Int,
+    interfaceToken: String? = null,
+    fillData: ((Parcel) -> Unit)? = null,
+    onReply: (Parcel) -> T
+): T =
+    withParcels { data, reply ->
+        try {
+            interfaceToken?.let {
+                data.writeInterfaceToken(it)
+            }
+            fillData?.let { it(data) }
+            val success = rawBinder.transact(txnNumber, data, reply, 0)
+            if (!success) {
+                aloge("failed binder transaction code $txnNumber")
+                throw TransactionFailedException(txnNumber)
+            }
+            return@withParcels onReply(reply)
+        } catch (e: NoSystemServiceBinderException) {
+            aloge("Failed to get an IBinder")
+            throw GenericTransactionException(txnNumber, e)
+        } catch (e: Exception) {
+            aloge("Failed raw binder call due to exception", e)
+            throw GenericTransactionException(txnNumber, e)
+        }
+    }
+
+
+fun <T> withParcels(func: (Parcel, Parcel) -> T): T {
+    val data = Parcel.obtain()
+    val reply = Parcel.obtain()
+    try {
+        return func(data, reply)
+    } finally {
+        data.recycle()
+        reply.recycle()
+    }
+}
+
+fun pack(a: Char, b: Char, c: Char, d: Char): Int {
+    return pack(a.code.toByte(), b.code.toByte(), c.code.toByte(), d.code.toByte())
+}
+
+fun pack(a: Byte, b: Byte, c: Byte, d: Byte): Int {
+    return a.toUByte().toInt().shl(24).or(
+        b.toUByte().toInt().shl(16)
+    ).or(
+        c.toUByte().toInt().shl(8)
+    ).or(
+        d.toUByte().toInt()
+    )
+}
+
+annotation class UsedViaReflection()

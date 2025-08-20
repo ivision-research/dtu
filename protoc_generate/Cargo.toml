@@ -1,0 +1,12 @@
+[package]
+name = "protoc_generate"
+version.workspace = true
+edition = "2021"
+
+[[bin]]
+name = "protoc-generate"
+path = "main.rs"
+
+
+[dependencies]
+protobuf-codegen = "=3.5.1"

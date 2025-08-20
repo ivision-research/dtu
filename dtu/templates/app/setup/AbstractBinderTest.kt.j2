@@ -1,0 +1,48 @@
+package {{ app_pkg }}
+
+// Automatically generated. Changes may be overwritten!
+
+import android.content.Context
+import android.os.IBinder
+import android.os.Parcel
+
+abstract class AbstractBinderTest(
+    context: Context
+) : AbstractTest(context) {
+    protected open val interfaceToken: String? = null
+
+    /**
+     * Performs a raw binder call with some boiler plate handled for you
+     */
+    protected fun<T> doRawBinder(
+        rawBinder: IBinder,
+        txnNumber: Int,
+        fillData: ((Parcel) -> Unit)?,
+        onReply: (Parcel) -> T
+    ): T =
+        doRawBinder(rawBinder, txnNumber, true, fillData, onReply)
+
+    protected fun<T> doRawBinder(
+        rawBinder: IBinder,
+        txnNumber: Int,
+        onReply: (Parcel) -> T
+    ): T =
+        doRawBinder(rawBinder, txnNumber, true, null, onReply)
+
+
+    protected fun<T> doRawBinder(
+        rawBinder: IBinder,
+        txnNumber: Int,
+        withToken: Boolean,
+        fillData: ((Parcel) -> Unit)?,
+        onReply: (Parcel) -> T
+    ): T {
+        val token = if (withToken) {
+            interfaceToken
+        } else {
+            null
+        }
+        return doRawBinder(rawBinder, txnNumber, token, fillData, onReply)
+    }
+
+}

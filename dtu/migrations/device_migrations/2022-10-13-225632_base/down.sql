@@ -1,0 +1,12 @@
+DROP TABLE apks;
+DROP TABLE system_services;
+DROP TABLE fuzz_results;
+DROP TABLE protected_broadcasts;
+DROP TABLE removed_protected_broadcasts;
+DROP TABLE receivers;
+DROP TABLE services;
+DROP TABLE activities;
+DROP TABLE providers;
+DROP TABLE service_impls;
+DROP TABLE methods;
+DROP TABLE permissions;

@@ -1,0 +1,27 @@
+package {{ app_pkg }}
+
+abstract class AbstractLogger : ILogger.Stub() {
+    fun error(output: String, err: Throwable) {
+        error(output)
+        error(err.stackTraceToString())
+    }
+}
+
+class WrappedLogger(private val logger: ILogger) : AbstractLogger() {
+    override fun info(output: String?) {
+        logger.info(output)
+    }
+
+    override fun debug(output: String?) {
+        logger.debug(output)
+    }
+
+    override fun error(output: String?) {
+        logger.error(output)
+    }
+
+    override fun warn(output: String?) {
+        logger.warn(output)
+    }
+
+}

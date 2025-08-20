@@ -1,0 +1,17 @@
+package {{ app_pkg }}
+
+import android.app.Application
+import android.content.Intent
+
+class App : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        try {
+            startService(
+                Intent(this, Server::class.java)
+            )
+        } catch (e: Exception) {
+            alogw("failed to start application server")
+        }
+    }
+}

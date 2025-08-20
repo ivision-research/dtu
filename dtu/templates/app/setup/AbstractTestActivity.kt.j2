@@ -1,0 +1,233 @@
+package {{ app_pkg }}
+
+
+import android.content.*
+import java.io.StringWriter
+import androidx.appcompat.app.AppCompatActivity
+import android.graphics.Typeface
+import android.os.*
+import android.text.Spanned
+import android.text.SpannableString
+import android.text.style.ForegroundColorSpan
+import android.text.method.ScrollingMovementMethod
+
+import {{ app_pkg }}.databinding.GenericTestActivityBinding
+
+/**
+ * Abstract class for all generic tests. This provides a pretty basic
+ * interface to your test. You get a button to run it and a text view to
+ * display output. By default it'll just run doTest when you click the
+ * button, but you can override onBtnClick for that.
+ */
+abstract class AbstractTestActivity : AppCompatActivity(), ServiceConnection {
+    abstract val serviceClass: Class<*>
+    abstract val testName: String
+
+    private var tester: IDeviceTest? = null
+    private val logger = Logger()
+    private lateinit var thread: ExecutionThread
+    private lateinit var handler: Handler
+    private val queuedTests = ArrayDeque<Bundle?>()
+
+    open fun runTest(extras: Bundle?) {
+        tester?.let {
+            submitTestRun(it, extras)
+        } ?: run {
+            queuedTests.addLast(extras)
+            val intent = Intent(this, serviceClass)
+            bindService(intent, this, Context.BIND_AUTO_CREATE)
+        }
+    }
+
+    override fun onNullBinding(name: ComponentName?) {
+        loge("Got a null binder when connecting")
+    }
+
+    override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+        service?.let {
+            val iface = IDeviceTest.Stub.asInterface(it)
+            tester = iface
+
+            while(queuedTests.isNotEmpty()) {
+                val extras = queuedTests.removeFirst()
+                submitTestRun(iface, extras)
+
+            }
+        }
+    }
+
+    override fun onServiceDisconnected(name: ComponentName?) {
+        logw("Disconnected from service")
+        tester = null
+    }
+
+   open fun onBtnClick() {
+        runTest(null)
+    }
+
+    protected lateinit var binding: GenericTestActivityBinding
+
+    open val initialText: String = ""
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        thread = ExecutionThread("${testName}Looper").also {
+            it.start()
+        }
+
+        handler = Handler(thread.looper) { msg ->
+            alogv("Handler running")
+            val test = msg.obj as IDeviceTest
+            test.runTest(
+                msg.data,
+                logger
+            )
+            true
+        }
+
+        binding = GenericTestActivityBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+
+        binding.genericTestActivityTxtView.typeface = Typeface.MONOSPACE
+        binding.genericTestActivityTxtView.movementMethod = ScrollingMovementMethod()
+
+        if (initialText.isNotEmpty()) {
+            binding.genericTestActivityTxtView.text = fmtInitialText(initialText)
+        }
+
+        binding.genericTestActivityBtn.setOnClickListener { onBtnClick() }
+        intent?.let {
+            val doRun = it.getBooleanExtra("RUN_TEST", false)
+            if (doRun) {
+                logd("Running from intent..")
+                runTest(it.extras)
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        thread.interrupt()
+        if (tester != null) {
+            unbindService(this)
+        }
+    }
+
+    private fun fmtInitialText(s: String): String = s.replace(NL_REGEX, " ").replace(BR_REGEX, "\n")
+    private fun fmtInitialText(seq: CharSequence): String =
+        seq.replace(NL_REGEX, " ").replace(BR_REGEX, "\n")
+
+    open fun logColored(s: CharSequence, color: Long) {
+        val ss = SpannableString(s)
+        ss.setSpan(
+            ForegroundColorSpan(color.toInt()),
+            0,
+            s.length,
+            Spanned.SPAN_INCLUSIVE_INCLUSIVE
+        )
+        appendOutput(ss)
+    }
+
+    // These colors should be colorblind friendly. If they're not, let me know!
+
+    open fun logi(s: CharSequence) = logColored(s, 0xFF009988)
+    open fun logd(s: CharSequence) = logColored(s, 0xFFBBBBBB)
+    open fun logw(s: CharSequence) = logColored(s, 0xFFEE7733)
+
+    open fun loge(s: CharSequence, e: Exception? = null) {
+        val msg = StringWriter()
+        msg.append(s)
+        e?.let {
+            msg.append("\n")
+            msg.append(it.stackTraceToString())
+        }
+        logColored(msg.toString(), 0xFFCC3311)
+    }
+
+    open fun clearOutput() {
+        displayOutput("", andLog = false)
+    }
+
+    /**
+     * displayOutput will clear the output and then display the given string
+     */
+    open fun displayOutput(txt: CharSequence, andLog: Boolean = true) {
+        if (andLog) {
+            alogi(txt.toString())
+        }
+        runOnUiThread {
+            binding.genericTestActivityTxtView.text = txt
+        }
+    }
+
+    /**
+     * appendOutput will append the text to what is already there. withNewline
+     * places a newline BEFORE the text.
+     */
+    open fun appendOutput(txt: CharSequence, withNewline: Boolean = true, andLog: Boolean = true) {
+        if (andLog) {
+            alogi(txt.toString())
+        }
+        runOnUiThread {
+            if (withNewline) binding.genericTestActivityTxtView.append("\n")
+            binding.genericTestActivityTxtView.append(txt)
+        }
+    }
+
+    private val broadcastReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) {
+            runTest(intent.extras)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        alogd("onResume() -- adding receiver")
+        val filter = IntentFilter("RUN_$testName")
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(broadcastReceiver, filter)
+        } else {
+            registerReceiver(broadcastReceiver, filter, RECEIVER_EXPORTED)
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        alogd("onPause() -- removing receiver")
+        unregisterReceiver(broadcastReceiver)
+    }
+
+    companion object {
+        val BR_REGEX = Regex("<br>")
+        val NL_REGEX = Regex("\n")
+    }
+
+    private fun submitTestRun(binder: IDeviceTest, extras: Bundle?) {
+        val msg = handler.obtainMessage()
+        msg.obj = binder
+        msg.data = extras
+        handler.sendMessage(msg)
+    }
+
+    class ExecutionThread(name: String) : HandlerThread(name)
+
+    inner class Logger : AbstractLogger() {
+        override fun info(input: String) {
+            logi(input)
+        }
+
+        override fun debug(input: String) {
+            logd(input)
+        }
+
+        override fun warn(input: String) {
+            logw(input)
+        }
+
+        override fun error(input: String) {
+            loge(input)
+        }
+    }
+
+}

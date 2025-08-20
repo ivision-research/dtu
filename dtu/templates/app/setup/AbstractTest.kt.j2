@@ -1,0 +1,26 @@
+package {{ app_pkg }}
+
+import android.content.Context
+import android.os.Bundle
+
+abstract class AbstractTest(
+    protected val context: Context
+) : IDeviceTest.Stub() {
+
+    protected var logger: AbstractLogger = AndroidLogger()
+
+    abstract fun doTest(extras: Bundle?): Boolean
+
+    override fun runTest(data: Bundle?, logger: ILogger?): Boolean {
+        if (logger != null) {
+            this.logger = WrappedLogger(logger)
+        }
+        return try {
+            doTest(data)
+        } catch (e : Exception) {
+            this.logger.error("unhandled exception", e)
+            false
+        }
+    }
+
+}

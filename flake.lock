@@ -1,0 +1,171 @@
+{
+  "nodes": {
+    "apktool": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-sEJOK0lduQ0/vW/a63Bh5KTiHtgJrZ/4AA/iO3Rs5vY=",
+        "type": "file",
+        "url": "https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.12.0.jar"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.12.0.jar"
+      }
+    },
+    "baksmali": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-9FhWBJGEA8d1fDdGAFb3N+BmiLBFceYbGvnQOEbd7vk=",
+        "type": "file",
+        "url": "https://dtu-public-nix-xdapadghy1vsvipd2t50hfvg56fv.s3.us-west-2.amazonaws.com/baksmali-3.0.7-5320adf0-dirty-fat.jar"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://dtu-public-nix-xdapadghy1vsvipd2t50hfvg56fv.s3.us-west-2.amazonaws.com/baksmali-3.0.7-5320adf0-dirty-fat.jar"
+      }
+    },
+    "crane": {
+      "locked": {
+        "lastModified": 1748047550,
+        "narHash": "sha256-t0qLLqb4C1rdtiY8IFRH5KIapTY/n3Lqt57AmxEv9mk=",
+        "owner": "ipetkov",
+        "repo": "crane",
+        "rev": "b718a78696060df6280196a6f992d04c87a16aef",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ipetkov",
+        "repo": "crane",
+        "type": "github"
+      }
+    },
+    "flake-utils": {
+      "inputs": {
+        "systems": "systems"
+      },
+      "locked": {
+        "lastModified": 1731533236,
+        "narHash": "sha256-l0KFg5HjrsfsO/JpG+r7fRrqm12kzFHyUHqHCVpMMbI=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "11707dc2f618dd54ca8739b309ec4fc024de578b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1748026580,
+        "narHash": "sha256-rWtXrcIzU5wm/C8F9LWvUfBGu5U5E7cFzPYT1pHIJaQ=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "11cb3517b3af6af300dd6c055aeda73c9bf52c48",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "25.05",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "apktool": "apktool",
+        "baksmali": "baksmali",
+        "crane": "crane",
+        "flake-utils": "flake-utils",
+        "nixpkgs": "nixpkgs",
+        "rust-overlay": "rust-overlay",
+        "selinux": "selinux",
+        "smali": "smali",
+        "vdexExtractorSrc": "vdexExtractorSrc"
+      }
+    },
+    "rust-overlay": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1748313401,
+        "narHash": "sha256-x5UuDKP2Ui/TresAngUo9U4Ss9xfOmN8dAXU8OrkZmA=",
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "rev": "9c8ea175cf9af29edbcff121512e44092a8f37e4",
+        "type": "github"
+      },
+      "original": {
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "type": "github"
+      }
+    },
+    "selinux": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1746555000,
+        "narHash": "sha256-Ty33jHkzSdXylZV8LH5/B3Emd5NB3sIxoa42sXoALuk=",
+        "owner": "SELinuxProject",
+        "repo": "selinux",
+        "rev": "50bafc3d9c08cf26c3b0f61e29157a0ea8efbf4a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "SELinuxProject",
+        "repo": "selinux",
+        "type": "github"
+      }
+    },
+    "smali": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-pDRsTF92o8VsBCCAV1tgpQCl0fysq69NwJpTpb3GvgE=",
+        "type": "file",
+        "url": "https://dtu-public-nix-xdapadghy1vsvipd2t50hfvg56fv.s3.us-west-2.amazonaws.com/smali-3.0.7-5320adf0-dirty-fat.jar"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://dtu-public-nix-xdapadghy1vsvipd2t50hfvg56fv.s3.us-west-2.amazonaws.com/smali-3.0.7-5320adf0-dirty-fat.jar"
+      }
+    },
+    "systems": {
+      "locked": {
+        "lastModified": 1681028828,
+        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
+        "owner": "nix-systems",
+        "repo": "default",
+        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-systems",
+        "repo": "default",
+        "type": "github"
+      }
+    },
+    "vdexExtractorSrc": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1589385732,
+        "narHash": "sha256-o8tejINAdDPDcEXG+T9YALwen8G/ElFkISxon70O650=",
+        "owner": "anestisb",
+        "repo": "vdexExtractor",
+        "rev": "78f283b60ab6991fa27eeaff7d7be16409401c08",
+        "type": "github"
+      },
+      "original": {
+        "owner": "anestisb",
+        "repo": "vdexExtractor",
+        "type": "github"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

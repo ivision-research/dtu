@@ -1,0 +1,11 @@
+[filestore.s3]
+bucket = "BUCKETNAME"
+# Defaults to `dtu` if not set
+profile = "dtu"
+# Path to the AWS CLI tool to use if not in $PATH
+aws-bin = "aws"
+# Cache the files pulled out of S3
+cache = true
+# Similar to get-is-link for the local file store
+cache-is-link = false
+

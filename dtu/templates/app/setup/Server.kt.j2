@@ -1,0 +1,1306 @@
+package {{ app_pkg }}
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
+import android.content.*
+import android.database.Cursor
+import android.net.Uri
+import android.os.Binder
+import android.os.Bundle
+import android.os.IBinder
+import android.os.Looper
+import android.os.Parcel
+import android.os.ParcelFileDescriptor
+import org.json.JSONArray
+import org.json.JSONException
+import org.json.JSONObject
+import java.io.*
+import java.lang.Integer.min
+import java.net.Inet4Address
+import java.net.ServerSocket
+import java.net.Socket
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermission
+import java.nio.file.attribute.PosixFilePermissions
+import java.time.Duration
+import java.util.Queue
+import java.util.concurrent.Executor
+import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.locks.ReentrantLock
+import javax.net.ServerSocketFactory
+import kotlin.concurrent.withLock
+import kotlin.io.path.exists
+
+/**
+ * This server runs in the background and adds functionality that can be
+ * accessed via a TCP socket. Combined with adb forward this allows performing
+ * these actions from your host computer.
+ */
+class Server : Service() {
+
+    private var listenThread: ListenThread? = null
+    private val executor: Executor = Executors.newFixedThreadPool(2)
+
+    private val notificationChannel = NotificationChannel(
+        "dtu_server", "dtu server", NotificationManager.IMPORTANCE_HIGH
+    )
+    private lateinit var notificationManager: NotificationManager
+
+    override fun onCreate() {
+        super.onCreate()
+        alogi("Starting server")
+
+        notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.createNotificationChannel(notificationChannel)
+
+        val notification = with(Notification.Builder(this, notificationChannel.id)) {
+            setContentTitle("dtu server")
+            setContentText("dtu background server running")
+            setOngoing(true)
+            build()
+        }
+        startForeground(15081338, notification)
+
+        listenThread = ListenThread(this, executor).also { it.start() }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        listenThread?.let {
+            it.interrupt()
+            listenThread = null
+        }
+        notificationManager.deleteNotificationChannel(notificationChannel.id)
+    }
+
+    override fun onBind(intent: Intent?): IBinder? {
+        return null
+    }
+
+    class ListenThread(
+        private val context: Context, private val executor: Executor, private val port: Int = {{ app_server_port }}
+    ) : Thread() {
+        override fun run() {
+            super.run()
+            val socket = setupSocket()
+
+            while (!interrupted()) {
+                val client = socket.accept()
+                alogd("Got client $client")
+                val handler = ClientHandler(context, client)
+                executor.execute(handler)
+            }
+
+        }
+
+        private fun setupSocket(): ServerSocket {
+            val addr = Inet4Address.getLocalHost()
+            return ServerSocketFactory.getDefault().createServerSocket(port, 10, addr)
+        }
+    }
+
+
+    class ClientHandler(private val context: Context, private val client: Socket) : Runnable {
+        override fun run() {
+
+            try {
+                handleRequest()
+            } catch (e: IOException) {
+                aloge("ioexception", e)
+            } catch (e: Exception) {
+                aloge("unhandled exception during request", e)
+            } finally {
+                if (!client.isClosed) {
+                    try {
+                        client.close()
+                    } catch (e: IOException) {
+                        // pass
+                    }
+                }
+            }
+        }
+
+        private fun handleRequest() {
+
+            val res = kotlin.runCatching {
+                val into = ByteArray(4)
+                read(into)
+                val rawCmd = pack(into[0], into[1], into[2], into[3])
+                val cmd = getCommand(rawCmd)
+                readRawRequest().mapCatching {
+                    Request.forCommand(cmd, it).run(context)
+                }.fold({ json ->
+                    respondSuccess(json)
+                }) { ex ->
+                    respondFailure(ex)
+                }
+            }
+
+
+            res.onFailure {
+                aloge("failed to handle request", it)
+            }
+        }
+
+        private fun respond(status: Int, data: String) {
+            val bytes = byteArrayOf(
+                status.shr(24).and(0xFF).toByte(),
+                status.shr(16).and(0xFF).toByte(),
+                status.shr(8).and(0xFF).toByte(),
+                status.and(0xFF).toByte(),
+            )
+            write(bytes)
+            val raw = data.toByteArray(StandardCharsets.UTF_8)
+            val hexLen = raw.size.toString(radix = 16)
+            val paddedHexLen = hexLen.padStart(8, '0').toByteArray(StandardCharsets.UTF_8)
+            write(paddedHexLen)
+            write(raw)
+        }
+
+        private fun respondSuccess(json: String) {
+            alogv("responding with $json")
+            val prefix = pack('G', 'O', 'O', 'D')
+            respond(prefix, json)
+        }
+
+        private fun respondFailure(e: Throwable) {
+            aloge("request failed", e)
+            val prefix = pack('F', 'A', 'I', 'L')
+            val json = JSONObject().apply {
+                put("err", e.toString())
+            }.toString()
+            respond(prefix, json)
+        }
+
+        private fun readRawRequest(): Result<ByteArray> {
+            return readLen().mapCatching {
+                val arr = ByteArray(it)
+                read(arr)
+                arr
+            }
+        }
+
+        private fun readLen(): Result<Int> {
+            return readHexInt()
+        }
+
+        private fun readHexInt(): Result<Int> {
+            return kotlin.runCatching {
+                val into = byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0)
+                read(into)
+                into
+            }.mapCatching {
+                val bytes = String(it, StandardCharsets.UTF_8).hexToBytes()
+                var len = 0
+                var shift = 24
+                for (b in bytes) {
+                    len = len.or(
+                        b.toUByte().toInt().shl(shift)
+                    )
+                    shift -= 8
+                }
+
+                len
+            }
+        }
+
+        private fun write(data: ByteArray) {
+            client.getOutputStream().write(data)
+        }
+
+        private fun read(into: ByteArray) {
+            val toRead = into.size
+            var nread = 0
+            while (nread < toRead) {
+                val count = client.getInputStream().read(into, nread, into.size)
+                if (count == -1) {
+                    alogw("EOF while reading from $client")
+                    throw EOFException()
+                }
+                nread += count
+            }
+        }
+    }
+
+    companion object {
+        fun getCommand(code: Int): Command {
+            return Command.values().find {
+                it.code == code
+            } ?: throw IllegalArgumentException(code.toString())
+        }
+
+    }
+
+
+}
+
+enum class Command(val code: Int) {
+    Sh(pack('_', '_', 's', 'h')),
+    Exec(pack('e', 'x', 'e', 'c')),
+    TransactAppService(pack('a', 's', 'v', 'c')),
+    TransactSystemService(pack('s', 's', 'v', 'c')),
+    ContentProvider(pack('p', 'r', 'o', 'v')),
+    Broadcast(pack('b', 'c', 's', 't')),
+    StartActivity(pack('_', 'a', 'c', 't')),
+    RunTest(pack('t', 'e', 's', 't')),
+    StartService(pack('_', 's', 'v', 'c')),
+    SystemServiceShellCmd(pack('s', 's', 'h', 'l')),
+}
+
+
+sealed class Request {
+
+    companion object {
+        fun forCommand(cmd: Command, raw: ByteArray): Request {
+            val asString = String(raw, StandardCharsets.UTF_8)
+            val obj = JSONObject(asString)
+            return when (cmd) {
+                Command.Sh -> Sh.fromJson(obj)
+                Command.Exec -> Exec.fromJson(obj)
+                Command.ContentProvider -> ContentProviderRequest.fromJson(obj)
+                Command.TransactAppService -> TransactAppService.fromJson(obj)
+                Command.TransactSystemService -> TransactSystemService.fromJson(obj)
+                Command.Broadcast -> Broadcast.fromJson(obj)
+                Command.StartActivity -> StartActivity.fromJson(obj)
+                Command.RunTest -> RunTest.fromJson(obj)
+                Command.StartService -> StartService.fromJson(obj)
+                Command.SystemServiceShellCmd -> SystemServiceShellCmd.fromJson(obj)
+                else -> {
+                    throw InvalidCommand(cmd.code)
+                }
+            }
+        }
+    }
+
+    abstract fun run(ctx: Context): String
+
+    data class IntentData(
+        val pkg: String?,
+        val clazz: String?,
+        val action: String?,
+        val data: Uri?,
+        val intentData: IntentString?,
+        val flags: List<String>?,
+    ) {
+        companion object {
+            fun fromJson(obj: JSONObject): IntentData {
+                val pkg = obj.maybeString("pkg")
+
+                val clazz = if (pkg != null) {
+                    obj.maybeString("class")?.let {
+                        if (it.startsWith(".")) {
+                            "$pkg$it"
+                        } else if (!it.contains('.')) {
+                            "$pkg.$it"
+                        } else {
+                            it
+                        }
+                    } ?: throw MissingRequired("class")
+                } else {
+                    val clazz = obj.maybeString("class")
+                    if (clazz != null) {
+                        throw MissingRequired("pkg")
+                    }
+                    clazz
+                }
+
+
+                val data = obj.maybeString("data")?.let {
+                    Uri.parse(it)
+                }
+
+                return IntentData(
+                    pkg,
+                    clazz,
+                    obj.maybeString("action"),
+                    data,
+                    obj.maybeString("intentData")?.let {
+                        IntentString.parse(it)
+                    },
+                    obj.maybeJSONArray("flags")?.collect()
+                )
+            }
+        }
+
+        fun makeIntent(): Intent {
+            return Intent().also {
+                action?.let { act ->
+                    it.action = act
+                }
+
+                data?.let { data ->
+                    it.data = data
+                }
+
+                intentData?.addToIntent(it)
+
+                pkg?.let { pkg ->
+                    it.component = ComponentName(pkg, clazz!!)
+                }
+
+                flags?.let { flags ->
+                    val clazz = Intent::class.java
+                    it.flags = flags.map { flag ->
+                        alogv("Looking for flag $flag")
+                        val fld = clazz.getDeclaredField(flag)
+                        fld.getInt(null)
+                    }.reduce { acc, value ->
+                        acc.or(value)
+                    }
+                }
+            }
+        }
+    }
+
+    class SystemServiceShellCmd(
+        private val service: String,
+        private val command: Array<String>?,
+        private val timeout: Long,
+        private val stdin: ByteArray? = null,
+    ) : Request() {
+
+
+        companion object {
+
+            // int SHELL_COMMAND_TRANSACTION = ('_'<<24)|('C'<<16)|('M'<<8)|'D';
+            private const val SHELL_COMMAND_TRANSACTION = 0x5f434d44
+
+            fun fromJson(obj: JSONObject): SystemServiceShellCmd {
+
+                var cmd: Array<String>? = null
+
+                try {
+                    val jarrayCmd = obj.getJSONArray("command")
+
+                    cmd = Array(jarrayCmd.length()) {
+                        jarrayCmd.getString(it)
+                    }
+                } catch (e: JSONException) {
+                    // pass
+                }
+
+                return SystemServiceShellCmd(
+                    obj.getString("service"),
+                    cmd,
+                    obj.optLong("timeout", Duration.ofMillis(2500).toMillis()),
+                    obj.maybeString("stdin")?.fromBase64()
+                )
+            }
+        }
+
+
+        override fun run(ctx: Context): String {
+            val base = ctx.filesDir.toPath()
+            val attrs = PosixFilePermissions.asFileAttribute(
+                setOf(
+                    PosixFilePermission.OWNER_READ,
+                    PosixFilePermission.OWNER_WRITE,
+                    PosixFilePermission.OWNER_EXECUTE,
+                    PosixFilePermission.GROUP_READ,
+                    PosixFilePermission.GROUP_WRITE,
+                    PosixFilePermission.GROUP_EXECUTE,
+                    PosixFilePermission.OTHERS_EXECUTE,
+                    PosixFilePermission.OTHERS_WRITE,
+                    PosixFilePermission.OTHERS_EXECUTE,
+                )
+            )
+            val stderrPath = base.resolve("${service}.stderr")
+            if (!stderrPath.exists()) {
+                Files.createFile(stderrPath, attrs)
+            }
+
+            val stdoutPath = base.resolve("${service}.stdout")
+            if (!stdoutPath.exists()) {
+                Files.createFile(stdoutPath, attrs)
+            }
+
+            val stdinPath = base.resolve("${service}.stdin")
+            if (!stdinPath.exists()) {
+                Files.createFile(stdinPath, attrs)
+            }
+            stdin?.let {
+                Files.write(stdinPath, it)
+            }
+
+
+            val queue = LinkedBlockingQueue<Result<ResultData>>()
+            Thread {
+                runInsideThread(queue, stdoutPath, stderrPath, stdinPath)
+            }.start()
+
+            val result = queue.poll(timeout, TimeUnit.MILLISECONDS)?.getOrThrow()
+                ?: throw TimeoutException("timeout waiting for result")
+
+            return JSONObject().apply {
+                put("exit", result.code)
+                put("stderr", Files.readAllBytes(stderrPath).toBase64())
+                put("stdout", Files.readAllBytes(stdoutPath).toBase64())
+            }.toString()
+        }
+
+        data class ResultData(
+            val code: Int, val data: Bundle?
+        )
+
+        private fun runInsideThread(
+            queue: Queue<Result<ResultData>>, stdoutPath: Path, stderrPath: Path, stdinPath: Path
+        ) {
+
+            val bind =
+                binderForSystemService(service) ?: throw NoSystemServiceBinderException(service)
+
+            val stderr = ParcelFileDescriptor.open(
+                stderrPath.toFile(),
+                ParcelFileDescriptor.MODE_WRITE_ONLY.or(ParcelFileDescriptor.MODE_TRUNCATE)
+            )
+
+            val stdout = ParcelFileDescriptor.open(
+                stdoutPath.toFile(),
+                ParcelFileDescriptor.MODE_WRITE_ONLY.or(ParcelFileDescriptor.MODE_TRUNCATE)
+            )
+
+            val stdin = ParcelFileDescriptor.open(
+                stdinPath.toFile(), ParcelFileDescriptor.MODE_READ_WRITE
+            )
+
+            alogi("Calling command in ${service}: `${command?.joinToString(" ")}`")
+
+            try {
+                doRawBinder(bind, SHELL_COMMAND_TRANSACTION, null, {
+                    it.writeFileDescriptor(stdin.fileDescriptor)
+                    it.writeFileDescriptor(stdout.fileDescriptor)
+                    it.writeFileDescriptor(stderr.fileDescriptor)
+                    it.writeStringArray(command)
+                    it.writeStrongBinder(MyShellCallback())
+                    it.writeStrongBinder(MyResultReceiver(queue))
+                }) {
+                    it.readException()
+                }
+            } catch (e: Exception) {
+                aloge("Failed to execute shell command transaction", e)
+                queue.add(Result.failure(e))
+                return
+            } finally {
+                stdout.close()
+                stdin.close()
+                stderr.close()
+            }
+            alogi("Called command")
+        }
+
+
+        class MyShellCallback() : Binder() {
+            companion object {
+                private const val DESCRIPTOR = "com.android.internal.os.IShellCallback"
+            }
+
+
+            override fun getInterfaceDescriptor(): String = DESCRIPTOR
+
+
+            override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+                alogd("Transaction call into MyShellCallback")
+                if (code in FIRST_CALL_TRANSACTION..LAST_CALL_TRANSACTION) {
+                    data.enforceInterface(DESCRIPTOR)
+                }
+                if (code == INTERFACE_TRANSACTION) {
+                    reply?.writeString(DESCRIPTOR)
+                    return true
+                }
+
+                if (reply == null) {
+                    return false
+                }
+
+                if (code == 1) {
+                    val path = data.readString()!!
+                    val seLinuxContext = data.readString()
+                    val mode = data.readString()
+                    val parsedMode = ParcelFileDescriptor.parseMode(mode)
+                    val pfd = ParcelFileDescriptor.open(File(path), parsedMode)
+                    reply.writeParcelable(pfd, 0)
+                    return true
+                }
+
+                return super.onTransact(code, data, reply, flags)
+            }
+        }
+
+        class MyResultReceiver(private val queue: Queue<Result<ResultData>>) : Binder() {
+
+            companion object {
+                private const val DESCRIPTOR = "com.android.internal.os.IResultReceiver"
+            }
+
+
+            override fun getInterfaceDescriptor(): String = DESCRIPTOR
+
+
+            override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+                if (code in FIRST_CALL_TRANSACTION..LAST_CALL_TRANSACTION) {
+                    try {
+                        data.enforceInterface(DESCRIPTOR)
+                    } catch (e: Exception) {
+                        data.setDataPosition(0)
+                        data.readInt()
+                        data.readInt()
+                        data.readInt()
+                        aloge(
+                            "enforce interface failed! (got ${data.readString()} expected $DESCRIPTOR)",
+                            e
+                        )
+                    }
+                }
+                if (code == INTERFACE_TRANSACTION) {
+                    reply?.writeString(DESCRIPTOR)
+                    return true
+                }
+
+                if (code == 1) {
+                    val resultCode = data.readInt()
+                    val resultData = data.readTypedObject(Bundle.CREATOR)
+                    queue.add(Result.success(ResultData(resultCode, resultData)))
+                    return true
+                }
+
+                return super.onTransact(code, data, reply, flags)
+            }
+        }
+
+        class MyLooper : Thread() {
+            override fun run() {
+                Looper.prepare()
+                Looper.loop()
+            }
+        }
+
+    }
+
+    class RunTest(
+        private val name: String, private val data: IntentString?
+    ) : Request(), ServiceConnection {
+        companion object {
+            fun fromJson(obj: JSONObject): RunTest {
+                return RunTest(obj.getString("name"), obj.maybeString("intentData")?.let {
+                    IntentString.parse(it)
+                })
+            }
+        }
+
+        private val lock = ReentrantLock()
+        private val cond = lock.newCondition()
+
+        private var binder: IBinder? = null
+
+        override fun run(ctx: Context): String {
+            val intent = getIntent(ctx)
+            if (!ctx.bindService(intent, this, Context.BIND_AUTO_CREATE)) {
+                throw RequestException("couldn't bind to the service")
+            }
+            try {
+                return innerRun()
+            } finally {
+                ctx.unbindService(this)
+            }
+        }
+
+        private fun innerRun(): String {
+            val connected = lock.withLock {
+                cond.await(2, TimeUnit.SECONDS)
+            }
+            if (!connected) {
+                throw RequestException("timeout waiting for service")
+            }
+            val test = IDeviceTest.Stub.asInterface(binder ?: throw RequestException("null binder"))
+
+            val data = data?.let {
+                val intent = Intent()
+                it.addToIntent(intent)
+                intent.extras
+            }
+
+            val logger = Logger()
+
+            val success = test.runTest(data, logger)
+
+            return JSONObject().apply {
+                put("success", success)
+                put("output", logger.toString())
+            }.toString()
+        }
+
+        private fun getIntent(ctx: Context): Intent {
+            val clazz = try {
+                Class.forName("{{ app_pkg }}.${name}Service")
+            } catch (e: ClassNotFoundException) {
+                throw RequestException("no test named $name")
+            }
+
+            return Intent(ctx, clazz)
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            binder = null
+        }
+
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            alogv("Service connected $name $service")
+            binder = service
+            lock.withLock {
+                cond.signal()
+            }
+        }
+
+        override fun onNullBinding(name: ComponentName?) {
+            super.onNullBinding(name)
+            alogw("got a null binder for $name")
+            lock.withLock {
+                cond.signal()
+            }
+        }
+
+        class Logger() : ILogger.Stub() {
+            private val builder = StringBuilder()
+
+            override fun info(output: String?) {
+                addWithPrefix("I", output)
+            }
+
+            override fun debug(output: String?) {
+                addWithPrefix("D", output)
+            }
+
+            override fun error(output: String?) {
+                addWithPrefix("E", output)
+            }
+
+            override fun warn(output: String?) {
+                addWithPrefix("W", output)
+            }
+
+            private fun addWithPrefix(prefix: String, output: String?) {
+                if (output == null) {
+                    return
+                }
+
+                val lines = output.split('\n')
+                for (l in lines) {
+                    builder.append("[$prefix] $l\n")
+                }
+            }
+
+            override fun toString(): String {
+                return builder.toString()
+            }
+        }
+    }
+
+    class StartService(private val data: IntentData) : Request() {
+        companion object {
+            fun fromJson(obj: JSONObject): StartService {
+                return StartService(IntentData.fromJson(obj))
+            }
+        }
+
+        override fun run(ctx: Context): String {
+            val intent = data.makeIntent()
+            alogd("Starting service with $intent")
+            ctx.startService(intent)
+            return JSONObject().apply {
+                put("started", true)
+            }.toString()
+        }
+    }
+
+    class StartActivity(private val data: IntentData) : Request() {
+        companion object {
+            fun fromJson(obj: JSONObject): StartActivity {
+                return StartActivity(IntentData.fromJson(obj))
+            }
+        }
+
+        override fun run(ctx: Context): String {
+            val intent = data.makeIntent()
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            alogd("Starting activity with $intent")
+            ctx.startActivity(intent)
+            return JSONObject().apply {
+                put("started", true)
+            }.toString()
+        }
+    }
+
+    class Broadcast(private val data: IntentData) : Request() {
+        companion object {
+            fun fromJson(obj: JSONObject): Broadcast {
+                return Broadcast(IntentData.fromJson(obj))
+            }
+        }
+
+        override fun run(ctx: Context): String {
+            val intent = data.makeIntent()
+            alogd("Sending broadcast $intent")
+            ctx.sendBroadcast(intent)
+            return JSONObject().apply {
+                put("sent", true)
+            }.toString()
+        }
+    }
+
+    class TransactSystemService(
+        private val name: String,
+        private val txnId: Int = IBinder.INTERFACE_TRANSACTION,
+        private val interfaceToken: String? = null,
+        private val parcelData: ParcelString? = null
+    ) : Request() {
+
+        override fun run(ctx: Context): String {
+            val bind = binderForSystemService(name) ?: throw NoSystemServiceBinderException(name)
+            val res = doRawBinder(bind, txnId, interfaceToken, {
+                parcelData?.writeToParcel(it, 0)
+            }) {
+                if (txnId != IBinder.INTERFACE_TRANSACTION) {
+                    it.readException()
+                    it.marshall().toHexDump()
+                } else {
+                    it.readString()
+                }
+            }
+            return JSONObject().apply {
+                put("response", res)
+            }.toString()
+        }
+
+        companion object {
+            fun fromJson(obj: JSONObject): TransactSystemService {
+                val txn = if (obj.has("txn")) {
+                    obj.getInt("txn")
+                } else {
+                    IBinder.INTERFACE_TRANSACTION
+                };
+                return TransactSystemService(name = obj.getString("name"),
+                    txnId = txn,
+                    interfaceToken = obj.maybeString("interface"),
+                    parcelData = obj.maybeString("parcelData")?.let {
+                        ParcelString.parse(it)
+                    })
+            }
+        }
+
+    }
+
+    class TransactAppService(
+        private val appId: String,
+        private val targetClass: String,
+        private val txnId: Int = IBinder.INTERFACE_TRANSACTION,
+        private val interfaceToken: String? = null,
+        private val action: String? = null,
+        private val uri: String? = null,
+        private val parcelData: ParcelString? = null,
+    ) : Request(), ServiceConnection {
+
+        private val lock = ReentrantLock()
+        private val cond = lock.newCondition()
+
+        private var binder: IBinder? = null
+
+        override fun run(ctx: Context): String {
+            if (!ctx.bindService(
+                    getIntent(), this, Context.BIND_AUTO_CREATE
+                )
+            ) {
+                throw RequestException("couldn't bind to service")
+            }
+
+            try {
+                return innerRun()
+            } finally {
+                ctx.unbindService(this)
+            }
+
+        }
+
+        private fun innerRun(): String {
+            val connected = lock.withLock {
+                cond.await(2, TimeUnit.SECONDS)
+            }
+            if (!connected) {
+                throw RequestException("timeout waiting for service")
+            }
+            val service = binder ?: throw RequestException("null binder")
+
+            val res = doRawBinder(service, txnId, interfaceToken, { data ->
+                parcelData?.writeToParcel(data, 0)
+            }) {
+                if (txnId != IBinder.INTERFACE_TRANSACTION) {
+                    it.readException()
+                    it.marshall().toHexDump()
+                } else {
+                    it.readString()
+                }
+            }
+
+            return JSONObject().apply {
+                put("response", res)
+            }.toString()
+        }
+
+        private fun getIntent(): Intent {
+            return Intent().also { intent ->
+                action?.let {
+                    intent.action = it
+                }
+                uri?.let {
+                    intent.data = Uri.parse(it)
+                }
+                intent.component = ComponentName(appId, targetClass)
+
+            }
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            binder = null
+        }
+
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            alogv("Service connected $name $service")
+            binder = service
+            lock.withLock {
+                cond.signal()
+            }
+        }
+
+        override fun onNullBinding(name: ComponentName?) {
+            super.onNullBinding(name)
+            alogw("got a null binder for $name")
+            lock.withLock {
+                cond.signal()
+            }
+        }
+
+        companion object {
+            fun fromJson(obj: JSONObject): TransactAppService {
+                val txn = if (obj.has("txn")) {
+                    obj.getInt("txn")
+                } else {
+                    IBinder.INTERFACE_TRANSACTION
+                };
+                return TransactAppService(appId = obj.getString("appId"),
+                    targetClass = obj.getString("class"),
+                    txnId = txn,
+                    interfaceToken = obj.maybeString("interface"),
+                    action = obj.maybeString("action"),
+                    uri = obj.maybeString("uri"),
+                    parcelData = obj.maybeString("parcelData")?.let {
+                        ParcelString.parse(it)
+                    })
+            }
+        }
+    }
+
+    class Exec(private val prog: String, private val args: List<String>) : Request() {
+
+        override fun run(ctx: Context): String {
+            val cmd = mutableListOf(prog)
+            cmd.addAll(args)
+            return execCmd(cmd).toJson()
+        }
+
+        companion object {
+            fun fromJson(obj: JSONObject): Exec {
+                return Exec(
+                    obj.getString("prog"), obj.optJSONArray("args")?.collect() ?: listOf()
+                )
+            }
+        }
+    }
+
+    class Sh(private val cmd: String, private val shell: String) : Request() {
+
+        override fun run(ctx: Context): String {
+            return execCmd(
+                listOf(
+                    shell, "-c", cmd
+                )
+            ).toJson()
+        }
+
+        companion object {
+
+            private val DEFAULT_SHELL = "/system/bin/sh"
+
+            fun fromJson(obj: JSONObject): Sh {
+                val shell = obj.optString("shell", DEFAULT_SHELL) ?: DEFAULT_SHELL
+                return Sh(obj.getString("cmd"), shell)
+            }
+        }
+    }
+
+    sealed class ContentProviderRequest(protected val uri: Uri) : Request() {
+
+        companion object {
+            fun fromJson(obj: JSONObject): ContentProviderRequest {
+                val action = obj.getString("action")
+                return when (action) {
+                    "query" -> Query.fromJson(obj)
+                    "call" -> Call.fromJson(obj)
+                    "read" -> FileOperation.Read.fromJson(obj)
+                    "write" -> FileOperation.Write.fromJson(obj)
+                    "insert" -> Insert.fromJson(obj)
+                    "delete" -> Delete.fromJson(obj)
+                    else -> throw InvalidValue("action", action)
+                }
+            }
+
+            fun getUri(obj: JSONObject): Uri {
+                if (obj.has("uri")) {
+                    return Uri.parse(obj.getString("uri"))
+                }
+                val builder = Uri.Builder().scheme("content").authority(
+                    obj.getString("authority")
+                )
+                if (obj.has("path")) {
+                    builder.appendPath(obj.getString("path"))
+                }
+                if (obj.has("query")) {
+                    builder.encodedQuery(obj.getString("query"))
+                }
+                return builder.build()
+            }
+        }
+
+        class Delete(
+            uri: Uri,
+            private val where: String? = null,
+            private val selectionArgs: Array<String>? = null
+        ) : ContentProviderRequest(uri) {
+            override fun run(ctx: Context): String {
+                val count = ctx.contentResolver.delete(uri, where, selectionArgs)
+                return JSONObject().apply {
+                    put("count", count)
+                }.toString()
+            }
+
+            companion object {
+                fun fromJson(obj: JSONObject): Delete {
+                    return Delete(
+                        getUri(obj),
+                        obj.maybeString("where"),
+                        obj.maybeJSONArray("selectionArgs")?.toArray()
+                    )
+                }
+            }
+        }
+
+        class Insert(
+            uri: Uri, private val contentValues: ContentValues? = null
+        ) : ContentProviderRequest(uri) {
+            companion object {
+                fun fromJson(obj: JSONObject): Insert {
+                    return Insert(
+                        getUri(obj),
+                        obj.maybeString("data")?.let(IntentString::parse)?.asContentValues()
+                    )
+                }
+            }
+
+            override fun run(ctx: Context): String {
+                val uri = ctx.contentResolver.insert(
+                    uri, contentValues
+                )?.toString()
+                return JSONObject().apply {
+                    put("uri", uri)
+                }.toString()
+            }
+        }
+
+        class Query(
+            uri: Uri,
+            private val projection: Array<String>?,
+            private val selection: String?,
+            private val selectionArgs: Array<String>?,
+            private val queryArgs: Bundle?,
+            private val sortOrder: String?,
+        ) : ContentProviderRequest(uri) {
+            companion object {
+                fun fromJson(obj: JSONObject): Query {
+                    val uri = getUri(obj)
+
+                    val queryArgs = obj.maybeString("queryArgs")?.let {
+                        Value.VBundle.fromString(it.removePrefix("BUND")).value
+                    }
+
+                    return Query(
+                        uri,
+                        obj.maybeJSONArray("projection")?.toArray(),
+                        obj.maybeString("selection"),
+                        obj.maybeJSONArray("selectionArgs")?.toArray(),
+                        queryArgs,
+                        obj.maybeString("sortOrder")
+                    )
+                }
+            }
+
+            override fun run(ctx: Context): String {
+                val cursor = if (selection != null) {
+                    handleSelectionQuery(ctx)
+                } else if (queryArgs != null) {
+                    handleQueryArgsQuery(ctx)
+                } else {
+                    handleSimpleQuery(ctx)
+                }
+
+                return cursor?.use {
+                    dumpCursor(it)
+                } ?: "null"
+            }
+
+            private fun dumpCursor(cursor: Cursor): String {
+                val arr = JSONArray()
+
+                if (!cursor.moveToFirst()) {
+                    return arr.toString()
+                }
+
+                val ncols = cursor.columnCount
+                val colNames = cursor.columnNames
+                while (true) {
+                    val obj = JSONObject()
+                    for (i in 0 until ncols) {
+                        val ty = cursor.getType(i)
+                        obj.put(
+                            colNames[i], when (ty) {
+                                Cursor.FIELD_TYPE_BLOB -> cursor.getBlob(i).toBase64()
+                                Cursor.FIELD_TYPE_NULL -> null
+                                Cursor.FIELD_TYPE_FLOAT -> cursor.getDouble(i)
+                                Cursor.FIELD_TYPE_INTEGER -> cursor.getLong(i)
+                                Cursor.FIELD_TYPE_STRING -> cursor.getString(i)
+                                else -> "c.arve::ERROR unhandled type $ty for column $i"
+                            }
+                        )
+                    }
+
+                    arr.put(obj)
+
+                    if (!cursor.moveToNext()) {
+                        break
+                    }
+                }
+
+                return arr.toString()
+            }
+
+            private fun handleSelectionQuery(ctx: Context): Cursor? =
+                ctx.contentResolver.query(uri, projection, selection, selectionArgs, sortOrder)
+
+            private fun handleQueryArgsQuery(ctx: Context): Cursor? =
+                ctx.contentResolver.query(uri, projection, queryArgs, null)
+
+            private fun handleSimpleQuery(ctx: Context): Cursor? =
+                ctx.contentResolver.query(uri, projection, null, null)
+
+        }
+
+        class Call(uri: Uri, private val method: String, private val arg: String?) :
+            ContentProviderRequest(uri) {
+            companion object {
+                fun fromJson(obj: JSONObject): Call {
+                    val uri = getUri(obj)
+                    return Call(uri, obj.getString("method"), obj.maybeString("arg"))
+                }
+            }
+
+            override fun run(ctx: Context): String {
+                val bund = ctx.contentResolver.call(
+                    uri, method, arg, null
+                ) ?: return "null"
+                return JSONObject().apply {
+                    val keys = bund.keySet()
+                    for (k in keys) {
+                        put(k, bund.get(k))
+                    }
+                }.toString()
+            }
+        }
+
+        sealed class FileOperation(
+            uri: Uri
+        ) : ContentProviderRequest(uri) {
+
+            protected fun openFile(ctx: Context, write: Boolean = false): ParcelFileDescriptor {
+                val mode = if (write) {
+                    "w"
+                } else {
+                    "r"
+                }
+                return ctx.contentResolver.openFile(
+                    uri, mode, null
+                ) ?: throw RequestException("failed to open $uri with mode $mode")
+            }
+
+
+            class Read(uri: Uri) : FileOperation(uri) {
+                companion object {
+                    fun fromJson(obj: JSONObject): Read {
+                        val uri = getUri(obj)
+                        return Read(uri)
+                    }
+                }
+
+                override fun run(ctx: Context): String {
+                    val pfd = openFile(ctx)
+                    val raw = pfd.use {
+                        FileInputStream(it.fileDescriptor).readAll()
+                    }
+
+                    return JSONObject().apply {
+                        put("content", raw.toBase64())
+                    }.toString()
+                }
+
+            }
+
+            class Write(uri: Uri, private val data: ByteArray) : FileOperation(uri) {
+                companion object {
+                    fun fromJson(obj: JSONObject): Write {
+                        val uri = getUri(obj)
+                        val data = obj.getString("data").fromBase64()
+                        return Write(uri, data)
+                    }
+                }
+
+                override fun run(ctx: Context): String {
+                    val pfd = openFile(ctx, true)
+                    pfd.use {
+                        FileOutputStream(it.fileDescriptor).write(data)
+                    }
+                    return "{}"
+                }
+            }
+        }
+    }
+}
+
+class CommandOutput(
+    private val exitCode: Int,
+    private val stdout: ByteArray,
+    private val stderr: ByteArray,
+) {
+    fun toJson(): String {
+        return JSONObject().apply {
+            put("exit", exitCode)
+            put("stdout", stdout.toBase64())
+            put("stderr", stderr.toBase64())
+        }.toString()
+    }
+}
+
+private fun execCmd(cmd: List<String>): CommandOutput {
+    alogd("Running command:")
+    val total = cmd.size - 1
+    var idx = 0
+    for (c in cmd) {
+        alogd("[$idx/$total] $c")
+        idx += 1
+    }
+    val out = ByteArrayOutputStream()
+    val err = ByteArrayOutputStream()
+    val proc = ProcessBuilder(cmd).redirectError(
+        ProcessBuilder.Redirect.PIPE
+    ).redirectOutput(
+        ProcessBuilder.Redirect.PIPE
+    ).start()
+
+    val buf = ByteArray(1024)
+
+    while (!proc.waitFor(50, TimeUnit.MILLISECONDS)) {
+        readProcOutput(proc.inputStream, out, buf)
+        readProcOutput(proc.errorStream, err, buf)
+    }
+
+    val exit = proc.exitValue()
+
+    try {
+        readProcOutput(proc.inputStream, out, buf)
+    } catch (e: IOException) {
+        // pass
+    }
+
+    try {
+        readProcOutput(proc.errorStream, err, buf)
+    } catch (e: IOException) {
+        // pass
+    }
+
+    return CommandOutput(
+        exit, out.toByteArray(), err.toByteArray()
+    )
+}
+
+private fun readProcOutput(stream: InputStream, into: ByteArrayOutputStream, buf: ByteArray) {
+    while (true) {
+        val toRead = min(stream.available(), buf.size)
+        if (toRead == 0) {
+            return
+        }
+        stream.read(buf, 0, toRead)
+        into.write(buf, 0, toRead)
+        if (toRead < buf.size) {
+            return
+        }
+    }
+}
+
+fun JSONObject.maybeJSONObject(name: String): JSONObject? {
+    return if (has(name)) {
+        getJSONObject(name)
+    } else {
+        null
+    }
+}
+
+fun JSONObject.maybeJSONArray(name: String): JSONArray? {
+    return if (has(name)) {
+        getJSONArray(name)
+    } else {
+        null
+    }
+}
+
+
+fun JSONObject.maybeString(name: String): String? {
+    return if (has(name)) {
+        getString(name)
+    } else {
+        null
+    }
+}
+
+inline fun <reified R> JSONArray.toArray(): Array<R> {
+    return collect<R>().toTypedArray()
+}
+
+inline fun <reified R> JSONArray.collect(): List<R> {
+    val len = length()
+    val into = mutableListOf<R>()
+    for (i in 0 until len) {
+        into.add(get(i) as R)
+    }
+    return into
+}
+
+open class RequestException(msg: String) : Exception(msg)
+class MissingRequired(val key: String) : RequestException("missing required key $key")
+class InvalidValue(val key: String, val value: String) :
+    RequestException("invalid value for $key: $value")
+
+class InvalidCommand(val code: Int) : RequestException("invalid code: $code")
+class UnsupportedCommand(val cmd: Command) :
+    RequestException("command $cmd is currently unsupported")

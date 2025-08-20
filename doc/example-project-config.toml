@@ -1,0 +1,27 @@
+# This is the default value and is used to inform `dtu` that you have adb
+# access to the device you're testing. This may be false when dtu is just
+# used for analysis of filesystem dumps.
+can-adb = true
+
+# Specify this project's device access implementation, if this is missing, adb is
+# assumed as long as can-adb is true.
+[device-access]
+# You should only have one of the two options here:
+
+[device-access.adb]
+# Optional, $ANDROID_SERIAL is used if not set
+serial = "DEVICE_SERIAL"
+# Optional, pulled out of $PATH if not set
+executable = "/path/to/adb"
+
+# You are running dtu on a filesystem dump of an Android device. This is
+# currently experimental, but it should get you far enough for pulling and
+# decompiling everything.
+[device-access.dump]
+# Required, path to the filesystem dump. If this is not an absolute path,
+# it is assumed to be rooted at $DTU_PROJECT_HOME.
+base = "/path/to/fs/dump/root"
+# Link files to the `dtu_out` dir instead of copy, defaults to false. Note that
+# dtu should always be using a read only view of the files it pulls, so this
+# should be safe to set to true
+pull-is-link = false

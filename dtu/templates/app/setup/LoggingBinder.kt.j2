@@ -1,0 +1,49 @@
+package {{ app_pkg }}
+
+// Automatically generated. Changes may be overwritten!
+
+import android.os.Binder
+import android.os.Parcel
+
+class LoggingBinder : Binder() {
+    override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+        val header = readHeader(data)
+        alogi("Got an incoming call for code $code from ${header.workSource}")
+        alogi("Target interface = ${header.targetInterface ?: "Unknown"}")
+        alogi("Parcel data:")
+        for (line in data.marshall().toHexDump().split('\n')) {
+            alogi(line)
+        }
+
+        return super.onTransact(code, data, reply, flags)
+    }
+
+    private fun readHeader(data: Parcel): ParcelHeader {
+        val strictMode = data.readInt()
+        val workSource = data.readInt()
+        var header: Int? = data.readInt()
+        // TODO Need a better heuristic here
+        val targetInterface = if (header!! <= 256) {
+            data.setDataPosition(0)
+            data.readInt()
+            data.readInt()
+            header = null
+            data.readString()
+        } else {
+            data.readString()
+        }
+        return ParcelHeader(
+            strictMode,
+            workSource,
+            targetInterface,
+            header
+        )
+    }
+
+    data class ParcelHeader(
+        val strictMode: Int,
+        val workSource: Int,
+        val targetInterface: String?,
+        val header: Int?,
+    )
+}

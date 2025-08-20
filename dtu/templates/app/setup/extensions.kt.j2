@@ -1,0 +1,34 @@
+package {{ app_pkg }}
+
+import android.content.Intent
+import java.lang.Exception
+
+class MissingValueException(
+    val key: String
+) : Exception() {
+    fun log() {
+        aloge("$key wasn't found")
+    }
+}
+
+fun Intent.popStringExtra(key: String): String? = if (hasExtra(key)) {
+    val ex = getStringExtra(key)
+    removeExtra(key)
+    ex
+} else {
+    null
+}
+
+fun Intent.getStringExtra(key: String, default: String): String =
+    getStringExtra(key) ?: default
+
+fun Intent.getStringExtraRequired(key: String): String =
+    getStringExtra(key) ?: throw MissingValueException(key)
+
+
+fun Intent.getIntExtraRequired(key: String): Int =
+    if (!hasExtra(key)) {
+        throw MissingValueException(key)
+    } else {
+        getIntExtra(key, 0)
+    }

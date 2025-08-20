@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!-- Automatically generated. Changes may be overwritten -->
+
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+
+    <!-- Required for the server to work -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Run the server as a foreground service -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <!--
+    Normal level permissions - these permissions should require no user
+    interaction or special steps to get. If you need to remove a permission
+    from this list, modify the database, don't remove it here!
+    -->
+    {% for p in permissions %}
+    <uses-permission android:name="{{ p }}" />
+    {% endfor %}
+
+    <application
+        android:name=".App"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="Device Testing App"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+
+        {% for activity in activities %}
+        <activity
+          android:name=".{{ activity }}"
+          android:exported="true"
+          android:theme="@style/AppTheme" />
+
+        <service
+            android:name=".{{ activity }}Service"
+            android:process=":test{{ loop.index }}"
+            android:exported="true" />
+        {% endfor %}
+
+        <activity
+            android:name=".TestAppHomeActivity"
+            android:exported="true"
+            android:theme="@style/AppTheme">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".TestAppExperimentingActivity"
+            android:exported="true"
+            android:theme="@style/AppTheme" />
+
+        <activity
+            android:name=".TestAppConfirmedActivity"
+            android:exported="true"
+            android:theme="@style/AppTheme" />
+
+        <activity
+            android:name=".TestAppFailedActivity"
+            android:exported="true"
+            android:theme="@style/AppTheme" />
+
+        <service
+            android:name=".Server"
+            android:foregroundServiceType="specialUse"
+            android:exported="true"
+            android:process=":server">
+
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Carve server" />
+        </service>
+
+
+    </application>
+
+</manifest>

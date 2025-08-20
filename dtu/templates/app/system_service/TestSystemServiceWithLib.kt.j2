@@ -1,0 +1,55 @@
+package {{ app_pkg }}
+
+{% let iface_short = iface|class_simple_name %}
+
+import android.content.Context
+import android.os.Bundle
+
+import {{ iface }}
+import `{{ iface }}$Stub`
+
+class {{ class }}Test(context: Context) : AbstractSystemServiceTest(context) {
+
+    // To be used with [createFromBundle] to allow calling this test from the
+    // command line. Everything should have a default value!
+    class Args()
+
+    override fun doSystemServiceTest(extras: Bundle?): Boolean {
+      logger.info("Running test for $SERVICE_NAME.$METHOD_NAME")
+
+      val args = createFromBundle(extras, Args::class)
+      val proxy = `{{ iface_short }}$Stub`.asInterface(binder)
+
+      try {
+          proxy.{{ method }}( /* TODO */ )
+      } catch (e: Exception) {
+          logger.error("generic error", e)
+          return false
+      }
+      return true
+    }
+
+    override val serviceName = SERVICE_NAME
+    override val interfaceToken = SERVICE_CLASS
+
+    companion object {
+        const val SERVICE_NAME = "{{ service }}"
+        const val METHOD_NAME = "{{ method }}"
+        const val SERVICE_CLASS = "{{ iface }}"
+        const val SERVICE_CLASS_SHORT = "{{ iface_short }}"
+    }
+}
+
+
+/**
+ * The activity for this test, generally you don't need to modify this
+ */
+class {{ class }} : AbstractTestActivity() {
+    override val serviceClass: Class<*> = {{ class }}Service::class.java
+    override val testName = "{{ class }}"
+}
+
+/**
+ * The service for this test, generally you don't need to modify this
+ */
+class {{ class }}Service : TestService({ ctx -> {{ class }}Test(ctx) })

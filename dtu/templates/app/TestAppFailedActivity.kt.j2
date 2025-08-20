@@ -1,0 +1,26 @@
+package {{ app_pkg }}
+
+// Automatically generated. Changes may be overwritten!
+
+import androidx.appcompat.app.AppCompatActivity
+import android.os.Bundle
+
+import {{ app_pkg }}.databinding.FailedActivityBinding
+
+class TestAppFailedActivity : AppCompatActivity() {
+
+    private lateinit var binding: FailedActivityBinding
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        binding = FailedActivityBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+
+        {% for btn in buttons %}
+        binding.{{ btn.id }}.setOnClickListener(
+            onClickListenerForActivity(this, {{ btn.target }}::class.java)
+        )
+        {% endfor %}
+
+    }
+}

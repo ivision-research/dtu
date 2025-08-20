@@ -1,0 +1,33 @@
+package {{ app_pkg }}
+
+import android.content.Context
+import android.os.Bundle
+
+class {{ class }}Test(context: Context) : AbstractTest(context) {
+
+    // To be used with [createFromBundle] to allow calling this test from the
+    // command line. Everything should have a default value!
+    class Args()
+
+
+    override fun doTest(extras: Bundle?): Boolean {
+      val args = createFromBundle(extras, Args::class)
+
+      // TODO
+
+      return true
+    }
+}
+
+/**
+ * The activity for this test, generally you don't need to modify this
+ */
+class {{ class }} : AbstractTestActivity() {
+    override val serviceClass: Class<*> = {{ class }}Service::class.java
+    override val testName = "{{ class }}"
+}
+
+/**
+ * The service for this test, generally you don't need to modify this
+ */
+ class {{ class }}Service : TestService({ ctx -> {{ class }}Test(ctx) })

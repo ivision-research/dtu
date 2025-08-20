@@ -1,0 +1,100 @@
+package {{ app_pkg }}
+
+// Automatically generated. Changes may be overwritten!
+
+import android.os.Bundle
+import android.os.IBinder
+import android.content.Intent
+import android.content.Context
+import android.content.ComponentName
+import android.content.ServiceConnection
+
+/**
+ * Abstract class for exploiting generic services. This sets up a
+ * ServiceConnection that simply calls doTest if a binder is received.
+ *
+ * You can reimplement onNullBinder to do more than just report a null binder
+ */
+abstract class AbstractServiceTestActivity : AbstractBinderTestActivity(), ServiceConnection {
+    protected var mBinder: IBinder? = null
+    protected var mConnected = false
+
+    abstract fun getTargetPackage(): String
+    abstract fun getTargetClassFull(): String
+    abstract fun getTargetClassShort(): String
+
+    /**
+     * Since these tests need to bind a service before being able to do
+     * anything, the default `doTest` will just ensure the service is
+     * bound and then call this.
+     */
+    abstract fun doTestConnected(extras: Bundle?)
+
+    open fun updateIntent(it: Intent) {}
+
+    override fun onDestroy() {
+        if (mConnected) {
+            unbindService(this)
+        }
+        super.onDestroy()
+    }
+
+    override fun doTest(extras: Bundle?) {
+        if (mConnected) {
+            try {
+                doTestConnected(extras)
+            } catch (e: Exception) {
+                loge("Test failed due to exception", e)
+            }
+        } else {
+            val pkg = getTargetPackage()
+            val cls = getTargetClassFull()
+            logi("Binding $pkg/$cls")
+            Intent().also {
+                it.setClassName(pkg, cls)
+                updateIntent(it)
+                bindService(it, this, Context.BIND_AUTO_CREATE)
+            }
+        }
+    }
+
+    /**
+     * onNullBinder is called when the ServiceConnection receives a null binder.
+     * Return true to leave early in that case and not call doTest
+     *
+     * If you return false, mConnected will not be set to true and mBinder
+     * will still be null.
+     */
+    open fun onNullBinder(): Boolean {
+        val pkg = getTargetPackage()
+        val cls = getTargetClassFull()
+        loge("received a null service for $pkg/$cls")
+        return true
+    }
+
+    // Implementing ServiceConnection
+
+    override fun onNullBinding(name: ComponentName?) {
+        onNullBinder()
+    }
+
+    override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+        if (service == null) {
+            val leave = onNullBinder()
+            if (leave) {
+                return
+            }
+        } else {
+            logi("Got binder for $name")
+            mConnected = true
+            mBinder = service
+        }
+        doTestConnected(null)
+    }
+
+    override fun onServiceDisconnected(name: ComponentName?) {
+        logi("service $name disconnected")
+        mConnected = false
+        mBinder = null
+    }
+}

@@ -1,0 +1,101 @@
+[package]
+name = "dtu"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+dtu_proc_macro = { path = "../dtu_proc_macro" }
+thiserror = "1.0"
+which = "7.0"
+directories = "6.0"
+diesel = { version = "2.0", features = ["sqlite", "returning_clauses_for_sqlite_3_35"], optional = true }
+diesel_migrations = { version = "2.0", optional = true }
+tempfile = "3.19"
+zip = { version = "4.3", default-features = false, features = ["deflate", "deflate64"] }
+rayon = "1.10"
+blanket = "0.2"
+smalisa = { git = "https://github.com/ivision-research/smalisa.git", rev = "18c99a477a8f43b1cc2239db937c57e64f771ebe", default-features = false, optional = true }
+csv = "1.3"
+sha2 = { workspace = true }
+walkdir = "2"
+askama = { version = "0.12", optional = true }
+quick-xml = { version = "0.37", features = ["serialize", "overlapped-lists"] }
+lazy_static = { workspace = true }
+itertools = { workspace = true }
+base64 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+crossbeam = { workspace = true }
+regex = { workspace = true }
+toml = { workspace = true }
+
+once_cell = "1.21"
+
+# Needed for Apex files :(
+protobuf = "=3.5.1"
+protobuf-json-mapping = "=3.5.1"
+
+# Cozo to replace Neo4j, note we need to ensure we don't use the sqlite
+# features since that conflicts with diesel
+[target.'cfg(linux)'.dependencies]
+cozo = { version = "0.7.6", default-features = false, features = ["storage-rocksdb", "graph-algo", "io-uring"], optional = true }
+[target.'cfg(not(linux))'.dependencies]
+cozo = { version = "0.7.6", default-features = false, features = ["storage-rocksdb", "graph-algo"], optional = true }
+
+# Needed for implementing Cozo fixed rules
+miette = { version = "5.10.0", features = ["fancy"], optional = true }
+smartstring = { version = "1.0.1", features = ["serde"], optional = true }
+graph = { version = "0.3.1", optional = true }
+
+# Neo4j
+neo4rs = { version = "0.7", optional = true }
+tokio = { version = "1.0", features = ["rt"], optional = true }
+
+[target.'cfg(not(windows))'.dependencies]
+libc = { workspace = true }
+
+# We don't actually support windows but hey, let's pretend
+[target.'cfg(windows)'.dependencies]
+miow = "0.3.6"
+winapi = { version = "0.3.9", features = ["consoleapi", "minwindef"] }
+
+[dev-dependencies]
+mockall = { workspace = true }
+rstest = { workspace = true }
+rand = { workspace = true }
+
+[features]
+default = ["reexport_smalisa", "cozo", "sql"]
+
+sql = ["reexport_diesel", "dep:diesel", "dep:diesel_migrations"]
+
+# Include the FileStore trait and some implementations
+filestore = []
+
+# Include testing application related features
+app = ["dep:askama", "app-server"]
+
+# Include the app server related functions
+app-server = []
+
+# Include the cozo graph database
+cozo = ["dep:cozo", "dep:miette", "dep:smartstring", "dep:graph", "_graph"]
+
+decompile = []
+
+# Include setup tasks
+setup = ["cozo", "decompile", "dep:smalisa"]
+
+_graph = []
+
+# Don't fully remove neo4j yet, just put it behind a feature
+neo4j = ["dep:neo4rs", "dep:tokio", "_graph"]
+reexport_smalisa = ["dep:smalisa"]
+reexport_diesel = []
+reexport_askama = []
+# Trace database commands
+trace_db = []
+# neo4j tests require some setup to run, don't run them by default
+neo4j_tests = ["neo4j"]
