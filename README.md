@@ -2,6 +2,8 @@
 
 `dtu` is a toolkit for testing entire Android devices, without requiring root access. The goal is to collect as much data as possible from a generic Android device and store it in formats that are accessible via the command line tool or associated library.
 
+Check out the [release blog post](https://research.ivision.com/introducing-dtu.html).
+
 ## Installation
 
 You can install `dtu` via `nix` or with `cargo`. The `nix` install will provide you with all of the associated binaries, of which there are quite a few, at known compatible versions if you use the `dtuEnv` package.
