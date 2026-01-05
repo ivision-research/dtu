@@ -8,5 +8,7 @@ pub use common::{
 pub mod device;
 pub mod meta;
 
+pub use device::DefaultDeviceDatabase;
 pub use device::db::{Database as DeviceDatabase, DeviceSqliteDatabase};
+pub use meta::DefaultMetaDatabase;
 pub use meta::db::{Database as MetaDatabase, MetaSqliteDatabase};

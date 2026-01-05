@@ -13,7 +13,7 @@ use crate::{
     Context,
 };
 
-pub trait FileStore {
+pub trait FileStore: Send + Sync {
     /// Put the file at `local_path` into the store at `remote_path`
     fn put_file(&self, ctx: &dyn Context, local_path: &str, remote_path: &str)
         -> crate::Result<()>;
