@@ -13,6 +13,7 @@ use log::{debug, log_enabled};
 //  or something. This isn't a high priority at the moment, but before actually
 //  building out functionality I'd like it done.
 
+#[derive(Clone)]
 pub struct CmdOutput {
     pub status: ExitStatus,
     pub stdout: Vec<u8>,

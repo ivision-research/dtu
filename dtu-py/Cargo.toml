@@ -1,0 +1,14 @@
+[package]
+name = "dtu-py"
+edition = "2024"
+version.workspace = true
+
+[lib]
+name = "dtu"
+crate-type = ["cdylib"]
+
+
+[dependencies]
+anyhow = "1.0"
+dtu = { path = "../dtu", default-features = false, features = ["cozo", "sql", "filestore", "app-server"] }
+pyo3 = { version = "0.27", features = ["anyhow"] }

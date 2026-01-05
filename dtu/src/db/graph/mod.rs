@@ -96,11 +96,17 @@ impl GraphDatabaseOptions {
     }
 }
 
+#[cfg(feature = "cozo")]
+pub type DefaultGraphDatabase = CozoGraphDatabase;
+
 /// Get the default GraphDB implementation
 #[cfg(feature = "cozo")]
 pub fn get_default_graphdb(ctx: &dyn Context) -> Result<CozoGraphDatabase> {
     CozoGraphDatabase::new(&ctx)
 }
+
+#[cfg(all(not(feature = "cozo"), feature = "neo4j"))]
+pub type DefaultGraphDatabase = Neo4jDatabase;
 
 #[cfg(all(not(feature = "cozo"), feature = "neo4j"))]
 pub fn get_default_graphdb(ctx: &dyn Context) -> Result<Neo4jDatabase> {

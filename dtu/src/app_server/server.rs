@@ -112,7 +112,7 @@ pub struct TestOutput {
 }
 
 #[cfg_attr(test, derive(Debug))]
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct CommandResult {
     pub exit: i32,
     #[serde(deserialize_with = "deserialize_b64")]
@@ -247,17 +247,17 @@ impl<'a> ProviderUriBuilder<'a> {
 
 #[cfg_attr(test, derive(Debug))]
 #[derive(Serialize)]
-struct ProviderCommand<'a> {
-    uri: &'a str,
+pub struct ProviderCommand<'a> {
+    pub uri: &'a str,
 
     #[serde(flatten)]
-    cmd: ProviderSubcommand<'a>,
+    pub cmd: ProviderSubcommand<'a>,
 }
 
 #[cfg_attr(test, derive(Debug))]
 #[derive(Serialize)]
 #[serde(tag = "action")]
-enum ProviderSubcommand<'a> {
+pub enum ProviderSubcommand<'a> {
     #[serde(rename = "delete")]
     Delete {
         #[serde(rename = "where")]
@@ -268,7 +268,7 @@ enum ProviderSubcommand<'a> {
         selection_args: Option<&'a [String]>,
     },
     #[serde(rename = "insert")]
-    Insert { data: &'a IntentString<'a> },
+    Insert { data: &'a str },
     #[serde(rename = "query")]
     Query {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -386,7 +386,8 @@ impl AppServer for TcpAppServer {
     }
 
     fn provider_insert(&mut self, uri: &str, data: &IntentString) -> Result<Option<String>> {
-        let cmd = ProviderSubcommand::Insert { data };
+        let raw_data = data.build();
+        let cmd = ProviderSubcommand::Insert { data: &raw_data };
         let cmd = ProviderCommand { uri, cmd };
         let res = self.send_command(Command::Provider, &cmd)?;
         maybe_extract_from_json("uri", &res, value_to_string)
@@ -480,13 +481,14 @@ impl AppServer for TcpAppServer {
         flags: Option<&Vec<String>>,
         intent_data: Option<&IntentString>,
     ) -> Result<String> {
+        let intent_data = intent_data.map(IntentString::build);
         let payload = IntentData {
             action,
             data,
             package,
             class,
             flags,
-            intent_data,
+            intent_data: intent_data.as_ref().map(String::as_str),
         };
 
         self.send_command(Command::Broadcast, &payload)
@@ -501,13 +503,14 @@ impl AppServer for TcpAppServer {
         flags: Option<&Vec<String>>,
         intent_data: Option<&IntentString>,
     ) -> Result<String> {
+        let intent_data = intent_data.map(IntentString::build);
         let payload = IntentData {
             action,
             data,
             package,
             class,
             flags,
-            intent_data,
+            intent_data: intent_data.as_ref().map(String::as_str),
         };
 
         self.send_command(Command::StartService, &payload)
@@ -522,13 +525,14 @@ impl AppServer for TcpAppServer {
         flags: Option<&Vec<String>>,
         intent_data: Option<&IntentString>,
     ) -> Result<String> {
+        let intent_data = intent_data.map(IntentString::build);
         let payload = IntentData {
             action,
             data,
             package,
             class,
             flags,
-            intent_data,
+            intent_data: intent_data.as_ref().map(String::as_str),
         };
 
         self.send_command(Command::StartActivity, &payload)
@@ -600,51 +604,51 @@ impl<'a> Serialize for IntentString<'a> {
 
 #[cfg_attr(test, derive(Debug))]
 #[derive(Serialize)]
-struct CallSystemService<'a> {
-    name: &'a str,
-    txn: u32,
+pub struct CallSystemService<'a> {
+    pub name: &'a str,
+    pub txn: u32,
     #[serde(rename = "interface")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    iface: Option<&'a ClassName>,
+    pub iface: Option<&'a ClassName>,
     #[serde(rename = "parcelData")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    parcel_data: Option<&'a str>,
+    pub parcel_data: Option<&'a str>,
 }
 
 #[cfg_attr(test, derive(Debug))]
 #[derive(Serialize)]
-struct IntentData<'a> {
+pub struct IntentData<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
-    action: Option<&'a str>,
+    pub action: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    data: Option<&'a str>,
+    pub data: Option<&'a str>,
     #[serde(rename = "pkg")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    package: Option<&'a str>,
+    pub package: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    class: Option<&'a str>,
+    pub class: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    flags: Option<&'a Vec<String>>,
+    pub flags: Option<&'a Vec<String>>,
     #[serde(rename = "intentData")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    intent_data: Option<&'a IntentString<'a>>,
+    pub intent_data: Option<&'a str>,
 }
 
 #[cfg_attr(test, derive(Debug))]
 #[derive(Serialize)]
-struct CallAppService<'a> {
-    txn: u32,
+pub struct CallAppService<'a> {
+    pub txn: u32,
     #[serde(rename = "appId")]
-    package: &'a str,
-    class: &'a ClassName,
+    pub package: &'a str,
+    pub class: &'a ClassName,
     #[serde(rename = "interface")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    iface: Option<&'a ClassName>,
+    pub iface: Option<&'a ClassName>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    action: Option<&'a str>,
+    pub action: Option<&'a str>,
     #[serde(rename = "parcelData")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    parcel_data: Option<&'a str>,
+    pub parcel_data: Option<&'a str>,
 }
 
 pub fn get_server_port(ctx: &dyn Context) -> crate::Result<u16> {
@@ -840,7 +844,15 @@ fn value_to_i64(v: Value) -> Option<i64> {
     v.as_i64()
 }
 
-fn maybe_extract_from_json<F, T>(key: &str, json: &str, transform: F) -> Result<Option<T>>
+pub fn maybe_extract_int_from_json(key: &str, json: &str) -> Result<Option<i64>> {
+    maybe_extract_from_json(key, json, value_to_i64)
+}
+
+pub fn maybe_extract_string_from_json(key: &str, json: &str) -> Result<Option<String>> {
+    maybe_extract_from_json(key, json, value_to_string)
+}
+
+pub fn maybe_extract_from_json<F, T>(key: &str, json: &str, transform: F) -> Result<Option<T>>
 where
     F: FnOnce(Value) -> Option<T>,
 {
@@ -856,7 +868,15 @@ where
     }
 }
 
-fn extract_from_json<F, T>(key: &str, json: &str, transform: F) -> Result<T>
+pub fn extract_int_from_json(key: &str, json: &str) -> Result<i64> {
+    extract_from_json(key, json, value_to_i64)
+}
+
+pub fn extract_string_from_json(key: &str, json: &str) -> Result<String> {
+    extract_from_json(key, json, value_to_string)
+}
+
+pub fn extract_from_json<F, T>(key: &str, json: &str, transform: F) -> Result<T>
 where
     F: FnOnce(Value) -> Option<T>,
 {
