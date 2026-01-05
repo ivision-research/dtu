@@ -67,7 +67,7 @@ rstest = { workspace = true }
 rand = { workspace = true }
 
 [features]
-default = ["reexport_smalisa", "cozo", "sql"]
+default = ["cozo", "sql"]
 
 sql = ["reexport_diesel", "dep:diesel", "dep:diesel_migrations"]
 
@@ -88,7 +88,7 @@ decompile = []
 # Include setup tasks
 setup = ["cozo", "decompile", "dep:smalisa"]
 
-_graph = []
+_graph = ["dep:smalisa", "reexport_smalisa"]
 
 # Don't fully remove neo4j yet, just put it behind a feature
 neo4j = ["dep:neo4rs", "dep:tokio", "_graph"]
