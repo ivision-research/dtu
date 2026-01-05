@@ -54,7 +54,7 @@ impl<T> CircularVec<T> {
         self.cur = if next < self.wrapped.len() { next } else { 0 };
     }
 
-    pub fn iter(&self) -> Iter<T> {
+    pub fn iter(&self) -> Iter<'_, T> {
         self.wrapped.iter()
     }
 }

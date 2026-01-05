@@ -55,7 +55,7 @@ impl Config {
         crate::Error::InvalidConfig(path_must_str(&self.path).into(), msg)
     }
 
-    pub fn get_map(&self) -> ConfigMap {
+    pub fn get_map(&self) -> ConfigMap<'_> {
         ConfigMap {
             name: None,
             path: &self.path,

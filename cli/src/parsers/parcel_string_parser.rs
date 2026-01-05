@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::slice::Iter;
 
-pub fn parse_intent_string(args: &[String]) -> anyhow::Result<IntentString> {
+pub fn parse_intent_string(args: &[String]) -> anyhow::Result<IntentString<'_>> {
     let mut intent_string = IntentString::default();
 
     let mut iter = args.iter();
@@ -26,7 +26,7 @@ pub fn parse_intent_string(args: &[String]) -> anyhow::Result<IntentString> {
     Ok(intent_string)
 }
 
-pub fn parse_parcel_string(args: &[String]) -> anyhow::Result<ParcelString> {
+pub fn parse_parcel_string(args: &[String]) -> anyhow::Result<ParcelString<'_>> {
     let mut parcel_string = ParcelString::default();
 
     let mut iter = args.iter();

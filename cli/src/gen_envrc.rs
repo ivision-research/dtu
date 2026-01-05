@@ -103,7 +103,7 @@ impl GenEnvrc {
         res
     }
 
-    fn get_project_home(&self, ctx: &dyn Context) -> anyhow::Result<Cow<str>> {
+    fn get_project_home(&self, ctx: &dyn Context) -> anyhow::Result<Cow<'_, str>> {
         if let Some(ph) = self.project_home.as_ref() {
             return Ok(Cow::Borrowed(ph.as_str()));
         }
@@ -116,7 +116,7 @@ impl GenEnvrc {
         Ok(Cow::Owned(cwd.to_string_lossy().to_string()))
     }
 
-    fn get_device_serial(&self, ctx: &dyn Context, adb: &dyn Adb) -> anyhow::Result<Cow<str>> {
+    fn get_device_serial(&self, ctx: &dyn Context, adb: &dyn Adb) -> anyhow::Result<Cow<'_, str>> {
         if let Some(ser) = self.android_serial.as_ref() {
             return Ok(Cow::Borrowed(ser.as_str()));
         }

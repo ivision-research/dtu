@@ -604,7 +604,7 @@ impl<'a> TemplateRenderer<'a> {
     }
 }
 
-fn activties_to_buttons(activities: &Vec<AppActivity>, status: AppTestStatus) -> Vec<Button> {
+fn activties_to_buttons(activities: &Vec<AppActivity>, status: AppTestStatus) -> Vec<Button<'_>> {
     let mut btns = Vec::new();
     for a in activities {
         if a.status == status {
