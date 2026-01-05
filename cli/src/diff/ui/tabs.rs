@@ -25,7 +25,7 @@ pub trait Tab {
     fn get_selected_idx(&self) -> usize;
     fn get_hidden_set(&self) -> HashSet<i32>;
     fn get_item_count(&self) -> usize;
-    fn get_list_items(&self) -> Vec<ListItem>;
+    fn get_list_items(&self) -> Vec<ListItem<'_>>;
     fn open_selection(&self, ctx: &dyn Context) -> anyhow::Result<()>;
     fn clipboard_selection(&self, ctx: &dyn Context) -> anyhow::Result<()>;
 
@@ -253,7 +253,7 @@ where
             .count()
     }
 
-    fn get_list_items(&self) -> Vec<ListItem> {
+    fn get_list_items(&self) -> Vec<ListItem<'_>> {
         let list_items = self
             .items
             .iter()

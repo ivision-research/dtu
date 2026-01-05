@@ -77,7 +77,7 @@ impl<'a> Applet<'a> {
         self.active_tab.get_selected_idx()
     }
 
-    pub fn get_active_items_list(&self) -> Vec<ListItem> {
+    pub fn get_active_items_list(&self) -> Vec<ListItem<'_>> {
         self.active_tab.get_list_items()
     }
 

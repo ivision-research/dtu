@@ -6,6 +6,7 @@ use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqlit
 use dtu::prereqs::Prereq;
 use dtu::DefaultContext;
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct ProviderValueParser;
 
