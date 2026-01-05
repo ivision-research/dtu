@@ -26,6 +26,12 @@ pub struct DeviceProperty {
     pub value: String,
 }
 
+impl Display for DeviceProperty {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:[{}]", self.name, self.value)
+    }
+}
+
 #[sql_db_row]
 pub struct Permission {
     pub id: i32,
@@ -113,11 +119,23 @@ pub struct ProtectedBroadcast {
     pub name: String,
 }
 
+impl Display for ProtectedBroadcast {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)
+    }
+}
+
 #[sql_db_row]
 pub struct UnprotectedBroadcast {
     pub id: i32,
     pub name: String,
     pub diff_source: i32,
+}
+
+impl Display for UnprotectedBroadcast {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)
+    }
 }
 
 #[sql_db_row]
@@ -174,6 +192,7 @@ impl Apk {
 }
 
 /// Apk with the associated permissions that it uses
+#[derive(Clone)]
 pub struct ApkWithPermissions {
     pub apk: Apk,
     pub permissions: Vec<String>,
@@ -869,6 +888,12 @@ impl Deref for DiffedSystemService {
 pub struct DiffSource {
     pub id: i32,
     pub name: String,
+}
+
+impl Display for DiffSource {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)
+    }
 }
 
 #[sql_db_row]
