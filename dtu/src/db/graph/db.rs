@@ -59,7 +59,7 @@ impl GraphSqliteDatabase {
     }
 
     #[inline]
-    pub(super) fn with_connection<F, R>(&self, f: F) -> R
+    pub fn with_connection<F, R>(&self, f: F) -> R
     where
         R: Send,
         F: FnOnce(&mut SqliteConnection) -> R + Send,
@@ -67,9 +67,8 @@ impl GraphSqliteDatabase {
         self.db_thread.with_connection(f)
     }
 
-    #[allow(unused)]
     #[inline]
-    pub(super) fn transaction<F, T, E>(&self, f: F) -> std::result::Result<T, E>
+    pub fn transaction<F, T, E>(&self, f: F) -> std::result::Result<T, E>
     where
         T: Send,
         E: From<diesel::result::Error> + Send,

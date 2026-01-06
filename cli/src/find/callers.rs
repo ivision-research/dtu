@@ -9,11 +9,11 @@ use dtu::utils::ClassName;
 #[derive(Args)]
 pub struct FindCallers {
     /// The source of the method to find callers to
-    #[arg(short, long)]
+    #[arg(short = 'M', long)]
     method_source: Option<String>,
 
     /// The source of the calls
-    #[arg(short, long)]
+    #[arg(short = 'C', long)]
     call_source: Option<String>,
 
     /// Method name

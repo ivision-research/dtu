@@ -1,0 +1,19 @@
+[package]
+name = "dtu-complete"
+version.workspace = true
+edition = "2021"
+
+[[bin]]
+name = "dtu-complete"
+path = "src/main.rs"
+
+[dependencies]
+dtu = { path = "../dtu" }
+anyhow = { workspace = true }
+lazy_static = { workspace = true }
+
+
+[build-dependencies]
+serde = { workspace = true }
+toml = { workspace = true }
+itertools = { workspace = true }

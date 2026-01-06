@@ -1,0 +1,530 @@
+[version]
+
+[gen-envrc]
+
+options = [
+    ["prompt", "P", "None", ""],
+    ["project-home", "p", "Dir", ""],
+    ["android-serial", "a", "Uncompletable", ""]
+]
+
+[pull]
+
+options = [
+    ["no-tui", "n", "None", ""],
+    ["quiet", "q", "None", ""],
+    ["force-vdex", "", "None", ""],
+    ["num-threads", "T", "Uncompletable", ""]
+]
+
+[db]
+
+[db.setup]
+
+options = [
+    ["force", "f", "None", ""],
+    ["quiet", "q", "None", ""],
+    ["no-diff", "", "None", ""],
+    ["api-level", "A", "Uncompletable", ""]
+]
+
+[db.emulator-diff]
+options = [
+    ["force", "f", "None", ""],
+    ["path", "p", "File", ""],
+    ["api-level", "A", "Uncompletable", ""]
+]
+
+[db.diff-source]
+
+[db.diff-source.add]
+options = [
+    ["path", "p", "File", ""],
+    ["name", "n", "Uncompletable", ""]
+]
+
+[db.diff-source.remove]
+options = [
+    ["source", "S", "DiffSource", ""]
+]
+
+[db.diff-source.list]
+
+[db.add-service-impl]
+options = [
+    ["service", "s", "Uncompletable", ""],
+    ["apk", "a", "Apk", ""],
+    ["class", "c", "Uncompletable", ""],
+    ["stub-file", "", "File", ""],
+    ["no-diff", "n", "None", ""],
+    ["no-remove", "", "None", ""],
+]
+
+[db.add-apk]
+options = [
+    ["apk", "a", "File", ""],
+    ["device-path", "d", "Uncompletable", ""],
+    ["no-diff", "", "None", ""],
+    ["no-remove", "", "None", ""],
+    ["quiet", "", "None", ""],
+    ["force", "f", "None", ""],
+]
+
+
+[db.wipe]
+
+[graph]
+
+[graph.setup]
+options = [
+    ["force", "f", "None", ""],
+    ["only-smalisa", "", "None", ""],
+    ["apk-denylist-file", "l", "File", ""],
+]
+
+[graph.wipe]
+
+[graph.add-apk-methods]
+options = [
+    ["apk", "a", "File", ""],
+]
+
+[graph.remove-source]
+options = [
+    ["apk", "a", "GraphSource", ""],
+]
+
+[meta]
+
+[meta.show-progress]
+options = [
+]
+
+[meta.clear-progress]
+options = [
+    ["step", "s", "Uncompletable", ""]
+]
+
+[meta.set-progress]
+options = [
+    ["step", "s", "Uncompletable", ""]
+]
+
+[of]
+options = [
+    ["apk", "a", "Apk", ""],
+    ["no-fallback", "", "None", ""],
+    ["dtu-open", "d", "None", ""],
+    ["class", "c", "GraphClass", ""],
+]
+
+[open-smali-file]
+options = [
+    ["apk", "a", "Apk", ""],
+    ["no-fallback", "", "None", ""],
+    ["dtu-open", "d", "None", ""],
+    ["class", "c", "GraphClass", ""],
+]
+
+
+[list]
+
+[list.apks]
+options = [
+    ["only-non-aosp", "n", "None", ""],
+    ["only-priv", "o", "None", ""],
+    ["show-path", "s", "None", ""],
+]
+
+[list.system-services]
+options = [
+    ["only-accessible", "A", "None", ""],
+    ["only-non-aosp", "n", "None", ""],
+    ["only-impls", "I", "None", ""],
+    ["only-no-impls", "N", "None", ""],
+]
+
+[list.system-service-methods]
+options = [
+    ["service", "s", "SystemService", ""],
+    ["only-non-aosp", "o", "None", ""],
+    ["json", "j", "None", ""],
+]
+
+[list.providers]
+options = [
+    ["only-public", "P", "None", ""],
+    ["only-enabled", "E", "None", ""],
+]
+
+[list.receivers]
+options = [
+    ["only-public", "P", "None", ""],
+    ["only-enabled", "E", "None", ""],
+]
+
+[list.activities]
+options = [
+    ["only-public", "P", "None", ""],
+    ["only-enabled", "E", "None", ""],
+]
+
+[list.services]
+options = [
+    ["only-public", "P", "None", ""],
+    ["only-enabled", "E", "None", ""],
+    ["only-returns-binder", "B", "None", ""],
+]
+
+[list.permissions]
+
+[list.interface-impl]
+options = [
+    ["class", "c", "GraphClass", ""],
+    ["apk", "a", "Apk", ""],
+    ["no-fallback", "", "None", ""],
+    ["show-source", "", "None", ""],
+]
+
+[list.children]
+options = [
+    ["class", "c", "GraphClass", ""],
+    ["apk", "a", "Apk", ""],
+    ["no-fallback", "", "None", ""],
+    ["show-source", "", "None", ""],
+]
+
+[find]
+
+[find.service-file]
+options = [
+    ["service", "s", "SystemService", ""],
+    ["open", "o", "None", ""],
+    ["dtu-open", "d", "None", ""],
+]
+
+[find.service-file.impl]
+
+[find.service-file.interface]
+
+[find.service-file.stub]
+
+[find.service-file.proxy]
+
+[find.protected-broadcast]
+options = [
+    ["containing", "c", "Uncompletable", ""]
+]
+
+[find.permission]
+options = [
+    ["containing", "c", "Uncompletable", ""]
+]
+
+
+[find.smali-file]
+options = [
+    ["class", "c", "GraphClass", ""],
+    ["apk", "a", "Apk", ""],
+    ["no-fallback", "", "None", ""],
+]
+
+[find.callers]
+options = [
+    ["method-source", "M", "GraphSource", ""],
+    ["call-source", "C", "GraphSource", ""],
+    ["name", "n", "GraphMethod", ""],
+    ["signature", "s", "GraphSignature", ""],
+    ["class", "c", "GraphClass", ""],
+    ["depth", "d", "Uncompletable", ""],
+]
+
+[find.intent-activities]
+options = [
+    ["apk", "a", "Apk", ""],
+    ["no-cache", "n", "None", ""],
+    ["json", "j", "None", ""],
+    ["only-priv", "o", "None", ""],
+    ["strict", "s", "None", ""],
+]
+
+[find.parse-uri]
+options = [
+    ["apk", "a", "Apk", ""],
+    ["no-cache", "n", "None", ""],
+    ["json", "j", "None", ""],
+]
+
+
+[find.ipc-calls]
+options = [
+    ["apk", "a", "Apk", ""],
+    ["no-cache", "n", "None", ""],
+    ["json", "j", "None", ""],
+    ["name", "n", "GraphMethod", ""],
+    ["signature", "s", "GraphSignature", ""],
+    ["class", "c", "GraphClass", ""],
+    ["depth", "d", "Uncompletable", ""],
+]
+
+
+[diff]
+
+[diff.ui]
+options = [
+    ["diff-source", "S", "DiffSource", ""]
+]
+
+[diff.system-services]
+options = [
+    ["diff-source", "S", "DiffSource", ""]
+]
+
+[diff.system-services.methods]
+options = [
+    ["service", "s", "SystemService", ""],
+    ["only-new", "N", "None", ""],
+    ["only-modified", "M", "None", ""],
+    ["only-interesting", "I", "None", ""],
+    ["only-binders", "B", "None", ""],
+    ["diff-source", "S", "DiffSource", ""]
+]
+
+
+[diff.apks]
+options = [
+    ["diff-source", "S", "DiffSource", ""]
+]
+[diff.apks.providers]
+options = [
+    ["apk", "a", "Apk", ""],
+    ["diff-source", "S", "DiffSource", ""]
+]
+
+[diff.apks.receivers]
+options = [
+    ["apk", "a", "Apk", ""],
+    ["no-perms", "", "None", ""],
+    ["allow-normal-perms", "", "None", ""],
+    ["diff-source", "S", "DiffSource", ""]
+]
+
+[diff.apks.activities]
+options = [
+    ["apk", "a", "Apk", ""],
+    ["no-perms", "", "None", ""],
+    ["allow-normal-perms", "", "None", ""],
+    ["diff-source", "S", "DiffSource", ""]
+]
+
+[diff.apks.services]
+options = [
+    ["apk", "a", "Apk", ""],
+    ["no-perms", "", "None", ""],
+    ["allow-normal-perms", "", "None", ""],
+    ["diff-source", "S", "DiffSource", ""]
+]
+
+
+[app]
+
+[app.build]
+[app.install]
+[app.set-app-id]
+[app.setup]
+options = [
+    ["force", "f", "None", ""],
+    ["gradle-version", "", "Uncompletable", ""],
+    ["project-name", "p", "Uncompletable", ""],
+    ["pkg", "P", "Uncompletable", ""],
+    ["app-id", "I", "Uncompletable", ""],
+]
+[app.new-system-service]
+options = [
+    ["service", "s", "SystemService", ""],
+    ["interface", "I", "Uncompletable", ""],
+    ["method", "m", "SystemServiceMethod", ""],
+    ["txn-id", "", "Uncompletable", ""],
+    ["button-text", "T", "Uncompletable", ""],
+    ["name", "n", "Uncompletable", ""],
+    ["open", "", "None", ""],
+]
+[app.new-provider]
+options = [
+    ["authority", "a", "ProviderAuthority", ""],
+    ["button-text", "T", "Uncompletable", ""],
+    ["name", "n", "Uncompletable", ""],
+    ["open", "", "None", ""],
+]
+[app.new-generic]
+options = [
+    ["button-text", "T", "Uncompletable", ""],
+    ["name", "n", "Uncompletable", ""],
+    ["open", "", "None", ""],
+]
+[app.new-app-service]
+options = [
+    ["iface", "I", "Uncompletable", ""],
+    ["class", "c", "GraphClass", ""],
+    ["pkg", "p", "Uncompletable", ""],
+    ["txn-id", "", "Uncompletable", ""],
+    ["button-text", "T", "Uncompletable", ""],
+    ["name", "n", "Uncompletable", ""],
+    ["open", "", "None", ""],
+]
+
+[app.change-status]
+options = [
+    ["activity", "a", "TestName", ""],
+    ["status", "s", "Uncompletable", ""]
+]
+
+[app.remove-test]
+options = [
+    ["activity", "a", "TestName", ""]
+]
+
+[app.list-tests]
+[app.forward-server]
+options = [
+    ["local-port", "L", "Uncompletable", ""],
+    ["device-port", "D", "Uncompletable", ""]
+]
+
+[app.start]
+[app.start-server]
+[app.run-test]
+options = [
+    ["activity", "a", "TestName", ""]
+]
+
+[broadcast]
+options = [
+    ["action", "a", "Uncompletable", ""],
+    ["component", "c", "Receiver", ""],
+    ["data", "d", "Uncompletable", ""],
+    ["flags", "f", "Uncompletable", ""]
+]
+
+[start-activity]
+options = [
+    ["action", "a", "Uncompletable", ""],
+    ["component", "c", "Activity", ""],
+    ["data", "d", "Uncompletable", ""],
+    ["flags", "f", "Uncompletable", ""]
+]
+
+[start-service]
+options = [
+    ["action", "a", "Uncompletable", ""],
+    ["component", "c", "Service", ""],
+    ["data", "d", "Uncompletable", ""],
+    ["flags", "f", "Uncompletable", ""]
+]
+
+
+[provider]
+options = [
+    ["authority", "a", "ProviderAuthority", ""],
+]
+
+[provider.query]
+options = [
+    ["path", "P", "Uncompletable", ""],
+    ["query", "q", "Uncompletable", ""],
+    ["selection", "s", "Uncompletable", ""],
+    ["selection-args", "A", "Uncompletable", ""],
+    ["sort-order", "o", "Uncompletable", ""],
+    ["projection", "p", "Uncompletable", ""],
+    ["query-args", "Q", "Uncompletable", ""],
+]
+[provider.call]
+options = [
+    ["method", "m", "Uncompletable", ""],
+    ["args", "a", "Uncompletable", ""],
+    ["path", "p", "Uncompletable", ""],
+    ["query", "q", "Uncompletable", ""],
+]
+[provider.insert]
+options = [
+    ["path", "p", "Uncompletable", ""],
+    ["query", "q", "Uncompletable", ""],
+]
+
+[provider.delete]
+options = [
+    ["path", "p", "Uncompletable", ""],
+    ["query", "q", "Uncompletable", ""],
+    ["where-clause", "S", "Uncompletable", ""],
+    ["selection-args", "A", "Uncompletable", ""],
+]
+
+[provider.read-file]
+options = [
+    ["file", "f", "Uncompletable", ""],
+    ["out-file", "o", "File", ""],
+    ["query", "q", "Uncompletable", ""],
+    ["decode", "d", "None", ""],
+]
+
+[provider.write-file]
+options = [
+    ["file", "f", "Uncompletable", ""],
+    ["data", "d", "Uncompletable", ""],
+    ["query", "q", "Uncompletable", ""],
+    ["b64", "", "None", ""],
+]
+
+[fuzz]
+[fuzz.import]
+options = [
+    ["file", "f", "File", ""],
+]
+
+[fuzz.unprotected]
+[fuzz.logcat]
+options = [
+    ["subdir", "", "Uncompletable", ""],
+]
+
+[sh]
+options = [
+    ["file", "f", "File", ""],
+    ["sh", "", "Uncompletable", ""],
+    ["cmd", "c", "Uncompletable", ""],
+]
+
+
+[shell-cmd]
+options = [
+    ["service", "s", "SystemService", ""],
+    ["timeout", "t", "Uncompletable", ""],
+    ["command", "c", "Uncompletable", ""],
+]
+
+[run-check]
+
+[call]
+
+[call.system-service]
+options = [
+    ["service", "s", "SystemService", ""],
+    ["interface", "I", "Uncompletable", ""],
+    ["method", "m", "SystemServiceMethod", ""],
+    ["txn", "t", "Uncompletable", ""]
+]
+
+[call.app-service]
+options = [
+    ["apk", "a", "Apk", ""],
+    ["class", "c", "GraphClass", ""],
+    ["interface", "I", "Uncompletable", ""],
+    ["action", "a", "Uncompletable", ""],
+    ["txn", "t", "Uncompletable", ""]
+]
+
+[selinux]
+[selinux.pull]
+options = [
+    ["force", "f", "None", ""]
+]
