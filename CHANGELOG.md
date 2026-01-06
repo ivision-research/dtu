@@ -20,6 +20,7 @@ This new version contains significant breaking changes to the graph database and
 - Create Python bindings for the databases and the application server
 - Exposed some functionality that was not previous `pub` or was just `pub (crate)`
 - Removed some restructions on `find-callers`
+- Added `dtu-complete`
 
 # 4.2.0
 

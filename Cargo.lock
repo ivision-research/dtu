@@ -807,6 +807,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dtu-complete"
+version = "5.0.0-beta"
+dependencies = [
+ "anyhow",
+ "dtu",
+ "itertools",
+ "lazy_static",
+ "serde",
+ "toml",
+]
+
+[[package]]
 name = "dtu-decompile"
 version = "5.0.0-beta"
 dependencies = [
