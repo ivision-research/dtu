@@ -45,7 +45,6 @@ mockall = { workspace = true }
 
 [features]
 default = ["unicode", "emoji"]
-neo4j = ["dtu/neo4j"]
 trace_db = ["dtu/trace_db"]
 decompile-bin = []
 unicode = []

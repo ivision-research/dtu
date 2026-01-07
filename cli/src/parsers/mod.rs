@@ -13,11 +13,6 @@ pub use app_activity::AppActivityValueParser;
 mod provider;
 //pub use provider::ProviderValueParser;
 
-#[cfg(feature = "neo4j")]
-mod heap_size;
-#[cfg(feature = "neo4j")]
-pub use heap_size::HeapSizeValueParser;
-
 mod diff_source;
 pub use diff_source::DiffSourceValueParser;
 

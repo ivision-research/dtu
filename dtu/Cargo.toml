@@ -49,10 +49,6 @@ miette = { version = "5.10.0", features = ["fancy"], optional = true }
 smartstring = { version = "1.0.1", features = ["serde"], optional = true }
 graph = { version = "0.3.1", optional = true }
 
-# Neo4j
-neo4rs = { version = "0.7", optional = true }
-tokio = { version = "1.0", features = ["rt"], optional = true }
-
 [target.'cfg(not(windows))'.dependencies]
 libc = { workspace = true }
 
@@ -90,12 +86,8 @@ setup = ["cozo", "decompile", "dep:smalisa"]
 
 _graph = ["dep:smalisa", "reexport_smalisa"]
 
-# Don't fully remove neo4j yet, just put it behind a feature
-neo4j = ["dep:neo4rs", "dep:tokio", "_graph"]
 reexport_smalisa = ["dep:smalisa"]
 reexport_diesel = []
 reexport_askama = []
 # Trace database commands
 trace_db = []
-# neo4j tests require some setup to run, don't run them by default
-neo4j_tests = ["neo4j"]

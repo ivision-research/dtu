@@ -3,10 +3,6 @@ use dtu::db::sql::meta::get_default_metadb;
 use dtu::db::sql::MetaDatabase;
 use dtu::prereqs::Prereq;
 use dtu::DefaultContext;
-#[cfg(feature = "neo4j")]
-mod neo4j;
-#[cfg(feature = "neo4j")]
-use neo4j::*;
 
 use crate::parsers::DevicePathValueParser;
 use dtu::db::graph::{get_default_graphdb, GraphDatabase};
@@ -26,16 +22,6 @@ pub struct Graph {
 
 #[derive(Subcommand)]
 enum Command {
-    #[cfg(feature = "neo4j")]
-    /// Start the graph docker container
-    #[command()]
-    StartNeo4j(StartNeo4j),
-
-    #[cfg(feature = "neo4j")]
-    /// Stop the graph docker container
-    #[command()]
-    StopNeo4j(StopNeo4j),
-
     /// Partially set up the graph database, this only sets up what is needed
     /// to create the SQLite database
     #[command()]
@@ -78,10 +64,6 @@ enum Command {
 impl Graph {
     pub fn run(self) -> anyhow::Result<()> {
         match self.command {
-            #[cfg(feature = "neo4j")]
-            Command::StartNeo4j(c) => c.run(),
-            #[cfg(feature = "neo4j")]
-            Command::StopNeo4j(c) => c.run(),
             Command::Setup(c) => c.run(),
             Command::FullSetup(c) => c.run(),
             Command::AddApkMethods(c) => c.run(),

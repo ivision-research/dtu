@@ -112,30 +112,6 @@ pub fn get_adb(ctx: &dyn Context, prompt_on_multiple: bool) -> anyhow::Result<Ex
     return Ok(ExecAdb::builder(ctx).with_serial(serial.clone()).build());
 }
 
-/// Check to see that the graph docker container is running
-#[cfg(feature = "neo4j")]
-pub fn ensure_neo4j(ctx: &dyn Context, use_sudo: bool) -> anyhow::Result<()> {
-    let mut args = Vec::new();
-
-    let docker = ctx.get_bin("docker")?;
-
-    let cmd = if use_sudo {
-        args.push(docker.as_str());
-        ctx.get_bin("sudo")?
-    } else {
-        docker
-    };
-
-    let filter = format!("name={}", crate::consts::NEO4J_CONTAINER_NAME);
-    args.extend(&["ps", "-q", "-f", &filter]);
-
-    let out = run_cmd(&cmd, args.as_slice())?.err_on_status()?;
-    if out.stdout.len() == 0 {
-        bail!("graph docker container not running");
-    }
-    Ok(())
-}
-
 #[cfg(windows)]
 pub fn exec_open_file(ctx: &dyn Context, file_name: &str) -> anyhow::Result<()> {
     invoke_dtu_open_file(ctx, file_name, "")
