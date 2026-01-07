@@ -11,11 +11,17 @@ pub struct PyContext(DefaultContext);
 
 type Result<T> = std::result::Result<T, DtuBaseError>;
 
+impl Default for PyContext {
+    fn default() -> Self {
+        Self(DefaultContext::new())
+    }
+}
+
 #[pymethods]
 impl PyContext {
     #[new]
     fn new() -> Self {
-        Self(DefaultContext::new())
+        Self::default()
     }
 
     fn get_target_api_level(&self) -> u32 {
@@ -92,10 +98,6 @@ impl PyContext {
 
     fn get_graph_import_dir(&self) -> Result<PathBuf> {
         Ok(self.0.get_graph_import_dir()?)
-    }
-
-    fn get_neo4j_dir(&self) -> Result<PathBuf> {
-        Ok(self.0.get_neo4j_dir()?)
     }
 
     fn get_selinux_dir(&self) -> Result<PathBuf> {

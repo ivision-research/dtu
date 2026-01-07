@@ -34,9 +34,9 @@ The `tl;dr` for staring a project is:
 # Pull all files -- this is a resource intensive operation and takes a while
 dtu pull
 
-# Populate the graph database. This is also resource intensive and takes a while, you can
-# also just do `setup` which is faster but leaves out calls
-dtu graph full-setup
+# Analyze all smali files and populate the graph database. This is also a
+# resource intensive operation
+dtu graph setup
 
 # Set up the sqlite database, this is used for a lot of queries throughout the program.
 # You can pass `--no-diff`, but emulator diffing is highly recommended.
@@ -49,7 +49,7 @@ dtu app setup
 dtu app install
 ```
 
-Note this takes _a long time_: you are pulling, decompiling, and analyzing the device's Java framework in the setup. The first three commands are required for anything else `dtu` does. The test application is not required for everything, but should be built and installed since the server is used for a lot of `dtu`s functionality.
+Note this series of commands takes a long time: you are pulling, decompiling, and analyzing the device's Java framework in the setup. The first three commands are required for anything else `dtu` does. The test application is not required for everything, but should be built and installed since the server is used for a lot of `dtu`s functionality.
 
 ### `dtu pull`
 
@@ -60,7 +60,7 @@ Note this takes _a long time_: you are pulling, decompiling, and analyzing the d
 
 ### `dtu graph setup`
 
-Parse the decompiled `smali` files and create a [Cozo graph database](github.com/cozodb/cozo) of the entire device's framework and every APK. This takes a while, but once done you are given an inheritance and call graph. `dtu` provides some canned queries for this graph database, but it is often used behind the scenes even if you never query it directly. This database is also accessible via the `dtu` crate. Note that previous versions of `dtu` used Neo4j for the graph database, and some of this code still exists, but development on that halted over a year ago and work would likely need to be done to get it working again.
+Parse and analyze the decompiled `smali` files and create a graph database (sqlite) of the entire device's framework and every APK. Once this is complete, you will have an inheritance and call graph that can be queried. `dtu` provides some canned queries for this graph database, but it is often used behind the scenes even if you never query it directly. This database is also accessible via the `dtu` crate and Python bindings.
 
 ### `dtu db setup`
 
@@ -118,3 +118,17 @@ There are a few limitations due to the static nature of this testing, but it has
 ## The dtu crate
 
 `dtu` is a command line tool and a Rust crate. You can directly access the two databases, the test application server, and other potentially interesting features via this crate. The API should be stable across major releases. We try to maintain backwards compatibility when possible.
+
+## The dtu Python module
+
+`dtu` also [exposes some bindings via Python](./dtu-py). While not all functionality that is available in the Rust crate is available there is a significant amount:
+
+- The `Context` object - `dtu.Context`
+- Read only access to the graph - `dtu.GraphDB`
+- Read only access to the device database - `dtu.DeviceDB`
+- ADB access - `dtu.Adb`
+- Access to the application server - `dtu.AppServer`
+- Device filesystem access - `dtu.DeviceFS`
+- dtu file store access - `dtu.FileStore`
+
+Documentation is available via `help(dtu)` in the Python REPL.

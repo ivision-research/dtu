@@ -15,7 +15,7 @@ use super::schema::*;
 use crate::prereqs::Prereq;
 use crate::utils::DevicePath;
 
-#[derive(Queryable, Insertable, AsChangeset)]
+#[sql_db_row]
 #[diesel(table_name = progress)]
 pub struct ProgressStep {
     pub step: Prereq,

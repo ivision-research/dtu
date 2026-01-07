@@ -1,6 +1,9 @@
+// TODO: The setup here is old and not efficient at all. For one, none of the inserts happen in a
+// transaction. We should be able to easily add an APK in single unified a transaction. The database
+// also has no indices. I'd like to see the device database loading reworked to be more efficient
+// and fault tolerant.
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::fs::DirEntry;
 use std::ops::Deref;
 use std::path::PathBuf;
@@ -21,7 +24,7 @@ use crate::command::err_on_status;
 use crate::context::Context;
 use crate::db::graph::db;
 use crate::db::graph::db::{GraphDatabase, FRAMEWORK_SOURCE};
-use crate::db::graph::models::ClassMeta;
+use crate::db::graph::models::{ClassSearch, ClassSpec};
 use crate::db::sql::common::Error;
 use crate::db::sql::device::db::Database;
 use crate::db::sql::device::models::*;
@@ -501,7 +504,7 @@ impl<'a> AddSystemServiceTask<'a> {
         Ok(())
     }
 
-    fn update_method_hashes(&self, service_db_id: i32, imp: &ClassMeta) -> SetupResult<()> {
+    fn update_method_hashes(&self, service_db_id: i32, imp: &ClassSpec) -> SetupResult<()> {
         let path = match self.get_class_smali_path(&imp) {
             None => {
                 log::warn!("failed to find the smali file for {}", imp.name);
@@ -589,13 +592,13 @@ impl<'a> AddSystemServiceTask<'a> {
         &self,
         service_db_id: i32,
         stub: &ClassName,
-    ) -> SetupResult<Option<ClassMeta>> {
+    ) -> SetupResult<Option<ClassSpec>> {
         let graph = self.graph.ok_or_else(|| SetupError::NoGraphDatabase)?;
         let impls = graph
-            .find_child_classes_of(&stub, None)?
+            .find_child_classes_of(&ClassSearch::from(stub), None)?
             .into_iter()
             .filter(|it| it.is_not_abstract())
-            .collect::<Vec<ClassMeta>>();
+            .collect::<Vec<ClassSpec>>();
 
         if impls.len() == 0 {
             log::warn!(
@@ -644,7 +647,7 @@ impl<'a> AddSystemServiceTask<'a> {
     fn get_methods_and_stubs_file(
         &self,
         stub: &ClassName,
-    ) -> SetupResult<Option<(HashMap<String, MethodMeta>, PathBuf)>> {
+    ) -> SetupResult<Option<(HashMap<String, MethodData>, PathBuf)>> {
         if let Some(p) = self.stub_path {
             return Ok(Some((self.get_methods_from_stubs_file(p)?, p.clone())));
         }
@@ -664,15 +667,15 @@ impl<'a> AddSystemServiceTask<'a> {
         Ok(None)
     }
 
-    /// Use smalisa to get part of the MethodMeta from the $Stub file
+    /// Use smalisa to get part of the MethodData from the $Stub file
     ///
     /// This will get the names and transaction numbers of all methods, but
     /// it won't get the signatures
     fn get_methods_from_stubs_file(
         &self,
         stub_path: &PathBuf,
-    ) -> SetupResult<HashMap<String, MethodMeta>> {
-        let mut methods: HashMap<String, MethodMeta> = HashMap::new();
+    ) -> SetupResult<HashMap<String, MethodData>> {
+        let mut methods: HashMap<String, MethodData> = HashMap::new();
         let mut stub_file = open_file(stub_path)?;
         let stub_lexer = Lexer::new(&mut stub_file);
         let mut stub_parser = Parser::new(stub_lexer);
@@ -691,7 +694,7 @@ impl<'a> AddSystemServiceTask<'a> {
             match &line {
                 Line::Field(fld) => {
                     if fld.name.starts_with("TRANSACTION") {
-                        if let Some(meta) = MethodMeta::from_field(fld) {
+                        if let Some(meta) = MethodData::from_field(fld) {
                             methods.insert(meta.name.clone(), meta);
                         }
                     }
@@ -762,7 +765,7 @@ impl<'a> AddSystemServiceTask<'a> {
     fn try_update_method_signatures_inner(
         &self,
         iface_path: &PathBuf,
-        methods: &mut HashMap<String, MethodMeta>,
+        methods: &mut HashMap<String, MethodData>,
     ) -> SetupResult<bool> {
         let mut mod_count = 0;
 
@@ -798,7 +801,7 @@ impl<'a> AddSystemServiceTask<'a> {
         &self,
         stubs_file: &PathBuf,
         iface: &ClassName,
-        methods: &mut HashMap<String, MethodMeta>,
+        methods: &mut HashMap<String, MethodData>,
     ) -> SetupResult<()> {
         // Look for the interface right next to the $Stub
         let iface_path =
@@ -829,7 +832,7 @@ impl<'a> AddSystemServiceTask<'a> {
         Ok(())
     }
 
-    fn get_class_smali_path(&self, imp: &ClassMeta) -> Option<PathBuf> {
+    fn get_class_smali_path(&self, imp: &ClassSpec) -> Option<PathBuf> {
         let apk = if imp.source == FRAMEWORK_SOURCE {
             None
         } else {
@@ -1538,7 +1541,7 @@ impl<'a> DBSetupTask<'a> {
     ) -> SetupResult<usize> {
         log::trace!("adding apks from dir: {:?}", dir);
         self.cancel_check()?;
-        let files = fs::read_dir(&dir)?
+        let files = std::fs::read_dir(&dir)?
             .filter(|r| {
                 r.as_ref().map_or(false, |e| {
                     let path = e.path();
@@ -1669,14 +1672,14 @@ impl<'a> DBSetupTask<'a> {
     }
 }
 
-struct MethodMeta {
+struct MethodData {
     name: String,
     txn_id: i32,
     sig: Option<String>,
     ret: Option<String>,
 }
 
-impl MethodMeta {
+impl MethodData {
     fn update_from_header(&mut self, hdr: &MethodHeader) {
         self.sig = Some(String::from(hdr.args));
         self.ret = Some(hdr.return_type.to_string());

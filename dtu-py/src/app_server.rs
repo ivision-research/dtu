@@ -1,9 +1,12 @@
 use std::{borrow::Cow, collections::HashMap};
 
-use dtu::app_server::{
-    extract_string_from_json, maybe_extract_string_from_json, AppServer, CallAppService,
-    CallSystemService, Command, CommandResult, IntentData, ProviderCommand, ProviderSubcommand,
-    TcpAppServer,
+use dtu::{
+    app_server::{
+        extract_string_from_json, maybe_extract_string_from_json, AppServer, CallAppService,
+        CallSystemService, Command, CommandResult, IntentData, ProviderCommand, ProviderSubcommand,
+        TcpAppServer,
+    },
+    utils::ClassName,
 };
 
 use pyo3::prelude::*;
@@ -13,7 +16,6 @@ use crate::{
     exception::DtuError,
     intent_string::build_intent_string,
     parcel_string::{build_parcel_string, ParcelValue},
-    types::PyClassName,
 };
 
 #[pyclass(name = "AppServer")]
@@ -35,15 +37,25 @@ impl From<AppServerError> for PyErr {
 
 type Result<T> = std::result::Result<T, AppServerError>;
 
+/// Allows interaction with the application server running on the device. This requires both the dtu
+/// test application installed and the port forwarded appropriately to work.
 #[pymethods]
 impl PyAppServer {
+    /// Create a new AppServer from the given Context. This is the recommended way to create a new
+    /// application server connection, as it will respect settings that change the port.
     #[new]
-    fn new(ctx: &PyContext) -> PyResult<Self> {
+    #[pyo3(signature = (ctx = None))]
+    fn new(ctx: Option<&PyContext>) -> PyResult<Self> {
         Ok(Self(
-            TcpAppServer::from_ctx(ctx).map_err(|e| DtuError::new_err(e.to_string()))?,
+            match ctx {
+                Some(v) => TcpAppServer::from_ctx(v),
+                None => TcpAppServer::from_ctx(&dtu::DefaultContext::new()),
+            }
+            .map_err(|e| DtuError::new_err(e.to_string()))?,
         ))
     }
 
+    /// Connect to the application server at the given address and port.
     #[staticmethod]
     fn connect(addr: &str, port: u16) -> PyResult<Self> {
         Ok(Self(
@@ -51,12 +63,12 @@ impl PyAppServer {
         ))
     }
 
-    fn sh(&mut self, cmd: &str) -> Result<PyCommandResult> {
-        Ok(PyCommandResult::from(self.0.sh(cmd)?))
-    }
-
+    /// Run a shell command in the context of the test application
+    ///
+    /// The optional `shell` parameter allows choosing the shell program to use, otherwise the
+    /// default `/system/bin/sh` is used.
     #[pyo3(signature = (cmd, *, shell = None))]
-    fn sh_with_shell(&mut self, cmd: &str, shell: Option<&str>) -> Result<PyCommandResult> {
+    fn sh(&mut self, cmd: &str, shell: Option<&str>) -> Result<PyCommandResult> {
         Ok(PyCommandResult::from(self.0.sh_with_shell(cmd, shell)?))
     }
 
@@ -77,6 +89,9 @@ impl PyAppServer {
         Ok(maybe_extract_string_from_json("uri", &res)?)
     }
 
+    /// Query the given provider
+    ///
+    /// The `query_args` must be provided as `ParcelValue` instances
     #[pyo3(signature = (uri, *, projection = None, selection = None, selection_args = None, query_args = None, sort_order = None))]
     fn provider_query(
         &mut self,
@@ -132,48 +147,60 @@ impl PyAppServer {
         ))
     }
 
+    /// Call a method on the given system service.
+    ///
+    /// The parcel_data must be provided as a list of `ParcelValue` instances
     #[pyo3(signature = (name, txn, *, iface = None, parcel_data = None))]
     fn call_system_service(
         &mut self,
         name: &str,
         txn: u32,
-        iface: Option<&PyClassName>,
+        iface: Option<&str>,
         parcel_data: Option<Vec<ParcelValue>>,
     ) -> Result<String> {
+        let iface = iface.map(ClassName::from);
         let parcel_data = parcel_data.as_ref().map(build_parcel_string);
         let payload = CallSystemService {
             name,
             txn,
-            iface: iface.map(PyClassName::as_ref),
+            iface: iface.as_ref(),
             parcel_data: parcel_data.as_ref().map(String::as_str),
         };
         let res = self.0.send_command(Command::SystemService, &payload)?;
         Ok(extract_string_from_json("response", &res)?)
     }
 
+    /// Call a method on the given application service.
+    ///
+    /// The parcel_data must be provided as a list of `ParcelValue` instances
     #[pyo3(signature = (txn, package, class, *, iface = None, action = None, parcel_data = None))]
     fn call_app_service(
         &mut self,
         txn: u32,
         package: &str,
-        class: &PyClassName,
-        iface: Option<&PyClassName>,
+        class: &str,
+        iface: Option<&str>,
         action: Option<&str>,
         parcel_data: Option<Vec<ParcelValue>>,
     ) -> Result<String> {
+        let class = ClassName::from(class);
+        let iface = iface.map(ClassName::from);
         let parcel_data = parcel_data.as_ref().map(build_parcel_string);
         let payload = CallAppService {
             txn,
             package,
             class: class.as_ref(),
             action,
-            iface: iface.map(PyClassName::as_ref),
+            iface: iface.as_ref(),
             parcel_data: parcel_data.as_ref().map(String::as_str),
         };
         let res = self.0.send_command(Command::AppService, &payload)?;
         Ok(extract_string_from_json("response", &res)?)
     }
 
+    /// Send a broadcast from the context of the test application
+    ///
+    /// The `intent_data` values must be provided as a map of strings to `ParcelValue` instances
     #[pyo3(signature = (action = None, data = None, package = None, class = None, flags = None, intent_data = None))]
     fn broadcast(
         &mut self,
@@ -197,6 +224,9 @@ impl PyAppServer {
         Ok(self.0.send_command(Command::Broadcast, &payload)?)
     }
 
+    /// Start a service from the context of the test application
+    ///
+    /// The `intent_data` values must be provided as a map of strings to `ParcelValue` instances
     #[pyo3(signature = (action = None, data = None, package = None, class = None, flags = None, intent_data = None))]
     fn start_service(
         &mut self,
@@ -220,6 +250,9 @@ impl PyAppServer {
         Ok(self.0.send_command(Command::StartService, &payload)?)
     }
 
+    /// Start an activity from the context of the test application
+    ///
+    /// The `intent_data` values must be provided as a map of strings to `ParcelValue` instances
     #[pyo3(signature = (action = None, data = None, package = None, class = None, flags = None, intent_data = None))]
     fn start_activity(
         &mut self,

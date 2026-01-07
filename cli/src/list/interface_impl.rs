@@ -1,7 +1,8 @@
 use anyhow::bail;
 use clap::Args;
 use dtu::db::graph::db::FRAMEWORK_SOURCE;
-use dtu::db::graph::{get_default_graphdb, ClassMeta, GraphDatabase};
+use dtu::db::graph::models::ClassSearch;
+use dtu::db::graph::{get_default_graphdb, ClassSpec, GraphDatabase};
 use dtu::prereqs::Prereq;
 use dtu::utils::{ensure_prereq, ClassName, DevicePath};
 use dtu::DefaultContext;
@@ -9,12 +10,12 @@ use dtu::DefaultContext;
 use crate::parsers::DevicePathValueParser;
 
 #[derive(Args)]
-pub struct Children {
-    /// The parent class name
+pub struct InterfaceImpl {
+    /// The interface name to find implementations for
     #[arg(short, long)]
     class: ClassName,
 
-    /// The APK to look for the child classes in
+    /// The APK to look for the implementation in
     ///
     /// If this isn't set, it is assumed that the framework is to be searched.
     /// If nothing is found in the framework, and `--no-fallback` isn't set,
@@ -31,38 +32,41 @@ pub struct Children {
     show_source: bool,
 }
 
-impl Children {
+impl InterfaceImpl {
     pub fn run(&self) -> anyhow::Result<()> {
         let ctx = DefaultContext::new();
-        ensure_prereq(&ctx, Prereq::GraphDatabasePartialSetup)?;
+        ensure_prereq(&ctx, Prereq::GraphDatabaseSetup)?;
         let source = self
             .apk
             .as_ref()
             .map(|it| it.as_squashed_str())
             .unwrap_or_else(|| FRAMEWORK_SOURCE);
-
         let gdb = get_default_graphdb(&ctx)?;
         let is_framework = self.apk.is_none();
-        let children = gdb.find_child_classes_of(&self.class, Some(source))?;
-        if children.len() > 0 {
-            self.show_children(&children);
+
+        let search = ClassSearch::new(&self.class, Some(source));
+
+        let impls = gdb.find_classes_implementing(&search, None)?;
+        if impls.len() > 0 {
+            self.show_impls(&impls);
             return Ok(());
         }
-
         if !is_framework || self.no_fallback {
-            bail!("no child classes found");
+            bail!("no implementations found");
         }
 
-        let children = gdb.find_classes_implementing(&self.class, None)?;
-        if children.len() == 0 {
-            bail!("no child classes found");
+        let search = ClassSearch::new(&self.class, None);
+
+        let impls = gdb.find_classes_implementing(&search, None)?;
+        if impls.len() == 0 {
+            bail!("no implementations found");
         }
-        self.show_children(&children);
-        Ok(())
+        self.show_impls(&impls);
+        return Ok(());
     }
 
-    fn show_children(&self, children: &Vec<ClassMeta>) {
-        for imp in children {
+    fn show_impls(&self, impls: &Vec<ClassSpec>) {
+        for imp in impls {
             if self.show_source {
                 println!("{}|{}", imp.name, imp.source);
             } else {

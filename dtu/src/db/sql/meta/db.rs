@@ -2,6 +2,7 @@ use diesel::prelude::*;
 use diesel::{delete, insert_into, update};
 use diesel_migrations::{embed_migrations, EmbeddedMigrations};
 
+use crate::db::sql::meta::schema::{app_activities, app_permissions, key_values, progress};
 use crate::Context;
 
 use super::common::*;
@@ -126,18 +127,39 @@ impl Database for MetaSqliteDatabase {
     impl_update_one!(update_decompile_status, DecompileStatus, decompile_status);
     impl_delete_by!(delete_decompile_status_by_id, i32, decompile_status, id.eq);
 
-    impl_get_all!(get_all_progress, ProgressStep, progress);
-    impl_get_one_by!(get_progress, Prereq, ProgressStep, progress, step.eq);
+    fn get_progress(&self, sel: Prereq) -> Result<ProgressStep> {
+        Ok(self.with_connection(|conn| {
+            query!(progress::table.filter(progress::step.eq(sel)).limit(1))
+                .get_result::<(i32, Prereq, bool)>(conn)
+                .map(|it| ProgressStep {
+                    step: it.1,
+                    completed: it.2,
+                })
+        })?)
+    }
+
+    fn get_all_progress(&self) -> Result<Vec<ProgressStep>> {
+        self.with_connection(|conn| {
+            Ok(progress::table
+                .load::<(i32, Prereq, bool)>(conn)?
+                .into_iter()
+                .map(|it| ProgressStep {
+                    step: it.1,
+                    completed: it.2,
+                })
+                .collect())
+        })
+    }
 
     fn update_progress(&self, prog: &ProgressStep) -> Result<()> {
         self.with_connection(|conn| {
-            use super::schema::progress::dsl::*;
-            update(progress.filter(step.eq(prog.step)))
-                .set(completed.eq(prog.completed))
-                .execute(conn)?;
+            query!(update(progress::table.filter(progress::step.eq(prog.step)))
+                .set(progress::completed.eq(prog.completed)))
+            .execute(conn)?;
             Ok(())
         })
     }
+
     fn prereq_done(&self, prereq: Prereq) -> Result<bool> {
         Ok(self.get_progress(prereq)?.completed)
     }
@@ -162,11 +184,12 @@ impl Database for MetaSqliteDatabase {
     }
 
     fn set_app_permission_usability(&self, name: &str, is_usable: bool) -> Result<()> {
-        use super::schema::app_permissions::dsl::*;
         self.with_connection(|conn| {
-            update(app_permissions.filter(permission.eq(name)))
-                .set(usable.eq(is_usable))
-                .execute(conn)?;
+            query!(
+                update(app_permissions::table.filter(app_permissions::permission.eq(name)))
+                    .set(app_permissions::usable.eq(is_usable))
+            )
+            .execute(conn)?;
             Ok(())
         })
     }
@@ -196,10 +219,8 @@ impl Database for MetaSqliteDatabase {
     );
 
     fn app_activity_name_taken(&self, check_name: &str) -> Result<bool> {
-        use super::schema::app_activities::dsl::*;
         self.with_connection(|c| {
-            match app_activities
-                .filter(name.eq(check_name))
+            match query!(app_activities::table.filter(app_activities::name.eq(check_name)))
                 .get_result::<AppActivity>(c)
             {
                 Err(diesel::result::Error::NotFound) => Ok(false),
@@ -220,33 +241,33 @@ impl Database for MetaSqliteDatabase {
     }
 
     fn add_key_value(&self, key: &str, value: &str) -> Result<()> {
-        use super::schema::key_values::dsl;
         let ins = InsertKeyValue { key, value };
-        self.with_connection(|c| insert_into(dsl::key_values).values(&ins).execute(c))?;
+        self.with_connection(|c| query!(insert_into(key_values::table).values(&ins)).execute(c))?;
         Ok(())
     }
 
     fn update_key_value(&self, key: &str, value: &str) -> Result<()> {
         use super::schema::key_values::dsl;
         self.with_connection(|c| {
-            update(dsl::key_values)
+            query!(update(dsl::key_values)
                 .filter(dsl::key.eq(key))
-                .set(dsl::value.eq(value))
-                .execute(c)
+                .set(dsl::value.eq(value)))
+            .execute(c)
         })?;
         Ok(())
     }
 
     fn get_key_value(&self, key: &str) -> Result<String> {
-        use super::schema::key_values::dsl;
-        let res: KeyValue =
-            self.with_connection(|c| dsl::key_values.filter(dsl::key.eq(key)).get_result(c))?;
+        let res: KeyValue = self.with_connection(|c| {
+            query!(key_values::table.filter(key_values::key.eq(key))).get_result(c)
+        })?;
         Ok(res.value)
     }
 
     fn delete_key_value(&self, key: &str) -> Result<()> {
-        use super::schema::key_values::dsl;
-        self.with_connection(|c| delete(dsl::key_values.filter(dsl::key.eq(key))).execute(c))?;
+        self.with_connection(|c| {
+            query!(delete(key_values::table.filter(key_values::key.eq(key)))).execute(c)
+        })?;
         Ok(())
     }
 }

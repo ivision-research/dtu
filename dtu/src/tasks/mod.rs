@@ -1,6 +1,7 @@
 pub mod fuzz;
 pub mod pull;
 pub mod selinux;
+pub mod smalisa;
 
 pub mod task;
 pub use task::{ChannelEventMonitor, EventMonitor, NoopMonitor, TaskCancelCheck, TaskCanceller};

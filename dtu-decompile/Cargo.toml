@@ -1,0 +1,14 @@
+[package]
+name = "dtu-decompile"
+version.workspace = true
+edition = "2021"
+
+[[bin]]
+name = "dtu-decompile"
+path = "src/main.rs"
+
+[dependencies]
+dtu = { path = "../dtu", default-features = false, features = [] }
+flexi_logger = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }

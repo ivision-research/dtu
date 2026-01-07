@@ -17,6 +17,12 @@ use system_services::SystemServices;
 mod system_service_methods;
 use system_service_methods::SystemServiceMethods;
 
+mod interface_impl;
+use interface_impl::InterfaceImpl;
+
+mod children;
+use children::Children;
+
 #[derive(Args)]
 pub struct List {
     #[command(subcommand)]
@@ -82,6 +88,14 @@ enum Command {
     /// List all known Permissions
     #[command()]
     Permissions,
+
+    /// Find interface implementations
+    #[command()]
+    InterfaceImpl(InterfaceImpl),
+
+    /// Find child classes
+    #[command()]
+    Children(Children),
 }
 
 impl List {
@@ -95,6 +109,8 @@ impl List {
             Command::Activities(p) => self.list_activities(p),
             Command::Services(p) => self.list_services(p),
             Command::Permissions => self.list_permissions(),
+            Command::InterfaceImpl(c) => c.run(),
+            Command::Children(c) => c.run(),
         }
     }
 

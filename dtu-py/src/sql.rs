@@ -28,12 +28,18 @@ impl From<DBError> for PyErr {
 
 type Result<T> = std::result::Result<T, DBError>;
 
+/// Provide read only access to the Device database
 #[pymethods]
 impl DeviceDB {
     #[new]
-    fn new(pctx: &PyContext) -> Result<Self> {
-        Ok(Self(get_default_devicedb(pctx)?))
+    #[pyo3(signature = (ctx = None))]
+    fn new(ctx: Option<&PyContext>) -> Result<Self> {
+        Ok(Self(match ctx {
+            Some(v) => get_default_devicedb(v),
+            None => get_default_devicedb(&dtu::DefaultContext::new()),
+        }?))
     }
+
 
     #[pyo3(name = "get_permission_by_id")]
     fn py_get_permission_by_id(&self, sel: i32) -> Result<PyPermission> {

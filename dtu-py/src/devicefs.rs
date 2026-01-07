@@ -70,8 +70,12 @@ impl<'a> From<&'a PyFindName> for FindName<'a> {
 #[pymethods]
 impl PyDeviceFS {
     #[new]
-    fn new(ctx: &PyContext) -> Result<Self> {
-        Ok(PyDeviceFS(get_project_devicefs_helper(ctx)?))
+    #[pyo3(signature = (ctx = None))]
+    fn new(ctx: Option<&PyContext>) -> Result<Self> {
+        Ok(PyDeviceFS(match ctx {
+            Some(ctx) => get_project_devicefs_helper(ctx),
+            None => get_project_devicefs_helper(&dtu::DefaultContext::new()),
+        }?))
     }
 
     fn pull(&self, device: &PyDevicePath, local: &str) -> Result<()> {

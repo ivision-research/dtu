@@ -10,9 +10,6 @@ use dtu::devicefs::get_project_devicefs_helper;
 use dtu::utils::fs::path_must_str;
 use dtu::DefaultContext;
 
-mod consts;
-mod utils;
-
 #[derive(Parser)]
 struct Cli {
     #[arg(short, long, help = "Debug output")]

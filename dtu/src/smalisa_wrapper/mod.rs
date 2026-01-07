@@ -1,7 +1,7 @@
 use std::io;
 
 mod gen_csvs;
-pub use gen_csvs::write_analysis_files;
+pub use gen_csvs::{write_analysis_files, Event};
 
 use smalisa::{LexError, ParseError};
 

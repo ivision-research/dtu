@@ -1,7 +1,6 @@
 // This could use a custom allocator or maybe some sort of mem slab class for
 // the backing storage for Strings, but we don't have that yet
 
-use crate::db::graph::SetupEvent;
 use crate::tasks::{EventMonitor, TaskCancelCheck};
 use crate::utils::{ensure_dir_exists, open_file};
 use crossbeam::channel::{bounded, Receiver, Sender};
@@ -15,14 +14,25 @@ use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::iter::Iterator;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use walkdir::{DirEntry, WalkDir};
 
 use super::{Error, Result};
 
-fn get_csv_writer_file(out_dir: &PathBuf, path: &str) -> Result<csv::Writer<BufWriter<File>>> {
+pub enum Event {
+    /// Fired when starting Smalisa
+    Start { total_files: usize },
+    /// Fired when Smalisa starts a given file
+    FileStarted { path: String },
+    /// Fired when Smalisa completes a given file
+    FileComplete { path: String, success: bool },
+    /// Fired when all files have been passed through Smalisa
+    Done { success: bool },
+}
+
+fn get_csv_writer_file(out_dir: &Path, path: &str) -> Result<csv::Writer<BufWriter<File>>> {
     let full_path = out_dir.join(path);
     let file = OpenOptions::new()
         .create(true)
@@ -151,7 +161,7 @@ impl Channels {
 }
 
 fn launch_writers(
-    out_dir: &PathBuf,
+    out_dir: &Path,
     classes: Receiver<ClassInfo>,
     supers: Receiver<SuperInfo>,
     ifaces: Receiver<InterfaceInfo>,
@@ -284,15 +294,15 @@ fn launch_writers(
 }
 
 fn write_analysis_files_internal<M, FF, CF>(
-    out_dir: &PathBuf,
+    out_dir: &Path,
     monitor: &M,
     cancel_check: &TaskCancelCheck,
-    input_dir: &PathBuf,
+    input_dir: &Path,
     file_ignore_func: FF,
     class_ignore_func: CF,
 ) -> Result<()>
 where
-    M: EventMonitor<SetupEvent> + ?Sized,
+    M: EventMonitor<Event> + ?Sized,
     FF: Fn(&DirEntry) -> bool + Send + Sync,
     CF: Fn(&str) -> bool + Send + Sync,
 {
@@ -327,7 +337,7 @@ where
         .filter(entry_filter)
         .count();
 
-    monitor.on_event(SetupEvent::SmalisaStart {
+    monitor.on_event(Event::Start {
         total_files: total_count,
     });
 
@@ -342,7 +352,7 @@ where
                     return;
                 }
                 let path = ent.path().to_string_lossy().to_string();
-                monitor.on_event(SetupEvent::SmalisaFileStarted { path: path.clone() });
+                monitor.on_event(Event::FileStarted { path: path.clone() });
                 let success = match handle_entry(Arc::clone(&channels), &ent, &class_ignore_func) {
                     Err(e) => {
                         log::error!("{}", e);
@@ -350,7 +360,7 @@ where
                     }
                     _ => true,
                 };
-                monitor.on_event(SetupEvent::SmalisaFileComplete { path, success })
+                monitor.on_event(Event::FileComplete { path, success })
             }
         });
     if cancel_check.was_cancelled() {
@@ -367,13 +377,13 @@ where
 pub fn write_analysis_files<M, FF, CF>(
     monitor: &M,
     cancel_check: &TaskCancelCheck,
-    input_dir: &PathBuf,
-    out_dir: &PathBuf,
+    input_dir: &Path,
+    out_dir: &Path,
     file_ignore_func: FF,
     class_ignore_func: CF,
 ) -> Result<()>
 where
-    M: EventMonitor<SetupEvent> + ?Sized,
+    M: EventMonitor<Event> + ?Sized,
     FF: Fn(&DirEntry) -> bool + Send + Sync,
     CF: Fn(&str) -> bool + Send + Sync,
 {
@@ -403,6 +413,11 @@ where
             }
         }
     }
+
+    monitor.on_event(Event::Done {
+        success: res.is_ok(),
+    });
+
     res
 }
 

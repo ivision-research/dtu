@@ -5,7 +5,7 @@ use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase};
 use dtu::utils::{
     find_files_for_class, find_smali_file_for_class, try_proj_home_relative, ClassName,
 };
-use dtu::{Context, DefaultContext};
+use dtu::Context;
 use std::path::PathBuf;
 
 use crate::parsers::SystemServiceValueParser;
@@ -54,25 +54,24 @@ enum Command {
 }
 
 impl ServiceFile {
-    pub fn run(&self) -> anyhow::Result<()> {
-        let ctx = DefaultContext::new();
+    pub fn run(self, ctx: &dyn Context) -> anyhow::Result<()> {
         let class_file = match &self.command {
-            Command::Impl => self.find_impl(&ctx)?,
-            Command::Stub => self.get_class_file(&ctx, &self.iface_appended("Stub")?)?,
-            Command::Proxy => self.get_class_file(&ctx, &self.iface_appended("Stub$Proxy")?)?,
-            Command::Interface => self.get_class_file(&ctx, self.get_iface()?)?,
+            Command::Impl => self.find_impl(ctx)?,
+            Command::Stub => self.get_class_file(ctx, &self.iface_appended("Stub")?)?,
+            Command::Proxy => self.get_class_file(ctx, &self.iface_appended("Stub$Proxy")?)?,
+            Command::Interface => self.get_class_file(ctx, self.get_iface()?)?,
         };
         if !self.open {
-            let class_file = try_proj_home_relative(&ctx, &class_file);
+            let class_file = try_proj_home_relative(ctx, &class_file);
             let class_file = class_file.to_str().expect("valid paths");
             println!("{}", class_file);
             return Ok(());
         }
         let class_file = class_file.to_str().expect("valid paths");
         if self.dtu_open {
-            invoke_dtu_open_file(&ctx, class_file, "")?;
+            invoke_dtu_open_file(ctx, class_file, "")?;
         } else {
-            exec_open_file(&ctx, class_file)?;
+            exec_open_file(ctx, class_file)?;
         }
         Ok(())
     }

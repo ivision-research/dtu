@@ -9,11 +9,16 @@ pub struct PyAdb(ExecAdb);
 
 type Result<T> = std::result::Result<T, DtuBaseError>;
 
+/// Allows access to the device under test via ADB
 #[pymethods]
 impl PyAdb {
     #[new]
-    fn new(ctx: &PyContext) -> Result<Self> {
-        Ok(Self(ExecAdb::new(ctx)?))
+    #[pyo3(signature = (ctx = None))]
+    fn new(ctx: Option<&PyContext>) -> Result<Self> {
+        Ok(Self(match ctx {
+            Some(v) => ExecAdb::new(v),
+            None => ExecAdb::new(&dtu::DefaultContext::new()),
+        }?))
     }
 
     fn install(&self, apk: &str) -> Result<()> {

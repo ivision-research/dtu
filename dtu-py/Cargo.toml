@@ -10,5 +10,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 anyhow = "1.0"
-dtu = { path = "../dtu", default-features = false, features = ["cozo", "sql", "filestore", "app-server"] }
+dtu = { path = "../dtu", default-features = false, features = ["graph", "sql", "filestore", "app-server"] }
 pyo3 = { version = "0.27", features = ["anyhow"] }
+regex = { workspace = true }

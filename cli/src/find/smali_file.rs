@@ -1,6 +1,6 @@
 use clap::{self, Args};
 use dtu::utils::{ClassName, DevicePath};
-use dtu::DefaultContext;
+use dtu::Context;
 
 use crate::parsers::DevicePathValueParser;
 use crate::utils::find_smali_file;
@@ -24,9 +24,8 @@ pub struct SmaliFile {
 }
 
 impl SmaliFile {
-    pub fn run(&self) -> anyhow::Result<()> {
-        let ctx = DefaultContext::new();
-        let fname = find_smali_file(&ctx, &self.class, &self.apk, !self.no_fallback)?;
+    pub fn run(self, ctx: &dyn Context) -> anyhow::Result<()> {
+        let fname = find_smali_file(ctx, &self.class, &self.apk, !self.no_fallback)?;
         println!("{}", fname);
         Ok(())
     }

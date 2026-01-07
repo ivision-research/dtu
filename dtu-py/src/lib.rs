@@ -26,9 +26,7 @@ mod pydtu {
     };
 
     #[pymodule_export]
-    use super::graph::{
-        GraphDB, PyClassCallPath, PyClassMeta, PyClassSourceCallPath, PyMethodCallSearch,
-    };
+    use super::graph::{GraphDB, PyClassSpec, PyMethodCallPath};
 
     #[pymodule_export]
     use super::parcel_string::ParcelValue;

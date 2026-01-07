@@ -81,48 +81,30 @@
           ] ++ lib.optionals(pkgs.stdenv.isDarwin) [
             pkgs.darwin.apple_sdk.frameworks.Security
           ];
-
-          # TODO: I don't actually understand why I need clang here. There was
-          # an error building zstd-sys for cozo and these things seemed to fix
-          # it.
-          nativeBuildInputs = [
-            pkgs.clang
-            pkgs.libclang.lib
-            pkgs.pkg-config
-          ];
-          preConfigure = ''
-          export LIBCLANG_PATH="${pkgs.libclang.lib}/lib/libclang.so"
-          '';
         };
 
         cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
           doCheck = false;
+          cargoExtraArgs = "--workspace --exclude dtu-py";
         });
 
-        libDtuDrv = craneLib.buildPackage (commonArgs // {
-          inherit cargoArtifacts;
-          pname = "dtu-lib";
-          cargoExtraArgs = "--libs";
-        });
+        mkBin = name:
+            craneLib.buildPackage (commonArgs // {
+              inherit cargoArtifacts;
+              preBuild = ''
+              export DTU_GIT_REVISION=${gitRev}
+              '';
+              pname = "${name}-cli";
+              installPhaseCommand = ''
+              install -D ./target/release/${name} $out/bin/${name}
+              '';
+              cargoExtraArgs = "--bin ${name}";
+              doCheck = false;
+            });
 
-        dtuCli = craneLib.buildPackage (commonArgs // {
-          inherit cargoArtifacts;
-          preBuild = ''
-          export DTU_GIT_REVISION=${gitRev}
-          '';
-          pname = "dtu-cli";
-          installPhaseCommand = ''
-          install -D ./target/release/dtu $out/bin/dtu
-          install -D ./target/release/dtu-decompile $out/bin/dtu-decompile
-          install -D ./target/release/dtu-decompile $out/bin/dtu-fs
-          '';
-          cargoExtraArgs = "-F decompile-bin --bin dtu --bin dtu-decompile --bin dtu-fs";
-          doCheck = false;
-        });
-
-        dtuCliNeo4j = dtuCli.overrideAttrs (prev: {
-          cargoExtraArgs = prev ++ " -F neo4j";
-        });
+        dtuFs = mkBin "dtu-fs";
+        dtuDecompile = mkBin "dtu-decompile";
+        dtuCli = mkBin "dtu";
 
         jarInstall = prog: src:
           ''
@@ -237,9 +219,8 @@
       in
       {
         packages = rec {
+          inherit dtuFs dtuDecompile;
           dtu = dtuCli;
-          dtuNeo4j = dtuCliNeo4j;
-          libDtu = libDtuDrv;
           default = dtu;
 
           # Provide a consistent environment
@@ -256,40 +237,14 @@
             dontBuild = true;
             installPhase = ''
             doWrap() {
-              install -D -m 550 "${dtuCli}/bin/$1" "$out/bin/$1"
-              wrapProgram "$out/bin/$1" \
+              install -D -m 550 "$1/bin/$2" "$out/bin/$2"
+              wrapProgram "$out/bin/$2" \
                 --set JAVA_HOME "${jdk}" \
                 --set DTU_S3_CACHE "1" \
                 --prefix PATH : "${lib.makeBinPath envInputs}"
             }
 
-            doWrap "dtu"
-            doWrap "dtu-fs"
-            doWrap "dtu-decompile"
-            '';
-          };
-
-          dtuEnvNeo4j = pkgs.stdenv.mkDerivation {
-            name = "dtu";
-
-            nativeBuildInputs = [
-              pkgs.makeBinaryWrapper
-            ];
-
-            sourceRoot = ".";
-            dontConfigure = true;
-            dontUnpack = true;
-            dontBuild = true;
-            installPhase = ''
-            doWrap() {
-              install -D -m 550 "${dtuCliNeo4j}/bin/$1" "$out/bin/$1"
-              wrapProgram "$out/bin/$1" \
-                --prefix PATH : "${lib.makeBinPath envInputs}"
-            }
-
-            doWrap "dtu"
-            doWrap "dtu-fs"
-            doWrap "dtu-decompile"
+            doWrap "${dtuCli}" "dtu"
             '';
           };
 
@@ -301,40 +256,6 @@
         };
 
         devShells.default = let
-
-        neo4jConf = pkgs.writeTextFile {
-          name = "neo4j.conf";
-          text = ''
-            dbms.security.auth_enabled=false
-            server.directories.data=/tmp/dtu_neo4j/data
-            server.directories.plugins=/tmp/dtu_neo4j/plugins
-            server.directories.logs=/tmp/dtu_neo4j/logs
-            server.directories.lib=/tmp/dtu_neo4j/lib
-            server.directories.run=/tmp/dtu_neo4j/run
-            server.directories.import=/tmp/dtu_neo4j/import
-            server.bolt.enabled=true
-            server.http.enabled=true
-            server.jvm.additional=-XX:+UseG1GC
-            server.jvm.additional=-XX:-OmitStackTraceInFastThrow
-            server.jvm.additional=-XX:+AlwaysPreTouch
-            server.jvm.additional=-XX:+UnlockExperimentalVMOptions
-            server.jvm.additional=-XX:+TrustFinalNonStaticFields
-            server.jvm.additional=-XX:+DisableExplicitGC
-            server.jvm.additional=-Djdk.nio.maxCachedBufferSize=1024
-            server.jvm.additional=-Dio.netty.tryReflectionSetAccessible=true
-            server.jvm.additional=-Djdk.tls.ephemeralDHKeySize=2048
-            server.jvm.additional=-Djdk.tls.rejectClientInitiatedRenegotiation=true
-            server.jvm.additional=-XX:FlightRecorderOptions=stackdepth=256
-            server.jvm.additional=-XX:+UnlockDiagnosticVMOptions
-            server.jvm.additional=-XX:+DebugNonSafepoints
-            server.jvm.additional=--add-opens=java.base/java.nio=ALL-UNNAMED
-            server.jvm.additional=--add-opens=java.base/java.io=ALL-UNNAMED
-            server.jvm.additional=--add-opens=java.base/sun.nio.ch=ALL-UNNAMED
-            server.jvm.additional=-Dlog4j2.disable.jmx=true
-            server.windows_service_name=neo4j
-          '';
-        };
-
         in pkgs.mkShell {
           packages = with pkgs; [
             cargo
@@ -343,36 +264,8 @@
             mdbook
             kotlin
             sqlite
-            neo4j
             awscli2
           ];
-
-          shellHook = ''
-          if [ -d "/tmp/dtu_neo4j" ]; then
-            rm -r "/tmp/dtu_neo4j/data"
-            rm -r "/tmp/dtu_neo4j/import"
-          fi
-
-          mkdir -p /tmp/dtu_neo4j/import
-          mkdir -p /tmp/dtu_neo4j/plugins
-
-          cp ${neo4jConf} /tmp/dtu_neo4j/neo4j.conf
-          export NEO4J_CONF=/tmp/dtu_neo4j
-
-          local_path=''${XDG_DATA_HOME:-$HOME/.local/share}/dtu
-          plugin_path=$local_path/neo4j/plugins
-
-          apoc=apoc-5.18.0-core.jar
-
-          if [ ! -f "/tmp/dtu_neo4j/plugins/$apoc" ]; then
-
-            if [ -f "$plugin_path/$apoc" ]; then
-              cp "$plugin_path/$apoc" "/tmp/dtu_neo4j/plugins/$apoc"
-            fi
-
-
-          fi
-          '';
         };
       });
 }

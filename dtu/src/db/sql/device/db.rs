@@ -295,7 +295,7 @@ impl DeviceSqliteDatabase {
         })
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn new_from_url(url: &String) -> Result<Self> {
         Ok(Self {
             db_thread: DBThread::new_from_url(
