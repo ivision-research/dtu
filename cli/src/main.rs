@@ -13,7 +13,6 @@ mod progress;
 use gen_envrc::GenEnvrc;
 
 mod circular;
-mod consts;
 mod printer;
 
 mod pull;

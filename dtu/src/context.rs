@@ -143,10 +143,6 @@ pub trait Context: Send + Sync {
         self.get_smalisa_analysis_dir()
     }
 
-    fn get_neo4j_dir(&self) -> crate::Result<PathBuf> {
-        self.get_output_dir_child("neo4j")
-    }
-
     fn get_selinux_dir(&self) -> crate::Result<PathBuf> {
         self.get_output_dir_child("selinux")
     }

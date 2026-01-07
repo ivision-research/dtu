@@ -80,10 +80,10 @@ pub enum SetupError {
     NoPullAndDecompile,
     #[error("already setup")]
     AlreadySetup,
+    #[error("graph error {0}")]
+    Graph(Error),
     #[error("database error {0}")]
     SQL(sql::Error),
-    #[error("graph error {0}")]
-    Neo4j(Error),
     #[error("invalid source directory")]
     InvalidSource,
     #[error("{0}")]
@@ -118,7 +118,7 @@ impl From<sql::Error> for SetupError {
 
 impl From<Error> for SetupError {
     fn from(value: Error) -> Self {
-        Self::Neo4j(value)
+        Self::Graph(value)
     }
 }
 
