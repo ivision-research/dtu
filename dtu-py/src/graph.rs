@@ -1,12 +1,15 @@
 use std::{
-    collections::BTreeSet,
+    collections::HashSet,
     ops::{Deref, DerefMut},
 };
 
-use dtu::db::graph::{
-    get_default_graphdb,
-    models::{ClassCallPath, ClassSourceCallPath, MethodCallSearch, MethodMeta},
-    ClassMeta, DefaultGraphDatabase, GraphDatabase,
+use dtu::{
+    db::graph::{
+        get_default_graphdb,
+        models::{ClassSearch, MethodCallPath, MethodSearch, MethodSpec},
+        ClassSpec, DefaultGraphDatabase, GraphDatabase,
+    },
+    utils::ClassName,
 };
 use pyo3::prelude::*;
 
@@ -35,6 +38,7 @@ impl From<GraphError> for PyErr {
 
 type Result<T> = std::result::Result<T, GraphError>;
 
+/// GraphDB represents a read only view of the populated graph database
 #[pymethods]
 impl GraphDB {
     /// Get a new instance of the default graph database implementation
@@ -44,79 +48,95 @@ impl GraphDB {
         Ok(Self(gdb))
     }
 
-    fn get_all_sources(&self) -> Result<BTreeSet<String>> {
+    /// Get a set of all sources in the database
+    fn get_all_sources(&self) -> Result<HashSet<String>> {
         Ok(self.0.get_all_sources()?)
     }
 
     /// Find all child classes of the given parent class
+    #[pyo3(signature = (parent, *, parent_source = None, child_source = None))]
     fn find_child_classes_of(
         &self,
-        parent: &PyClassName,
-        source: Option<&str>,
-    ) -> Result<Vec<PyClassMeta>> {
+        parent: &str,
+        parent_source: Option<&str>,
+        child_source: Option<&str>,
+    ) -> Result<Vec<PyClassSpec>> {
+        let parent_class = ClassName::from(parent);
+        let class_search = ClassSearch::new(&parent_class, parent_source);
         Ok(self
             .0
-            .find_child_classes_of(parent.as_ref(), source)?
+            .find_child_classes_of(&class_search, child_source)?
             .into_iter()
-            .map(PyClassMeta::from)
+            .map(PyClassSpec::from)
             .collect())
     }
 
     /// Find all classes that implement the given interface
+    #[pyo3(signature = (iface, *, iface_source = None, impl_source = None))]
     fn find_classes_implementing(
         &self,
-        iface: &PyClassName,
-        source: Option<&str>,
-    ) -> Result<Vec<PyClassMeta>> {
+        iface: &str,
+        iface_source: Option<&str>,
+        impl_source: Option<&str>,
+    ) -> Result<Vec<PyClassSpec>> {
+        let iface = ClassName::from(iface);
+        let class_search = ClassSearch::new(iface.as_ref(), iface_source);
         Ok(self
             .0
-            .find_classes_implementing(iface.as_ref(), source)?
+            .find_classes_implementing(&class_search, impl_source)?
             .into_iter()
-            .map(PyClassMeta::from)
+            .map(PyClassSpec::from)
             .collect())
     }
 
-    /// Find all callers of the given method
+    /// Find all callers of the given class up to a certain depth.
     ///
-    /// Depth specifies the call depth, for example:
-    ///
-    /// - depth = 1 will only find immediate calls
-    /// - depth = 2 will find calls that call something that calls the method
-    ///
-    /// and so on. A high depth value will make this call take a long time and
-    /// generally a lot of indirection will cause noise in the output, as each
-    /// method call further away you are the more the input can be transformed
-    /// before the call you're interested in.
-    ///
-    /// Generally, I wouldn't go above depth = 3 for good results.
+    /// At least one of `class_` or `name` is required for this search. High depth values may
+    /// negatively impact performance.
+    #[pyo3(signature = (*, class_ = None, name = None, signature = None, method_source = None, call_source = None, depth = 5))]
     fn find_callers(
         &self,
-        method: &PyMethodCallSearch,
+        class_: Option<&str>,
+        name: Option<&str>,
+        signature: Option<&str>,
+        method_source: Option<&str>,
+        call_source: Option<&str>,
         depth: usize,
-        limit: Option<usize>,
-    ) -> Result<Vec<PyClassSourceCallPath>> {
+    ) -> PyResult<Vec<PyMethodCallPath>> {
+        let cn = class_.map(ClassName::from);
+        let search = MethodSearch::new_from_opts(cn.as_ref(), name, signature, method_source)
+            .map_err(|_| DtuError::new_err("at least one of `class_` or `name` required"))?;
+
         Ok(self
             .0
-            .find_callers(&method.as_borrowed(), depth, limit)?
+            .find_callers(&search, call_source, depth)
+            .map_err(GraphError)?
             .into_iter()
-            .map(PyClassSourceCallPath::from)
+            .map(PyMethodCallPath::from)
             .collect::<Vec<_>>()
             .into())
     }
 
     /// Find all calls leaving the given method up to a given depth.
+    #[pyo3(signature = (*, class_ = None, name = None, signature = None, source = None, depth = 5))]
     fn find_outgoing_calls(
         &self,
-        from: &PyMethodMeta,
-        source: &str,
+        class_: Option<&str>,
+        name: Option<&str>,
+        signature: Option<&str>,
+        source: Option<&str>,
         depth: usize,
-        limit: Option<usize>,
-    ) -> Result<Vec<PyClassCallPath>> {
+    ) -> PyResult<Vec<PyMethodCallPath>> {
+        let cn = class_.map(ClassName::from);
+        let search = MethodSearch::new_from_opts(cn.as_ref(), name, signature, source)
+            .map_err(|_| DtuError::new_err("at least one of `class_` or `name` required"))?;
+
         Ok(self
             .0
-            .find_outgoing_calls(&from.0, source, depth, limit)?
+            .find_outgoing_calls(&search, depth)
+            .map_err(GraphError)?
             .into_iter()
-            .map(PyClassCallPath::from)
+            .map(PyMethodCallPath::from)
             .collect())
     }
 
@@ -131,37 +151,13 @@ impl GraphDB {
     }
 
     /// Get all methods defined by the given soruce
-    fn get_methods_for(&self, source: &str) -> Result<Vec<PyMethodMeta>> {
+    fn get_methods_for(&self, source: &str) -> Result<Vec<PyMethodSpec>> {
         Ok(self
             .0
             .get_methods_for(source)?
             .into_iter()
-            .map(PyMethodMeta::from)
+            .map(PyMethodSpec::from)
             .collect())
-    }
-
-    /// Wipe the database
-    fn wipe(&self, ctx: &PyContext) -> Result<()> {
-        Ok(self.0.wipe(ctx)?)
-    }
-
-    /// Remove all references to the given source from the database
-    fn remove_source(&self, source: &str) -> Result<()> {
-        Ok(self.0.remove_source(source)?)
-    }
-
-    fn optimize(&self) -> Result<()> {
-        Ok(self.0.optimize()?)
-    }
-
-    fn initialize(&self) -> Result<()> {
-        Ok(self.0.initialize()?)
-    }
-
-    fn eval(&self, script: &str) -> Result<String> {
-        let mut result = Vec::new();
-        self.0.eval(script, &mut result)?;
-        Ok(String::from_utf8_lossy(&result).into())
     }
 }
 
@@ -178,11 +174,11 @@ impl DerefMut for GraphDB {
     }
 }
 
-#[pyclass(name = "ClassMeta")]
-pub struct PyClassMeta(ClassMeta);
+#[pyclass(name = "ClassSpec")]
+pub struct PyClassSpec(ClassSpec);
 
 #[pymethods]
-impl PyClassMeta {
+impl PyClassSpec {
     fn is_public(&self) -> bool {
         self.0.is_public()
     }
@@ -205,28 +201,32 @@ impl PyClassMeta {
     fn access_flags(&self) -> PyAccessFlag {
         self.0.access_flags.into()
     }
+
+    fn __str__(&self) -> String {
+        self.0.name.to_string()
+    }
 }
 
-impl From<ClassMeta> for PyClassMeta {
-    fn from(value: ClassMeta) -> Self {
+impl From<ClassSpec> for PyClassSpec {
+    fn from(value: ClassSpec) -> Self {
         Self(value)
     }
 }
 
-#[pyclass(frozen, name = "MethodMeta")]
+#[pyclass(frozen, name = "MethodSpec")]
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub struct PyMethodMeta(pub(crate) MethodMeta);
+pub struct PyMethodSpec(pub(crate) MethodSpec);
 
 #[pymethods]
-impl PyMethodMeta {
+impl PyMethodSpec {
     #[getter]
-    fn class(&self) -> PyClassName {
+    fn class_(&self) -> PyClassName {
         self.0.class.clone().into()
     }
 
     #[getter]
-    fn ret(&self) -> Option<&str> {
-        self.0.ret.as_ref().map(String::as_str)
+    fn ret(&self) -> &str {
+        &self.0.ret
     }
 
     #[getter]
@@ -240,181 +240,65 @@ impl PyMethodMeta {
     }
 
     #[getter]
-    fn access_flags(&self) -> PyAccessFlag {
-        self.0.access_flags.into()
-    }
-}
-
-impl From<MethodMeta> for PyMethodMeta {
-    fn from(v: MethodMeta) -> Self {
-        Self(v)
-    }
-}
-
-impl From<PyMethodMeta> for MethodMeta {
-    fn from(v: PyMethodMeta) -> Self {
-        v.0
-    }
-}
-
-#[pyclass(frozen, name = "ClassCallPath")]
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct PyClassCallPath(pub(crate) ClassCallPath);
-
-#[pymethods]
-impl PyClassCallPath {
-    #[getter]
-    fn class(&self) -> PyClassName {
-        self.0.class.clone().into()
-    }
-
-    #[getter]
-    fn path(&self) -> Vec<PyMethodMeta> {
-        self.0.path.clone().into_iter().map(Into::into).collect()
-    }
-}
-
-impl From<ClassCallPath> for PyClassCallPath {
-    fn from(v: ClassCallPath) -> Self {
-        Self(v)
-    }
-}
-
-impl From<PyClassCallPath> for ClassCallPath {
-    fn from(v: PyClassCallPath) -> Self {
-        v.0
-    }
-}
-
-#[pyclass(frozen, name = "ClassSourceCallPath")]
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct PyClassSourceCallPath(pub(crate) ClassSourceCallPath);
-
-#[pymethods]
-impl PyClassSourceCallPath {
-    #[getter]
-    fn class(&self) -> PyClassName {
-        self.0.class.clone().into()
-    }
-
-    #[getter]
     fn source(&self) -> &str {
         &self.0.source
     }
 
-    #[getter]
-    fn path(&self) -> Vec<PyMethodMeta> {
-        self.0.path.clone().into_iter().map(Into::into).collect()
+    fn __str__(&self) -> String {
+        self.0.to_string()
     }
 }
 
-impl From<ClassSourceCallPath> for PyClassSourceCallPath {
-    fn from(v: ClassSourceCallPath) -> Self {
+impl From<MethodSpec> for PyMethodSpec {
+    fn from(v: MethodSpec) -> Self {
         Self(v)
     }
 }
 
-impl From<PyClassSourceCallPath> for ClassSourceCallPath {
-    fn from(v: PyClassSourceCallPath) -> Self {
+impl From<PyMethodSpec> for MethodSpec {
+    fn from(v: PyMethodSpec) -> Self {
         v.0
     }
 }
 
-#[pyclass(frozen, name = "MethodCallSearch")]
-#[derive(Clone)]
-pub struct PyMethodCallSearch {
-    target_method: String,
-    target_method_sig: String,
-
-    src_class: Option<PyClassName>,
-    src_method_name: Option<String>,
-    src_method_sig: Option<String>,
-
-    target_class: Option<PyClassName>,
-    source: Option<String>,
-}
+#[pyclass(frozen, name = "MethodCallPath")]
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct PyMethodCallPath(pub(crate) MethodCallPath);
 
 #[pymethods]
-impl PyMethodCallSearch {
-    #[new]
-    #[pyo3(
-        signature = (
-            target_method,
-            target_method_sig,
-            *,
-            src_class = None,
-            src_method_name = None,
-            src_method_sig = None,
-            target_class = None,
-            source = None
-        )
-    )]
-    fn new(
-        target_method: String,
-        target_method_sig: String,
-        src_class: Option<PyClassName>,
-        src_method_name: Option<String>,
-        src_method_sig: Option<String>,
-        target_class: Option<PyClassName>,
-        source: Option<String>,
-    ) -> Self {
-        Self {
-            target_method,
-            target_method_sig,
-            src_class,
-            src_method_name,
-            src_method_sig,
-            target_class,
-            source,
-        }
+impl PyMethodCallPath {
+    #[getter]
+    fn path(&self) -> Vec<PyMethodSpec> {
+        self.0.path.clone().into_iter().map(Into::into).collect()
     }
 
-    #[getter]
-    fn target_method(&self) -> &str {
-        &self.target_method
+    fn source(&self) -> PyResult<String> {
+        Ok(self
+            .0
+            .path
+            .first()
+            .map(|it| it.source.clone())
+            .ok_or_else(|| DtuError::new_err("attempted to call source on empty call path"))?)
     }
 
-    #[getter]
-    fn target_method_sig(&self) -> &str {
-        &self.target_method_sig
-    }
-
-    #[getter]
-    fn src_class(&self) -> Option<PyClassName> {
-        self.src_class.clone()
-    }
-
-    #[getter]
-    fn src_method_name(&self) -> Option<&str> {
-        self.src_method_name.as_deref()
-    }
-
-    #[getter]
-    fn src_method_sig(&self) -> Option<&str> {
-        self.src_method_sig.as_deref()
-    }
-
-    #[getter]
-    fn target_class(&self) -> Option<PyClassName> {
-        self.target_class.clone()
-    }
-
-    #[getter]
-    fn source(&self) -> Option<&str> {
-        self.source.as_deref()
+    fn initial(&self) -> PyResult<PyMethodSpec> {
+        Ok(self
+            .0
+            .path
+            .first()
+            .map(|it| PyMethodSpec::from(it.clone()))
+            .ok_or_else(|| DtuError::new_err("attempted to call initial on empty call path"))?)
     }
 }
 
-impl PyMethodCallSearch {
-    pub(crate) fn as_borrowed(&self) -> MethodCallSearch<'_> {
-        MethodCallSearch {
-            target_method: &self.target_method,
-            target_method_sig: &self.target_method_sig,
-            src_class: self.src_class.as_ref().map(|c| c.as_ref()),
-            src_method_name: self.src_method_name.as_deref(),
-            src_method_sig: self.src_method_sig.as_deref(),
-            target_class: self.target_class.as_ref().map(|c| c.as_ref()),
-            source: self.source.as_deref(),
-        }
+impl From<MethodCallPath> for PyMethodCallPath {
+    fn from(v: MethodCallPath) -> Self {
+        Self(v)
+    }
+}
+
+impl From<PyMethodCallPath> for MethodCallPath {
+    fn from(v: PyMethodCallPath) -> Self {
+        v.0
     }
 }

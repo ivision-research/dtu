@@ -1,16 +1,18 @@
+use std::fmt::Display;
+
 use crate::utils::ClassName;
 use smalisa::AccessFlag;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(test, derive(PartialEq, Eq, Debug, PartialOrd, Ord))]
-pub struct ClassMeta {
+pub struct ClassSpec {
     pub name: ClassName,
     #[serde(skip, default)]
     pub access_flags: AccessFlag,
     pub source: String,
 }
 
-impl ClassMeta {
+impl ClassSpec {
     pub fn is_public(&self) -> bool {
         self.access_flags.is_public()
     }
@@ -23,128 +25,203 @@ impl ClassMeta {
 
 #[derive(PartialEq, Eq, Hash, Clone, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(test, derive(Debug, PartialOrd, Ord))]
-pub struct ClassCallPath {
-    /// The class the call originates in
-    pub class: ClassName,
+pub struct MethodCallPath {
     /// The path of methods that ends up at the target call
-    pub path: Vec<MethodMeta>,
+    pub path: Vec<MethodSpec>,
+}
+
+impl MethodCallPath {
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.path.is_empty()
+    }
+    #[inline]
+    pub fn is_not_empty(&self) -> bool {
+        !self.is_empty()
+    }
+
+    pub fn get_src_method(&self) -> Option<&MethodSpec> {
+        self.path.first()
+    }
+
+    pub fn get_dst_method(&self) -> Option<&MethodSpec> {
+        self.path.last()
+    }
+
+    pub fn get_src_class(&self) -> Option<&ClassName> {
+        self.get_src_method().map(|it| &it.class)
+    }
+
+    pub fn get_dst_class(&self) -> Option<&ClassName> {
+        self.get_dst_method().map(|it| &it.class)
+    }
+
+    pub fn get_source(&self) -> Option<&str> {
+        self.get_src_method().map(|it| it.source.as_str())
+    }
+
+    pub fn must_get_src_method(&self) -> &MethodSpec {
+        self.get_src_method().expect("get_src_method")
+    }
+
+    pub fn must_get_dst_method(&self) -> &MethodSpec {
+        self.get_dst_method().expect("get_dst_method")
+    }
+
+    pub fn must_get_src_class(&self) -> &ClassName {
+        self.get_src_class().expect("get_src_class")
+    }
+
+    pub fn must_get_dst_class(&self) -> &ClassName {
+        self.get_dst_class().expect("get_dst_class")
+    }
+
+    pub fn must_get_source(&self) -> &str {
+        self.get_source().expect("get_source")
+    }
+}
+
+impl From<Vec<MethodSpec>> for MethodCallPath {
+    fn from(path: Vec<MethodSpec>) -> Self {
+        Self { path }
+    }
 }
 
 #[derive(PartialEq, Eq, Hash, Clone, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(test, derive(Debug, PartialOrd, Ord))]
-pub struct ClassSourceCallPath {
-    /// The class the call originates in
+pub struct MethodSpec {
     pub class: ClassName,
-    /// The source containing the originating class
-    pub source: String,
-    /// The path of methods that ends up at the target call
-    pub path: Vec<MethodMeta>,
-}
-
-#[derive(PartialEq, Eq, Hash, Clone, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(test, derive(Debug, PartialOrd, Ord))]
-pub struct MethodMeta {
-    pub class: ClassName,
-    pub ret: Option<String>,
     pub name: String,
     pub signature: String,
-    #[serde(skip, default)]
-    pub access_flags: AccessFlag,
+    pub ret: String,
+    pub source: String,
 }
 
-impl MethodMeta {
-    pub fn as_smali(&self) -> String {
-        let mut smali = format!(
-            "{}->{}({})",
+impl Display for MethodSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}->{}({}){}",
             self.class.get_smali_name(),
             self.name,
-            self.signature
-        );
-        if let Some(ret) = &self.ret {
-            smali.push_str(ret);
-        }
-        smali
-    }
-
-    pub fn from_smali(smali: &str) -> super::Result<Self> {
-        let (raw_class, rem) = match smali.split_once("->") {
-            None => {
-                return Err(super::Error::Generic(format!(
-                    "invalid smali method meta (no ->): {}",
-                    smali
-                )))
-            }
-            Some(v) => v,
-        };
-
-        if rem.len() == 0 {
-            return Err(super::Error::Generic(format!(
-                "invalid smali method meta (nothing after the ->) : {}",
-                smali
-            )));
-        }
-
-        let (raw_method, raw_sig) = match rem.split_once('(') {
-            None => {
-                return Err(super::Error::Generic(format!(
-                    "invalid smali method meta (no signature): {}",
-                    smali
-                )))
-            }
-            Some(v) => v,
-        };
-
-        let class = ClassName::from(raw_class);
-        return Ok(Self {
-            class,
-            name: raw_method.into(),
-            signature: raw_sig.trim_end_matches(')').into(),
-            ret: None,
-            access_flags: AccessFlag::UNSET,
-        });
+            self.signature,
+            self.ret
+        )
     }
 }
 
-/// Contains everything needed to search for a method call
-pub struct MethodCallSearch<'a> {
-    /// The target method name
-    pub target_method: &'a str,
-    /// Specifies the signature of the target method
-    pub target_method_sig: &'a str,
+impl MethodSpec {
+    pub fn as_smali(&self) -> String {
+        self.to_string()
+    }
+}
 
-    /// Specifies the class doing the calling
-    pub src_class: Option<&'a ClassName>,
-    /// Specifies the method name doing the calling
-    pub src_method_name: Option<&'a str>,
-    /// Specifies the calling method's signature
-    pub src_method_sig: Option<&'a str>,
+pub enum MethodSearchParams<'a> {
+    /// Search for the method by name only: *bar*
+    ByName { name: &'a str },
 
-    /// Specifies the class owning the target method
-    pub target_class: Option<&'a ClassName>,
+    /// Search for the method by class only: Lfoo;->*
+    ByClass { class: &'a ClassName },
 
-    /// Source is where the call was discovered
+    /// Search for the method by name and signature: *bar(IZ)
+    ByNameAndSignature { name: &'a str, signature: &'a str },
+
+    /// Search for the method by class and name
+    ByClassAndName { class: &'a ClassName, name: &'a str },
+
+    /// Search for a fully specified method: Lfoo;->bar(IZ)
+    ByFullSpec {
+        class: &'a ClassName,
+        name: &'a str,
+        signature: &'a str,
+    },
+}
+
+impl<'a> MethodSearchParams<'a> {
+    pub fn new(
+        name: Option<&'a str>,
+        class: Option<&'a ClassName>,
+        signature: Option<&'a str>,
+    ) -> Result<Self, &'static str> {
+        Ok(match name {
+            Some(name) => match class {
+                Some(class) => match signature {
+                    Some(signature) => Self::ByFullSpec {
+                        class,
+                        name,
+                        signature,
+                    },
+                    None => Self::ByClassAndName { class, name },
+                },
+                None => match signature {
+                    Some(signature) => Self::ByNameAndSignature { name, signature },
+                    None => Self::ByName { name },
+                },
+            },
+
+            None => match class {
+                Some(class) => match signature {
+                    None => Self::ByClass { class },
+                    Some(_) => return Err("class and signature only currently unsupported"),
+                },
+                None => return Err("need name or class"),
+            },
+        })
+    }
+}
+
+pub struct ClassSearch<'a> {
+    pub class: &'a ClassName,
     pub source: Option<&'a str>,
 }
 
+impl<'a> From<&'a ClassName> for ClassSearch<'a> {
+    fn from(value: &'a ClassName) -> Self {
+        Self::new(value, None)
+    }
+}
+
+impl<'a> ClassSearch<'a> {
+    #[inline]
+    pub fn with_source(mut self, source: &'a str) -> Self {
+        self.source = Some(source);
+        self
+    }
+    pub fn new(class: &'a ClassName, source: Option<&'a str>) -> Self {
+        Self { class, source }
+    }
+}
+
+/// Specify a method to search for
 pub struct MethodSearch<'a> {
-    pub name: &'a str,
-    pub class: Option<&'a ClassName>,
-    pub signature: Option<&'a str>,
+    pub param: MethodSearchParams<'a>,
     pub source: Option<&'a str>,
+}
+
+impl<'a> From<MethodSearchParams<'a>> for MethodSearch<'a> {
+    fn from(value: MethodSearchParams<'a>) -> Self {
+        Self::new(value, None)
+    }
 }
 
 impl<'a> MethodSearch<'a> {
-    pub fn new<C: AsRef<ClassName> + 'a>(
-        name: &'a str,
-        class: Option<&'a C>,
+    #[inline]
+    pub fn with_source(mut self, source: &'a str) -> Self {
+        self.source = Some(source);
+        self
+    }
+
+    pub fn new(param: MethodSearchParams<'a>, source: Option<&'a str>) -> Self {
+        Self { param, source }
+    }
+
+    pub fn new_from_opts(
+        class: Option<&'a ClassName>,
+        name: Option<&'a str>,
         signature: Option<&'a str>,
         source: Option<&'a str>,
-    ) -> Self {
-        Self {
-            name,
-            class: class.map(|it| it.as_ref()),
-            signature,
-            source,
-        }
+    ) -> Result<Self, &'static str> {
+        let param = MethodSearchParams::new(name, class, signature)?;
+        Ok(Self { param, source })
     }
 }

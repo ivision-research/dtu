@@ -28,6 +28,7 @@ impl From<DBError> for PyErr {
 
 type Result<T> = std::result::Result<T, DBError>;
 
+/// Provide read only access to the Device database
 #[pymethods]
 impl DeviceDB {
     #[new]

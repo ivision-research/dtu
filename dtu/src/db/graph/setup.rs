@@ -1,40 +1,28 @@
 use core::fmt;
-use std::path::PathBuf;
+use std::borrow::Cow;
+use std::path::{Path, PathBuf};
 
 use crate::db::graph::Error;
 use crate::db::sql;
-use crate::prereqs::Prereq;
-use crate::smalisa_wrapper::write_analysis_files;
 use crate::tasks::{EventMonitor, TaskCancelCheck};
-use crate::utils::{fs, path_must_str};
-use crate::{smalisa_wrapper, Context};
-use dtu_proc_macro::define_setters;
+use crate::utils::{fs, opt_deny, path_must_name, path_must_str, DevicePath, OptDenylist};
+use crate::Context;
 use dtu_proc_macro::wraps_base_error;
-use walkdir::DirEntry;
 
 use super::GraphDatabase;
 
 pub enum SetupEvent {
     Wiping,
-    /// Fired when starting Smalisa
-    SmalisaStart {
-        total_files: usize,
+
+    SourceStarted {
+        source: String,
     },
-    /// Fired when Smalisa starts a given file
-    SmalisaFileStarted {
-        path: String,
+
+    /// Fired when all CSV files are imported for the given source
+    SourceDone {
+        source: String,
     },
-    /// Fired when Smalisa completes a given file
-    SmalisaFileComplete {
-        path: String,
-        success: bool,
-    },
-    /// Fired when all files have been passed through Smalisa
-    SmalisaDone,
-    /// Fired when importing is started for a given directory
-    AllImportsStarted {
-        dir: String,
-    },
+
     /// Fired when importing is started for a specific CSV file
     ImportStarted {
         path: String,
@@ -43,41 +31,74 @@ pub enum SetupEvent {
     ImportDone {
         path: String,
     },
-    /// Fired when all CSV files are imported
-    AllImportsDone {
-        dir: String,
-    },
 }
 
-#[define_setters]
-pub struct AddDirectoryOptions {
+pub struct AddDirectoryOptions<'a> {
     /// Name corresponds to the "source" value in the database
     pub name: String,
-    /// The directory containing the files to be added
-    pub source_dir: PathBuf,
-    /// Don't import methods to the database
-    pub no_methods: bool,
-
-    /// Don't import calls to the database
-    pub no_calls: bool,
+    /// The directory containing the Smalisa CSV files to be added
+    pub source_dir: Cow<'a, Path>,
 }
 
-impl AddDirectoryOptions {
-    pub fn new(name: String, source_dir: PathBuf) -> Self {
+impl<'a> AddDirectoryOptions<'a> {
+    pub fn new<T: Into<Cow<'a, Path>>>(name: String, source_dir: T) -> Self {
         Self {
             name,
-            source_dir,
-            no_calls: false,
-            no_methods: false,
+            source_dir: source_dir.into(),
         }
+    }
+}
+
+pub struct InitialImportOptions {
+    pub apk_denylist: OptDenylist<DevicePath>,
+}
+
+impl Default for InitialImportOptions {
+    fn default() -> Self {
+        Self::new(None)
+    }
+}
+
+impl InitialImportOptions {
+    pub fn new(apk_denylist: OptDenylist<DevicePath>) -> Self {
+        Self { apk_denylist }
+    }
+
+    #[inline]
+    pub fn allows_apk(&self, path: &DevicePath) -> bool {
+        !opt_deny(&self.apk_denylist, path)
+    }
+
+    /// Get the smalisa directories for each APK respecting the denylist
+    pub fn get_apk_smalisa_dirs(&self, ctx: &dyn Context) -> crate::Result<Vec<PathBuf>> {
+        let smali_apks = ctx.get_smali_dir()?.join("apks");
+
+        let rd = std::fs::read_dir(&smali_apks)?;
+
+        let dirs = rd
+            .filter_map(|it| {
+                let ent = it.ok()?;
+                let path = ent.path();
+                // Only directories matter
+                if !path.is_dir() {
+                    return None;
+                }
+                // Check the squashed path against the denylist
+                let squashed = DevicePath::from_squashed(path_must_name(&path));
+                if opt_deny(&self.apk_denylist, &squashed) {
+                    return None;
+                }
+                Some(path)
+            })
+            .collect::<Vec<PathBuf>>();
+
+        Ok(dirs)
     }
 }
 
 #[wraps_base_error]
 #[derive(Debug, thiserror::Error)]
 pub enum SetupError {
-    #[error("pull and decompile required for setup")]
-    NoPullAndDecompile,
     #[error("already setup")]
     AlreadySetup,
     #[error("graph error {0}")]
@@ -87,7 +108,7 @@ pub enum SetupError {
     #[error("invalid source directory")]
     InvalidSource,
     #[error("{0}")]
-    Smalisa(smalisa_wrapper::Error),
+    Generic(String),
     #[error("user cancelled")]
     Cancelled,
 }
@@ -95,18 +116,9 @@ pub enum SetupError {
 impl From<SetupError> for Error {
     fn from(value: SetupError) -> Self {
         match value {
-            SetupError::NoPullAndDecompile => {
-                Self::Base(crate::Error::UnsatisfiedPrereq(Prereq::PullAndDecompile))
-            }
             SetupError::Cancelled => Self::Cancelled,
             _ => Self::Generic(value.to_string()),
         }
-    }
-}
-
-impl From<smalisa_wrapper::Error> for SetupError {
-    fn from(value: smalisa_wrapper::Error) -> Self {
-        Self::Smalisa(value)
     }
 }
 
@@ -122,114 +134,48 @@ impl From<Error> for SetupError {
     }
 }
 
-fn smalisa_class_ignore_func(class: &str) -> bool {
-    const IGNORE_LIST: &[&'static str] = &[
-        "Landroidx/",
-        "Landroid/support/",
-        "Landroid/material/",
-        "Lkotlin/",
-    ];
-    for it in IGNORE_LIST {
-        if class.starts_with(*it) {
-            log::trace!("ignoring class {} due to ignore list entry {}", class, *it);
-            return true;
-        }
-    }
-    false
-}
-
-fn smalisa_file_ignore_func(ent: &DirEntry) -> bool {
-    const IGNORE_LIST: &[&'static str] = &[
-        "androidx/",
-        "android/support/",
-        "android/material/",
-        "kotlin/",
-        "javax/",
-    ];
-
-    let path = ent.path();
-    let as_str = match path.to_str() {
-        None => return false,
-        Some(s) => s,
-    };
-    for it in IGNORE_LIST {
-        if as_str.contains(*it) {
-            log::trace!("ignoring file {} due to ignore list entry {}", as_str, *it);
-            return true;
-        }
-    }
-    false
-}
-
 pub type SetupResult<T> = Result<T, SetupError>;
 
-pub(crate) struct AddDirTask<'a, M, G>
+pub struct AddDirTask<'a, M, G>
 where
     M: EventMonitor<SetupEvent> + ?Sized,
-    G: GraphDatabaseInternal,
+    G: GraphDatabaseSetup,
 {
     pub(crate) ctx: &'a dyn Context,
     pub(crate) monitor: &'a M,
     pub(crate) graph: &'a G,
-    pub(crate) opts: AddDirectoryOptions,
+    pub(crate) opts: AddDirectoryOptions<'a>,
     pub(crate) cancel: &'a TaskCancelCheck,
 }
 
 impl<'a, M, G> AddDirTask<'a, M, G>
 where
     M: EventMonitor<SetupEvent> + ?Sized,
-    G: GraphDatabaseInternal,
+    G: GraphDatabaseSetup,
 {
-    pub(crate) fn run(&self) -> SetupResult<()> {
-        self.smalisa_and_import_directory()?;
-        Ok(())
+    pub fn new(
+        ctx: &'a dyn Context,
+        monitor: &'a M,
+        graph: &'a G,
+        opts: AddDirectoryOptions<'a>,
+        cancel: &'a TaskCancelCheck,
+    ) -> Self {
+        Self {
+            ctx,
+            monitor,
+            graph,
+            opts,
+            cancel,
+        }
     }
 
-    pub fn smalisa_and_import_directory(&self) -> SetupResult<()> {
-        log::info!(
-            "running smalisa for source {} from directory {}",
-            self.opts.name,
-            path_must_str(&self.opts.source_dir)
-        );
-        self.check_cancel()?;
-        if !self.import_files_exist()? {
-            write_analysis_files(
-                self.monitor,
-                &self.cancel,
-                &self.opts.source_dir,
-                &self.get_import_dir()?,
-                smalisa_file_ignore_func,
-                smalisa_class_ignore_func,
-            )?;
-            self.monitor.on_event(SetupEvent::SmalisaDone);
-        } else {
-            log::debug!("skipped smalisa since all import files exist");
-        }
-        self.check_cancel()?;
+    pub fn run(&self) -> SetupResult<()> {
         log::info!("importing smalisa generated csvs");
         self.import_smalisa_files()
     }
 
     fn get_import_dir(&self) -> SetupResult<PathBuf> {
         Ok(self.ctx.get_graph_import_dir()?.join(&self.opts.name))
-    }
-
-    fn import_files_exist(&self) -> SetupResult<bool> {
-        let dir = self.get_import_dir()?;
-        let file_names = &[
-            "classes.csv",
-            "supers.csv",
-            "interfaces.csv",
-            "methods.csv",
-            "calls.csv",
-        ];
-        for f in file_names {
-            let path = dir.join(f);
-            if !path.exists() {
-                return Ok(false);
-            }
-        }
-        Ok(true)
     }
 
     fn should_load(&self, kind: LoadCSVKind) -> bool {
@@ -245,7 +191,7 @@ where
         self.monitor
             .on_event(SetupEvent::ImportStarted { path: csv.clone() });
         self.graph
-            .load_classes_csv(self.ctx, &csv, &self.opts.name)?;
+            .load_csv(self.ctx, &csv, &self.opts.name, LoadCSVKind::Classes)?;
         self.monitor.on_event(SetupEvent::ImportDone { path: csv });
         Ok(())
     }
@@ -259,7 +205,7 @@ where
         self.monitor
             .on_event(SetupEvent::ImportStarted { path: csv.clone() });
         self.graph
-            .load_supers_csv(self.ctx, &csv, &self.opts.name)?;
+            .load_csv(self.ctx, &csv, &self.opts.name, LoadCSVKind::Supers)?;
         self.monitor.on_event(SetupEvent::ImportDone { path: csv });
         Ok(())
     }
@@ -272,15 +218,13 @@ where
         log::info!("Adding interfaces...");
         self.monitor
             .on_event(SetupEvent::ImportStarted { path: csv.clone() });
-        self.graph.load_impls_csv(self.ctx, &csv, &self.opts.name)?;
+        self.graph
+            .load_csv(self.ctx, &csv, &self.opts.name, LoadCSVKind::Impls)?;
         self.monitor.on_event(SetupEvent::ImportDone { path: csv });
         Ok(())
     }
 
     fn import_methods(&self, import_dir_name: &str) -> SetupResult<()> {
-        if self.opts.no_methods {
-            return Ok(());
-        }
         let csv = format!("{}{}methods.csv", import_dir_name, fs::OS_PATH_SEP);
         if !self.should_load(LoadCSVKind::Methods) {
             return Ok(());
@@ -289,15 +233,12 @@ where
         self.monitor
             .on_event(SetupEvent::ImportStarted { path: csv.clone() });
         self.graph
-            .load_methods_csv(self.ctx, &csv, &self.opts.name)?;
+            .load_csv(self.ctx, &csv, &self.opts.name, LoadCSVKind::Methods)?;
         self.monitor.on_event(SetupEvent::ImportDone { path: csv });
         Ok(())
     }
 
     fn import_calls(&self, import_dir_name: &str) -> SetupResult<()> {
-        if self.opts.no_calls {
-            return Ok(());
-        }
         let csv = format!("{}{}calls.csv", import_dir_name, fs::OS_PATH_SEP);
         if !self.should_load(LoadCSVKind::Calls) {
             return Ok(());
@@ -305,7 +246,8 @@ where
         log::info!("Adding calls...");
         self.monitor
             .on_event(SetupEvent::ImportStarted { path: csv.clone() });
-        self.graph.load_calls_csv(self.ctx, &csv, &self.opts.name)?;
+        self.graph
+            .load_csv(self.ctx, &csv, &self.opts.name, LoadCSVKind::Calls)?;
         self.monitor.on_event(SetupEvent::ImportDone { path: csv });
         Ok(())
     }
@@ -313,14 +255,25 @@ where
     fn import_smalisa_files(&self) -> SetupResult<()> {
         let import_dir_name = String::from(path_must_str(&self.get_import_dir()?));
 
-        self.monitor.on_event(SetupEvent::AllImportsStarted {
-            dir: import_dir_name.clone(),
+        self.graph.load_begin(self.ctx)?;
+
+        self.monitor.on_event(SetupEvent::SourceStarted {
+            source: self.opts.name.clone(),
         });
 
-        let res = self.do_smalisa_imports(&import_dir_name);
+        let mut res = self.do_smalisa_imports(&import_dir_name);
 
-        self.monitor.on_event(SetupEvent::AllImportsDone {
-            dir: import_dir_name.clone(),
+        if res.is_ok() {
+            res = self
+                .graph
+                .load_complete(self.ctx, true)
+                .map_err(SetupError::from)
+        } else {
+            _ = self.graph.load_complete(self.ctx, false);
+        }
+
+        self.monitor.on_event(SetupEvent::SourceDone {
+            source: self.opts.name.clone(),
         });
 
         res
@@ -352,7 +305,7 @@ where
 
 /// Type of CSV file to be loaded
 #[derive(PartialEq, Eq, Clone, Copy)]
-pub(crate) enum LoadCSVKind {
+pub enum LoadCSVKind {
     Classes,
     Supers,
     Impls,
@@ -376,12 +329,60 @@ impl fmt::Display for LoadCSVKind {
     }
 }
 
-pub(crate) trait GraphDatabaseInternal: GraphDatabase {
+pub trait GraphDatabaseSetup: Sync + Send + GraphDatabase {
+    /// Add all sources known by dtu to the graph database
+    ///
+    /// This should be preferred to a loop over add_directory for the initial setup so that the
+    /// graph database implementation can perform its own setup and finalization steps.
+    fn run_initial_import(
+        &self,
+        ctx: &dyn Context,
+        opts: InitialImportOptions,
+        monitor: &dyn EventMonitor<SetupEvent>,
+        cancel: &TaskCancelCheck,
+    ) -> SetupResult<()>;
+
+    /// Adds the contents of a given directory to the graph.
+    ///
+    /// Use this only for adding a single directory at a time, the graph database must be setup up
+    /// initially with [run_initial_import]!
+    fn add_directory(
+        &self,
+        ctx: &dyn Context,
+        opts: AddDirectoryOptions<'_>,
+        monitor: &dyn EventMonitor<SetupEvent>,
+        cancel: &TaskCancelCheck,
+    ) -> SetupResult<()>;
+
+    /// Check whether the given CSV kind should be loaded for the given source
+    ///
+    /// This is used for restarting loads on failures. Ideally, the graph database would
+    /// ensure either a given LoadCSVKind is entirely loaded or at all, so that we can
+    /// restart after fixing the file manually if needed.
     fn should_load_csv(&self, source: &str, csv: LoadCSVKind) -> bool;
 
-    fn load_classes_csv(&self, ctx: &dyn Context, path: &str, source: &str) -> super::Result<()>;
-    fn load_supers_csv(&self, ctx: &dyn Context, path: &str, source: &str) -> super::Result<()>;
-    fn load_impls_csv(&self, ctx: &dyn Context, path: &str, source: &str) -> super::Result<()>;
-    fn load_methods_csv(&self, ctx: &dyn Context, path: &str, source: &str) -> super::Result<()>;
-    fn load_calls_csv(&self, ctx: &dyn Context, path: &str, source: &str) -> super::Result<()>;
+    /// Load the CSV into the database. This should be an all or nothing operation: if the
+    /// CSV load fails there should be no partial data from that CSV in the database.
+    fn load_csv(
+        &self,
+        ctx: &dyn Context,
+        path: &str,
+        source: &str,
+        csv: LoadCSVKind,
+    ) -> super::Result<()>;
+
+    /// Called when all loading begins
+    fn load_begin(&self, ctx: &dyn Context) -> super::Result<()> {
+        _ = ctx;
+        Ok(())
+    }
+
+    /// Called when all loading is completed
+    ///
+    /// This is called even on failure just in case any cleanup is needed.
+    fn load_complete(&self, ctx: &dyn Context, success: bool) -> super::Result<()> {
+        _ = ctx;
+        _ = success;
+        Ok(())
+    }
 }

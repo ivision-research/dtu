@@ -1,8 +1,7 @@
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::io::stdout;
 
-use anyhow::bail;
 use clap::{self, Args, Subcommand};
 use dtu::db::sql::device::get_default_devicedb;
 use dtu::db::sql::device::models::{Activity, Provider, Receiver, Service};
@@ -11,8 +10,7 @@ use sha2::{Digest, Sha256};
 use crate::parsers::DevicePathValueParser;
 use crate::printer::{color, Printer};
 use crate::utils::project_cacheable;
-use dtu::db::graph::db::FRAMEWORK_SOURCE;
-use dtu::db::graph::models::{ClassCallPath, MethodCallSearch, MethodMeta};
+use dtu::db::graph::models::{MethodCallPath, MethodSearch, MethodSearchParams, MethodSpec};
 use dtu::db::graph::{get_default_graphdb, GraphDatabase};
 use dtu::db::sql::{
     ApkIPC, DeviceDatabase, Enablable, Exportable, MetaDatabase, MetaSqliteDatabase,
@@ -46,7 +44,7 @@ impl Canned {
     pub fn run(self) -> anyhow::Result<()> {
         let ctx = DefaultContext::new();
         let meta = MetaSqliteDatabase::new(&ctx)?;
-        meta.ensure_prereq(Prereq::GraphDatabaseFullSetup)?;
+        meta.ensure_prereq(Prereq::GraphDatabaseSetup)?;
 
         let db = get_default_graphdb(&ctx)?;
 
@@ -73,15 +71,36 @@ struct ApkIPCCallsGeneric {
     depth: usize,
     cache: Cow<'static, str>,
 
-    target_method: Cow<'static, str>,
-    target_method_sig: Cow<'static, str>,
-    target_class: Option<ClassName>,
+    method: Cow<'static, str>,
+    signature: Cow<'static, str>,
+    class: Option<ClassName>,
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct SourcedClass<'a> {
     class: ClassName,
     source: Cow<'a, str>,
+}
+
+fn get_search_params<'a>(
+    name: Option<&'a str>,
+    class: Option<&'a ClassName>,
+    signature: Option<&'a str>,
+) -> anyhow::Result<MethodSearchParams<'a>> {
+    Ok(MethodSearchParams::new(name, class, signature)
+        .map_err(|it| anyhow::Error::msg(format!("failed to get search params: {it}")))?)
+}
+
+fn get_method_search<'a>(
+    name: Option<&'a str>,
+    class: Option<&'a ClassName>,
+    signature: Option<&'a str>,
+    source: Option<&'a str>,
+) -> anyhow::Result<MethodSearch<'a>> {
+    Ok(MethodSearch::new(
+        get_search_params(name, class, signature)?,
+        source,
+    ))
 }
 
 impl ApkIPCCallsGeneric {
@@ -89,36 +108,32 @@ impl ApkIPCCallsGeneric {
         &self,
         graphdb: &dyn GraphDatabase,
         source: Option<&str>,
-        apk_map: &BTreeMap<i32, DevicePath>,
+        apk_map: &HashMap<i32, DevicePath>,
         receivers: &[Receiver],
         activities: &[Activity],
         services: &[Service],
         providers: &[Provider],
         mut results: &mut ApkCallsResult,
     ) -> anyhow::Result<()> {
-        let target_class = self.target_class.as_ref();
+        let class = self.class.as_ref();
+        let name = self.method.as_ref();
+        let signature = self.signature.as_ref();
+        let search = get_method_search(Some(name), class, Some(signature), source)?;
 
-        let search = MethodCallSearch {
-            target_method: self.target_method.as_ref(),
-            target_class,
-            target_method_sig: self.target_method_sig.as_ref(),
-            source,
-            src_class: None,
-            src_method_sig: None,
-            src_method_name: None,
-        };
-
-        let mut lookup = BTreeMap::new();
+        let mut lookup = HashMap::new();
 
         // Find all callers of the given method regardless of whether they are IPC or not
-        let callers = graphdb.find_callers(&search, self.depth, None)?;
+        let paths = graphdb.find_callers(&search, None, self.depth)?;
 
-        for caller in callers.into_iter() {
+        for mpath in paths.into_iter() {
+            if mpath.is_empty() {
+                continue;
+            }
             let key = SourcedClass {
-                class: caller.class,
-                source: Cow::Owned(caller.source),
+                class: mpath.must_get_src_class().clone(),
+                source: Cow::Owned(mpath.must_get_source().into()),
             };
-            let value = caller.path;
+            let value = mpath.path;
             lookup.insert(key, value);
         }
 
@@ -133,7 +148,7 @@ impl ApkIPCCallsGeneric {
     fn run_inner_parts(
         &self,
         graphdb: &dyn GraphDatabase,
-        apk_map: &BTreeMap<i32, DevicePath>,
+        apk_map: &HashMap<i32, DevicePath>,
         receivers: &[Receiver],
         activities: &[Activity],
         services: &[Service],
@@ -169,7 +184,7 @@ impl ApkIPCCallsGeneric {
     ) -> anyhow::Result<ApkCallsResult> {
         let db = get_default_devicedb(ctx)?;
         let source = self.apk.as_ref().map(|it| it.as_squashed_str());
-        let mut apk_map = BTreeMap::new();
+        let mut apk_map = HashMap::new();
         for apk in db.get_apks()?.into_iter() {
             apk_map.insert(apk.id, apk.device_path);
         }
@@ -230,8 +245,8 @@ impl ApkIPCCallsGeneric {
 
     fn run_for_ipc<T: ApkIPC>(
         &self,
-        callers: &mut BTreeMap<SourcedClass, Vec<MethodMeta>>,
-        apk_map: &BTreeMap<i32, DevicePath>,
+        callers: &mut HashMap<SourcedClass, Vec<MethodSpec>>,
+        apk_map: &HashMap<i32, DevicePath>,
         ipcs: &[T],
         results: &mut ApkCallsResult,
     ) -> anyhow::Result<()> {
@@ -250,10 +265,7 @@ impl ApkIPCCallsGeneric {
 
             if let Some(path) = callers.get(&search) {
                 let devpath = DevicePath::from_squashed(source);
-                let found = ClassCallPath {
-                    class: search.class,
-                    path: path.clone(),
-                };
+                let found = MethodCallPath { path: path.clone() };
                 match results.get_mut(&devpath) {
                     Some(v) => v.push(found),
                     None => {
@@ -304,9 +316,9 @@ impl From<FindIPCCalls> for ApkIPCCallsGeneric {
             json: value.json,
             depth: value.depth,
             cache: Cow::Owned(cache),
-            target_method: Cow::Owned(String::from(value.name)),
-            target_class: value.class,
-            target_method_sig: Cow::Owned(String::from(value.signature)),
+            method: Cow::Owned(String::from(value.name)),
+            class: value.class,
+            signature: Cow::Owned(String::from(value.signature)),
         }
     }
 }
@@ -319,9 +331,9 @@ impl From<ParseUri> for ApkIPCCallsGeneric {
             json: value.json,
             depth: 1,
             cache: Cow::Borrowed("ipc-ParseUri"),
-            target_method: Cow::Borrowed("parseUri"),
-            target_class: Some(ClassName::new("Landroid/content/Intent;".into())),
-            target_method_sig: Cow::Borrowed("Ljava/lang/String;I"),
+            method: Cow::Borrowed("parseUri"),
+            class: Some(ClassName::new("Landroid/content/Intent;".into())),
+            signature: Cow::Borrowed("Ljava/lang/String;I"),
         }
     }
 }
@@ -379,19 +391,16 @@ impl FindIntentActivities {
         let activity_class = ClassName::new("Landroid/app/Activity;".into());
         let mut results = ApkCallsResult::new();
 
-        let search = MethodCallSearch {
-            target_method: "getIntent",
-            target_class: if self.strict {
+        let search = get_method_search(
+            Some("getIntent"),
+            if self.strict {
                 Some(&activity_class)
             } else {
                 None
             },
-            target_method_sig: "",
+            Some(""),
             source,
-            src_class: None,
-            src_method_sig: None,
-            src_method_name: None,
-        };
+        )?;
 
         let activities = db
             .get_activities()?
@@ -399,26 +408,33 @@ impl FindIntentActivities {
             .filter(|it| it.is_enabled() && it.is_exported())
             .collect::<Vec<Activity>>();
 
-        let mut apk_map = BTreeMap::new();
+        let mut apk_map = HashMap::new();
         for apk in db.get_apks()?.into_iter() {
             apk_map.insert(apk.id, apk.device_path);
         }
 
-        let callers = graphdb.find_callers(&search, 1, None)?;
+        let mpaths = graphdb.find_callers(&search, None, 1)?;
 
         if log::log_enabled!(log::Level::Trace) {
-            for caller in &callers {
-                log::trace!("Caller: {} in {}", caller.class, caller.source);
+            for path in &mpaths {
+                if path.is_empty() {
+                    continue;
+                }
+                log::trace!(
+                    "Caller: {} in {}",
+                    path.must_get_src_class(),
+                    path.must_get_source()
+                );
             }
         }
 
-        let mut lookup = BTreeMap::new();
-        for caller in callers.into_iter() {
+        let mut lookup = HashMap::new();
+        for mpath in mpaths.into_iter() {
             let key = SourcedClass {
-                class: caller.class,
-                source: Cow::Owned(caller.source),
+                class: mpath.must_get_src_class().clone(),
+                source: Cow::Owned(mpath.must_get_source().into()),
             };
-            let value = caller.path;
+            let value = mpath.path;
             lookup.insert(key, value);
         }
 
@@ -435,10 +451,7 @@ impl FindIntentActivities {
             if let Some(path) = lookup.get(&search) {
                 log::trace!("Activity {} is a caller", act);
                 let devpath = DevicePath::from_squashed(source);
-                let found = ClassCallPath {
-                    class: search.class,
-                    path: path.clone(),
-                };
+                let found = MethodCallPath { path: path.clone() };
                 match results.get_mut(&devpath) {
                     Some(v) => v.push(found),
                     None => {
@@ -505,9 +518,13 @@ struct FindIPCCalls {
 
 #[derive(Args)]
 struct FindCallers {
-    /// The APK to search, otherwise the framework is searched
-    #[arg(short, long, value_parser = DevicePathValueParser)]
-    apk: Option<DevicePath>,
+    /// The source of the method to find callers to
+    #[arg(short, long)]
+    method_source: Option<String>,
+
+    /// The source of the calls
+    #[arg(short, long)]
+    call_source: Option<String>,
 
     /// Method name
     #[arg(short, long)]
@@ -515,7 +532,7 @@ struct FindCallers {
 
     /// Method signature
     #[arg(short, long)]
-    signature: String,
+    signature: Option<String>,
 
     /// Method class
     #[arg(short, long)]
@@ -528,31 +545,26 @@ struct FindCallers {
 
 impl FindCallers {
     fn run(&self, db: &dyn GraphDatabase) -> anyhow::Result<()> {
-        let source = if let Some(src) = &self.apk {
-            src.as_squashed_str()
-        } else {
-            FRAMEWORK_SOURCE
-        };
-
         let class_ref = self.class.as_ref();
-        let search = MethodCallSearch {
-            target_method: &self.name,
-            target_class: class_ref,
-            target_method_sig: &self.signature,
-            source: Some(source),
-            src_class: None,
-            src_method_sig: None,
-            src_method_name: None,
-        };
-        let callers = db.find_callers(&search, self.depth, None)?;
+        let search = get_method_search(
+            Some(self.name.as_str()),
+            class_ref,
+            self.signature.as_ref().map(String::as_str),
+            self.method_source.as_ref().map(String::as_str),
+        )?;
+        let mpaths = db.find_callers(
+            &search,
+            self.call_source.as_ref().map(String::as_str),
+            self.depth,
+        )?;
 
         let printer = Printer::new();
 
-        for c in callers {
-            let mut iter = c.path.iter().take(c.path.len() - 1);
+        for p in mpaths {
+            let mut iter = p.path.iter().take(p.path.len() - 1);
             let first = match iter.next() {
                 Some(v) => v,
-                None => bail!("empty call chain!"),
+                None => continue,
             };
 
             printer.println_colored(first.as_smali(), color::YELLOW);
@@ -566,7 +578,7 @@ impl FindCallers {
     }
 }
 
-type ApkCallsResult = HashMap<DevicePath, Vec<ClassCallPath>>;
+type ApkCallsResult = HashMap<DevicePath, Vec<MethodCallPath>>;
 
 fn dump_apk_calls_result(data: &ApkCallsResult, json: bool, show_path: bool) -> anyhow::Result<()> {
     if json {
@@ -576,19 +588,20 @@ fn dump_apk_calls_result(data: &ApkCallsResult, json: bool, show_path: bool) -> 
 
     let printer = Printer::new();
 
-    for (apk, classes) in data {
+    for (apk, paths) in data {
         printer.println_colored(apk.as_device_str(), color::YELLOW);
-        for class in classes {
+        for p in paths {
+            if p.is_empty() {
+                continue;
+            }
             printer.print("  ");
-            printer.println_colored(&class.class, color::CYAN);
+            printer.println_colored(&p.must_get_src_class(), color::CYAN);
             if !show_path {
                 continue;
             }
-            if !class.path.is_empty() {
-                for call in &class.path {
-                    printer.print("    ");
-                    printer.println_colored(call.as_smali(), color::GREY);
-                }
+            for call in &p.path {
+                printer.print("    ");
+                printer.println_colored(call.as_smali(), color::GREY);
             }
         }
     }

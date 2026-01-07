@@ -1,7 +1,8 @@
 use anyhow::bail;
 use clap::Args;
 use dtu::db::graph::db::FRAMEWORK_SOURCE;
-use dtu::db::graph::{get_default_graphdb, ClassMeta, GraphDatabase};
+use dtu::db::graph::models::ClassSearch;
+use dtu::db::graph::{get_default_graphdb, ClassSpec, GraphDatabase};
 use dtu::prereqs::Prereq;
 use dtu::utils::{ensure_prereq, ClassName, DevicePath};
 use dtu::DefaultContext;
@@ -34,7 +35,7 @@ pub struct InterfaceImpl {
 impl InterfaceImpl {
     pub fn run(&self) -> anyhow::Result<()> {
         let ctx = DefaultContext::new();
-        ensure_prereq(&ctx, Prereq::GraphDatabasePartialSetup)?;
+        ensure_prereq(&ctx, Prereq::GraphDatabaseSetup)?;
         let source = self
             .apk
             .as_ref()
@@ -43,7 +44,9 @@ impl InterfaceImpl {
         let gdb = get_default_graphdb(&ctx)?;
         let is_framework = self.apk.is_none();
 
-        let impls = gdb.find_classes_implementing(&self.class, Some(source))?;
+        let search = ClassSearch::new(&self.class, Some(source));
+
+        let impls = gdb.find_classes_implementing(&search, None)?;
         if impls.len() > 0 {
             self.show_impls(&impls);
             return Ok(());
@@ -52,7 +55,9 @@ impl InterfaceImpl {
             bail!("no implementations found");
         }
 
-        let impls = gdb.find_classes_implementing(&self.class, None)?;
+        let search = ClassSearch::new(&self.class, None);
+
+        let impls = gdb.find_classes_implementing(&search, None)?;
         if impls.len() == 0 {
             bail!("no implementations found");
         }
@@ -60,7 +65,7 @@ impl InterfaceImpl {
         return Ok(());
     }
 
-    fn show_impls(&self, impls: &Vec<ClassMeta>) {
+    fn show_impls(&self, impls: &Vec<ClassSpec>) {
         for imp in impls {
             if self.show_source {
                 println!("{}|{}", imp.name, imp.source);

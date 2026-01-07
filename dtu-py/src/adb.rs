@@ -9,6 +9,7 @@ pub struct PyAdb(ExecAdb);
 
 type Result<T> = std::result::Result<T, DtuBaseError>;
 
+/// Allows access to the device under test via ADB
 #[pymethods]
 impl PyAdb {
     #[new]

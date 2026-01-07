@@ -13,3 +13,4 @@ setup_db() {
 
 setup_db "device"
 setup_db "meta"
+setup_db "graph"

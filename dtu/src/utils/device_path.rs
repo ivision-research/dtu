@@ -89,6 +89,7 @@ impl Into<DevicePath> for &DevicePath {
 }
 
 impl DevicePath {
+    /// Create a DevicePath from an unsquashed raw path
     pub fn new<T: Into<String>>(value: T) -> Self {
         let raw_path = value.into();
         let squashed_path =
@@ -165,6 +166,19 @@ impl DevicePath {
 
     pub fn get_squashed_string(&self) -> String {
         self.as_squashed_str().to_string()
+    }
+
+    pub fn into_squashed(self) -> String {
+        self.squashed_path
+    }
+
+    /// Squash the given device path into a squashed path
+    pub fn squash<S: AsRef<str> + ?Sized>(device_path: &S) -> String {
+        replace_char(
+            device_path.as_ref(),
+            OS_PATH_SEP_CHAR,
+            REPLACED_DEVICE_PATH_SEP_CHAR,
+        )
     }
 }
 

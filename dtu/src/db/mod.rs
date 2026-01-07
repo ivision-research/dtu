@@ -1,4 +1,4 @@
-#[cfg(feature = "_graph")]
+#[cfg(feature = "graph")]
 pub mod graph;
 
 pub mod sql;

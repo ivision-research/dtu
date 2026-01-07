@@ -99,12 +99,12 @@ impl StatusPrinter {
         self.silent = silent;
     }
 
-    /// Returns (current_position, last_row)
-    fn get_row_info(&self) -> Option<(u16, u16)> {
+    /// Returns (current_col, current_row, last_row)
+    fn get_location_info(&self) -> Option<(u16, u16, u16)> {
         let (_, last) = terminal::size().ok()?;
-        let (_, cur) = cursor::position().ok()?;
+        let (cur_col, cur_row) = cursor::position().ok()?;
 
-        Some((cur, last))
+        Some((cur_col, cur_row, last))
     }
 
     fn get_num_lines(&self, s: &str) -> Option<u16> {
@@ -123,9 +123,15 @@ impl StatusPrinter {
     }
 
     fn can_fit_line(&self, num_lines: u16) -> Option<bool> {
-        let (cur, last) = self.get_row_info()?;
-        let remaining_lines = last - cur;
-        Some(remaining_lines >= num_lines)
+        let (cur_col, mut cur_row, last) = self.get_location_info()?;
+        if cur_col != 0 {
+            cur_row += 1;
+        }
+        Some(
+            last.checked_sub(cur_row)
+                .map(|it| it >= num_lines)
+                .unwrap_or(false),
+        )
     }
 
     pub fn print_divider(&self) {

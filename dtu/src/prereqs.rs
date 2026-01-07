@@ -1,46 +1,48 @@
-use diesel::backend::Backend;
-use diesel::deserialize::FromSql;
-use diesel::expression::AsExpression;
-use diesel::serialize::{Output, ToSql};
-use diesel::sql_types::Integer;
-use diesel::FromSqlRow;
+#[cfg(feature = "sql")]
+use diesel::{
+    backend::Backend,
+    deserialize::FromSql,
+    expression::AsExpression,
+    serialize::{Output, ToSql},
+    sql_types::Text,
+    FromSqlRow,
+};
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 
-#[repr(i32)]
-#[derive(Clone, Copy, Debug, PartialEq, AsExpression, FromSqlRow)]
-#[diesel(sql_type = Integer)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "sql", derive(AsExpression, FromSqlRow))]
+#[cfg_attr(feature = "sql", diesel(sql_type = Text))]
 pub enum Prereq {
     /// Framework and APKs have been pulled and decompiled
-    PullAndDecompile = 1,
+    PullAndDecompile,
 
     /// The SQL database is populated with data
-    SQLDatabaseSetup = 2,
+    SQLDatabaseSetup,
 
     /// The diff with an eumulator is done
-    EmulatorDiff = 3,
+    EmulatorDiff,
 
-    /// The Graph database is accessible and populated with inheritance and
-    /// implementation data
-    GraphDatabasePartialSetup = 4,
+    /// The Graph database is accessible and populated with all information
+    GraphDatabaseSetup,
 
     /// fa.st has had a successful autocall run and Autocall.csv has been
     /// pulled
-    FastAutocallResults = 5,
+    FastAutocallResults,
 
     /// The testing application was created
-    AppSetup = 6,
+    AppSetup,
 
     /// The SELinux policy has been pulled off the device and recompiled
-    AcquiredSelinuxPolicy = 7,
+    AcquiredSelinuxPolicy,
 
-    /// The Graph database is populated with all data
-    GraphDatabaseFullSetup = 8,
+    /// Smalisa has been run on everything
+    Smalisa,
 
     #[cfg(test)]
-    TestComplete = 0x1000,
+    TestComplete,
     #[cfg(test)]
-    TestIncomplete = 0x1001,
+    TestIncomplete,
 }
 
 impl FromStr for Prereq {
@@ -50,88 +52,71 @@ impl FromStr for Prereq {
         Ok(match s {
             "pull" => Self::PullAndDecompile,
             "db-setup" => Self::SQLDatabaseSetup,
-            "graphdb-partial-setup" => Self::GraphDatabasePartialSetup,
-            "graphdb-full-setup" => Self::GraphDatabaseFullSetup,
+            "graphdb-setup" => Self::GraphDatabaseSetup,
             "app-setup" => Self::AppSetup,
             "fast-results" => Self::FastAutocallResults,
             "emulator-diff" => Self::EmulatorDiff,
             "acquired-selinux-policy" => Self::AcquiredSelinuxPolicy,
+            "smalisa" => Self::Smalisa,
+            #[cfg(test)]
+            "test-complete" => Self::TestComplete,
+            #[cfg(test)]
+            "test-incomplete" => Self::TestIncomplete,
+
             _ => {
                 return Err(
-                    "valid values are 'pull', 'db-setup', 'graphdb-partial-setup', 'graphdb-full-setup', 'app-setup', 'emulator-diff', 'fast-results', and 'acquired-selinux-policy'"
+                    "valid values are 'pull', 'db-setup', 'graphdb-setup', 'graphdb-setup', 'app-setup', 'emulator-diff', 'fast-results', 'smalisa', and 'acquired-selinux-policy'"
                 )
             }
         })
     }
 }
 
-impl Display for Prereq {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let as_str = match self {
-            Self::PullAndDecompile => "PullAndDecompile",
-            Self::SQLDatabaseSetup => "SQLDatabaseSetup",
-            Self::EmulatorDiff => "EmulatorDiff",
-            Self::GraphDatabasePartialSetup => "GraphDatabasePartialSetup",
-            Self::GraphDatabaseFullSetup => "GraphDatabaseFullSetup",
-            Self::FastAutocallResults => "FastAutocallResults",
-            Self::AppSetup => "AppSetup",
-            Self::AcquiredSelinuxPolicy => "AcquiredSelinuxPolicy",
-            #[cfg(test)]
-            Self::TestComplete => "TestComplete",
-            #[cfg(test)]
-            Self::TestIncomplete => "TestIncomplete",
-        };
-        write!(f, "{}", as_str)
-    }
-}
-
-impl<DB> ToSql<Integer, DB> for Prereq
-where
-    DB: Backend,
-    i32: ToSql<Integer, DB>,
-{
-    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, DB>) -> diesel::serialize::Result {
+impl Prereq {
+    fn as_str(&self) -> &'static str {
         match self {
-            Self::PullAndDecompile => 1.to_sql(out),
-            Self::SQLDatabaseSetup => 2.to_sql(out),
-            Self::EmulatorDiff => 3.to_sql(out),
-            Self::GraphDatabasePartialSetup => 4.to_sql(out),
-            Self::FastAutocallResults => 5.to_sql(out),
-            Self::AppSetup => 6.to_sql(out),
-            Self::AcquiredSelinuxPolicy => 7.to_sql(out),
-            Self::GraphDatabaseFullSetup => 8.to_sql(out),
+            Self::PullAndDecompile => "pull",
+            Self::SQLDatabaseSetup => "db-setup",
+            Self::EmulatorDiff => "emulator-diff",
+            Self::GraphDatabaseSetup => "graphdb-setup",
+            Self::FastAutocallResults => "fast-results",
+            Self::AppSetup => "app-setup",
+            Self::AcquiredSelinuxPolicy => "acquired-selinux-policy",
+            Self::Smalisa => "smalisa",
             #[cfg(test)]
-            Self::TestComplete => 0x1000.to_sql(out),
+            Self::TestComplete => "test-complete",
             #[cfg(test)]
-            Self::TestIncomplete => 0x1001.to_sql(out),
+            Self::TestIncomplete => "test-incomplete",
         }
     }
 }
 
-impl<DB> FromSql<Integer, DB> for Prereq
+impl Display for Prereq {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+#[cfg(feature = "sql")]
+impl<DB> ToSql<Text, DB> for Prereq
 where
     DB: Backend,
-    i32: FromSql<Integer, DB>,
+    str: ToSql<Text, DB>,
+{
+    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, DB>) -> diesel::serialize::Result {
+        let s: &'static str = self.as_str();
+        s.to_sql(out)
+    }
+}
+
+#[cfg(feature = "sql")]
+impl<DB> FromSql<Text, DB> for Prereq
+where
+    DB: Backend,
+    String: FromSql<Text, DB>,
 {
     fn from_sql(bytes: DB::RawValue<'_>) -> diesel::deserialize::Result<Self> {
-        let value: i32 = i32::from_sql(bytes)?;
-        Ok(match value {
-            1 => Self::PullAndDecompile,
-            2 => Self::SQLDatabaseSetup,
-            3 => Self::EmulatorDiff,
-            4 => Self::GraphDatabasePartialSetup,
-            5 => Self::FastAutocallResults,
-            6 => Self::AppSetup,
-            7 => Self::AcquiredSelinuxPolicy,
-            8 => Self::GraphDatabaseFullSetup,
-            #[cfg(test)]
-            0x1000 => Self::TestComplete,
-            #[cfg(test)]
-            0x1001 => Self::TestIncomplete,
-            _ => {
-                panic!("todo")
-                //return Err(Box::new(format!("invalid prereq value {}", value)))
-            }
-        })
+        let value = String::from_sql(bytes)?;
+        Self::from_str(value.as_str()).map_err(|_| panic!("TODO invalid prereq"))
     }
 }

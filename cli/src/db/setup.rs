@@ -212,7 +212,7 @@ impl Setup {
         let ctx = DefaultContext::new();
         let mdb = MetaSqliteDatabase::new(&ctx)?;
 
-        mdb.ensure_prereq(Prereq::GraphDatabasePartialSetup)?;
+        mdb.ensure_prereq(Prereq::GraphDatabaseSetup)?;
 
         let helper = get_project_dbsetup_helper(&ctx)?;
 

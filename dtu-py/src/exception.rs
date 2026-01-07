@@ -18,6 +18,18 @@ impl From<io::Error> for DtuBaseError {
     }
 }
 
+impl From<String> for DtuBaseError {
+    fn from(value: String) -> Self {
+        Self(dtu::Error::Generic(value))
+    }
+}
+
+impl<'a> From<&'a str> for DtuBaseError {
+    fn from(value: &'a str) -> Self {
+        Self(dtu::Error::Generic(value.into()))
+    }
+}
+
 impl From<DtuBaseError> for PyErr {
     fn from(value: DtuBaseError) -> Self {
         DtuError::new_err(value.0.to_string())

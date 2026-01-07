@@ -16,6 +16,7 @@ use log;
 use std::thread;
 
 use super::{applet::Applet, ui::draw};
+use crate::printer::no_color_set;
 use crate::ui::{restore_terminal, setup_terminal};
 
 struct PrintMonitor {
@@ -79,7 +80,7 @@ pub struct Pull {
 
 impl Pull {
     pub fn run(&self) -> anyhow::Result<()> {
-        let no_tui = self.no_tui || self.quiet;
+        let no_tui = self.no_tui || self.quiet || no_color_set();
 
         if no_tui {
             self.run_no_tui()

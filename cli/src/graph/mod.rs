@@ -11,7 +11,6 @@ use dtu::utils::DevicePath;
 mod canned;
 mod import_apk_methods;
 mod monitor;
-mod repl;
 mod setup;
 
 #[derive(Args)]
@@ -22,19 +21,9 @@ pub struct Graph {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Partially set up the graph database, this only sets up what is needed
-    /// to create the SQLite database
-    #[command()]
+    /// Set up the graph database, this may take some time
+    #[command(alias = "full-setup")]
     Setup(setup::Setup),
-
-    /// Fully set up the graph database, this takes a while but adds all methods
-    /// and calls to the database as well
-    #[command()]
-    FullSetup(setup::FullSetup),
-
-    /// Optimize the database, this may be a no-op for some database backends
-    #[command()]
-    Optimize,
 
     /// Wipe the graph database
     #[command()]
@@ -51,36 +40,17 @@ enum Command {
     /// Run some predefined queries against the Graph database
     #[command()]
     Canned(canned::Canned),
-
-    /// Run a REPL for the default Graph database
-    #[command()]
-    Repl(repl::Repl),
-
-    /// Execute a single script against the default Graph database
-    #[command()]
-    Eval(repl::Eval),
 }
 
 impl Graph {
     pub fn run(self) -> anyhow::Result<()> {
         match self.command {
             Command::Setup(c) => c.run(),
-            Command::FullSetup(c) => c.run(),
             Command::AddApkMethods(c) => c.run(),
             Command::RemoveSource(c) => c.run(),
             Command::Canned(c) => c.run(),
-            Command::Optimize => self.optimize(),
             Command::Wipe => self.wipe(),
-            Command::Repl(c) => c.run(),
-            Command::Eval(c) => c.run(),
         }
-    }
-
-    fn optimize(&self) -> anyhow::Result<()> {
-        let ctx = DefaultContext::new();
-        let db = get_default_graphdb(&ctx)?;
-        db.optimize()?;
-        Ok(())
     }
 
     fn wipe(&self) -> anyhow::Result<()> {
@@ -88,8 +58,7 @@ impl Graph {
         let meta = get_default_metadb(&ctx)?;
         let db = get_default_graphdb(&ctx)?;
         db.wipe(&ctx)?;
-        meta.update_prereq(Prereq::GraphDatabasePartialSetup, false)?;
-        meta.update_prereq(Prereq::GraphDatabaseFullSetup, false)?;
+        meta.update_prereq(Prereq::GraphDatabaseSetup, false)?;
         Ok(())
     }
 }

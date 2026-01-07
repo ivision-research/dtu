@@ -120,10 +120,6 @@
           doCheck = false;
         });
 
-        dtuCliNeo4j = dtuCli.overrideAttrs (prev: {
-          cargoExtraArgs = prev ++ " -F neo4j";
-        });
-
         jarInstall = prog: src:
           ''
             install -D ${src} "$out/libexec/${prog}/${prog}.jar"
@@ -238,7 +234,6 @@
       {
         packages = rec {
           dtu = dtuCli;
-          dtuNeo4j = dtuCliNeo4j;
           libDtu = libDtuDrv;
           default = dtu;
 
@@ -269,30 +264,6 @@
             '';
           };
 
-          dtuEnvNeo4j = pkgs.stdenv.mkDerivation {
-            name = "dtu";
-
-            nativeBuildInputs = [
-              pkgs.makeBinaryWrapper
-            ];
-
-            sourceRoot = ".";
-            dontConfigure = true;
-            dontUnpack = true;
-            dontBuild = true;
-            installPhase = ''
-            doWrap() {
-              install -D -m 550 "${dtuCliNeo4j}/bin/$1" "$out/bin/$1"
-              wrapProgram "$out/bin/$1" \
-                --prefix PATH : "${lib.makeBinPath envInputs}"
-            }
-
-            doWrap "dtu"
-            doWrap "dtu-fs"
-            doWrap "dtu-decompile"
-            '';
-          };
-
         };
 
         apps.default = flake-utils.lib.mkApp {
@@ -301,40 +272,6 @@
         };
 
         devShells.default = let
-
-        neo4jConf = pkgs.writeTextFile {
-          name = "neo4j.conf";
-          text = ''
-            dbms.security.auth_enabled=false
-            server.directories.data=/tmp/dtu_neo4j/data
-            server.directories.plugins=/tmp/dtu_neo4j/plugins
-            server.directories.logs=/tmp/dtu_neo4j/logs
-            server.directories.lib=/tmp/dtu_neo4j/lib
-            server.directories.run=/tmp/dtu_neo4j/run
-            server.directories.import=/tmp/dtu_neo4j/import
-            server.bolt.enabled=true
-            server.http.enabled=true
-            server.jvm.additional=-XX:+UseG1GC
-            server.jvm.additional=-XX:-OmitStackTraceInFastThrow
-            server.jvm.additional=-XX:+AlwaysPreTouch
-            server.jvm.additional=-XX:+UnlockExperimentalVMOptions
-            server.jvm.additional=-XX:+TrustFinalNonStaticFields
-            server.jvm.additional=-XX:+DisableExplicitGC
-            server.jvm.additional=-Djdk.nio.maxCachedBufferSize=1024
-            server.jvm.additional=-Dio.netty.tryReflectionSetAccessible=true
-            server.jvm.additional=-Djdk.tls.ephemeralDHKeySize=2048
-            server.jvm.additional=-Djdk.tls.rejectClientInitiatedRenegotiation=true
-            server.jvm.additional=-XX:FlightRecorderOptions=stackdepth=256
-            server.jvm.additional=-XX:+UnlockDiagnosticVMOptions
-            server.jvm.additional=-XX:+DebugNonSafepoints
-            server.jvm.additional=--add-opens=java.base/java.nio=ALL-UNNAMED
-            server.jvm.additional=--add-opens=java.base/java.io=ALL-UNNAMED
-            server.jvm.additional=--add-opens=java.base/sun.nio.ch=ALL-UNNAMED
-            server.jvm.additional=-Dlog4j2.disable.jmx=true
-            server.windows_service_name=neo4j
-          '';
-        };
-
         in pkgs.mkShell {
           packages = with pkgs; [
             cargo
@@ -343,36 +280,8 @@
             mdbook
             kotlin
             sqlite
-            neo4j
             awscli2
           ];
-
-          shellHook = ''
-          if [ -d "/tmp/dtu_neo4j" ]; then
-            rm -r "/tmp/dtu_neo4j/data"
-            rm -r "/tmp/dtu_neo4j/import"
-          fi
-
-          mkdir -p /tmp/dtu_neo4j/import
-          mkdir -p /tmp/dtu_neo4j/plugins
-
-          cp ${neo4jConf} /tmp/dtu_neo4j/neo4j.conf
-          export NEO4J_CONF=/tmp/dtu_neo4j
-
-          local_path=''${XDG_DATA_HOME:-$HOME/.local/share}/dtu
-          plugin_path=$local_path/neo4j/plugins
-
-          apoc=apoc-5.18.0-core.jar
-
-          if [ ! -f "/tmp/dtu_neo4j/plugins/$apoc" ]; then
-
-            if [ -f "$plugin_path/$apoc" ]; then
-              cp "$plugin_path/$apoc" "/tmp/dtu_neo4j/plugins/$apoc"
-            fi
-
-
-          fi
-          '';
         };
       });
 }

@@ -227,6 +227,21 @@ impl DBThread {
         Ok(Self(db_thread))
     }
 
+    pub(super) fn transaction<F, T, E>(&self, f: F) -> std::result::Result<T, E>
+    where
+        T: Send,
+        E: From<diesel::result::Error> + Send,
+        F: FnOnce(&mut SqliteConnection) -> std::result::Result<T, E> + Send,
+    {
+        self.0.install(|| {
+            CONNECTION.with(|c| {
+                let mut borrowed = c.borrow_mut();
+                let conn = borrowed.as_mut().unwrap();
+                conn.transaction(f)
+            })
+        })
+    }
+
     pub(super) fn with_connection<F, R>(&self, f: F) -> R
     where
         R: Send,
@@ -402,6 +417,26 @@ macro_rules! def_standard_crud {
     };
 }
 
+#[cfg(feature = "trace_db")]
+macro_rules! query {
+    ($q:expr) => {{
+        let __query = $q;
+        ::log::trace!(
+            "{}",
+            diesel::debug_query::<::diesel::sqlite::Sqlite, _>(&__query)
+        );
+
+        __query
+    }};
+}
+
+#[cfg(not(feature = "trace_db"))]
+macro_rules! query {
+    ($q:expr) => {
+        $q
+    };
+}
+
 #[macro_export]
 macro_rules! impl_delete_by {
      ($name:ident, $sel:ty, $table:ident, $($filter:tt)+) => {
@@ -470,6 +505,7 @@ macro_rules! impl_get_one_by {
     ($name:ident, $sel:ty, $ret:ty, $ty:ident, $($filter:tt)+) => {
         impl_get_by!(get_result, $name, $sel, $ret, $ty, $($filter)+);
     }
+
 }
 
 #[macro_export]

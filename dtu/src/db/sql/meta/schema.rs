@@ -37,8 +37,9 @@ diesel::table! {
 }
 
 diesel::table! {
-    progress (step) {
-        step -> Integer,
+    progress (rowid) {
+        rowid -> Integer,
+        step -> Text,
         completed -> Bool,
     }
 }

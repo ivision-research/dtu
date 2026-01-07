@@ -94,10 +94,6 @@ impl PyContext {
         Ok(self.0.get_graph_import_dir()?)
     }
 
-    fn get_neo4j_dir(&self) -> Result<PathBuf> {
-        Ok(self.0.get_neo4j_dir()?)
-    }
-
     fn get_selinux_dir(&self) -> Result<PathBuf> {
         Ok(self.0.get_selinux_dir()?)
     }

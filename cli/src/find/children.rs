@@ -1,7 +1,8 @@
 use anyhow::bail;
 use clap::Args;
 use dtu::db::graph::db::FRAMEWORK_SOURCE;
-use dtu::db::graph::{get_default_graphdb, ClassMeta, GraphDatabase};
+use dtu::db::graph::models::ClassSearch;
+use dtu::db::graph::{get_default_graphdb, ClassSpec, GraphDatabase};
 use dtu::prereqs::Prereq;
 use dtu::utils::{ensure_prereq, ClassName, DevicePath};
 use dtu::DefaultContext;
@@ -34,7 +35,7 @@ pub struct Children {
 impl Children {
     pub fn run(&self) -> anyhow::Result<()> {
         let ctx = DefaultContext::new();
-        ensure_prereq(&ctx, Prereq::GraphDatabasePartialSetup)?;
+        ensure_prereq(&ctx, Prereq::GraphDatabaseSetup)?;
         let source = self
             .apk
             .as_ref()
@@ -43,7 +44,9 @@ impl Children {
 
         let gdb = get_default_graphdb(&ctx)?;
         let is_framework = self.apk.is_none();
-        let children = gdb.find_child_classes_of(&self.class, Some(source))?;
+
+        let search = ClassSearch::new(&self.class, Some(source));
+        let children = gdb.find_child_classes_of(&search, None)?;
         if children.len() > 0 {
             self.show_children(&children);
             return Ok(());
@@ -53,7 +56,8 @@ impl Children {
             bail!("no child classes found");
         }
 
-        let children = gdb.find_classes_implementing(&self.class, None)?;
+        let search = ClassSearch::new(&self.class, None);
+        let children = gdb.find_child_classes_of(&search, None)?;
         if children.len() == 0 {
             bail!("no child classes found");
         }
@@ -61,7 +65,7 @@ impl Children {
         Ok(())
     }
 
-    fn show_children(&self, children: &Vec<ClassMeta>) {
+    fn show_children(&self, children: &Vec<ClassSpec>) {
         for imp in children {
             if self.show_source {
                 println!("{}|{}", imp.name, imp.source);

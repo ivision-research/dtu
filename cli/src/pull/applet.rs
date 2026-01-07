@@ -31,7 +31,7 @@ pub struct Applet {
     pub sel_idx: usize,
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 enum PullDecompileStatus {
     InProgress,
     Failed,

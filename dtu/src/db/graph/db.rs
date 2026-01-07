@@ -1,9 +1,10 @@
-use super::models::{ClassCallPath, ClassMeta, ClassSourceCallPath, MethodCallSearch, MethodMeta};
+use super::models::{ClassSpec, MethodCallPath, MethodSpec};
+use crate::db::graph::models::{ClassSearch, MethodSearch};
 use crate::utils::ClassName;
 use crate::Context;
 use dtu_proc_macro::wraps_base_error;
-use std::collections::BTreeSet;
-use std::io::{self, Write};
+use std::collections::HashSet;
+use std::io;
 
 pub const FRAMEWORK_SOURCE: &'static str = "framework";
 
@@ -39,30 +40,30 @@ pub type Result<T> = std::result::Result<T, Error>;
 ///
 /// The Framework and each APK have their own database
 pub trait GraphDatabase: Sync + Send {
-    fn initialize(&self) -> Result<()>;
-
-    /// Optimize the database, defaults to a NOOP but may be supported by
-    /// some backends
-    fn optimize(&self) -> Result<()> {
-        log::warn!("Database implementation doesn't support optimization");
-        Ok(())
-    }
-
-    fn get_all_sources(&self) -> Result<BTreeSet<String>>;
+    /// Get all source names in the database
+    fn get_all_sources(&self) -> Result<HashSet<String>>;
 
     /// Find all child classes of the given parent class
+    ///
+    /// The source is for the source in which the relationship was discovered,
+    /// which will be the child class's source: this may differ from the parent's
+    /// source.
     fn find_child_classes_of(
         &self,
-        parent: &ClassName,
+        parent: &ClassSearch,
         source: Option<&str>,
-    ) -> Result<Vec<ClassMeta>>;
+    ) -> Result<Vec<ClassSpec>>;
 
     /// Find all classes that implement the given interface
+    ///
+    /// The source is for the source in which the relationship was discovered,
+    /// which will be the implementing class's source: this may differ from the
+    /// interface definition's source.
     fn find_classes_implementing(
         &self,
-        iface: &ClassName,
+        iface: &ClassSearch,
         source: Option<&str>,
-    ) -> Result<Vec<ClassMeta>>;
+    ) -> Result<Vec<ClassSpec>>;
 
     /// Find all callers of the given method
     ///
@@ -71,50 +72,22 @@ pub trait GraphDatabase: Sync + Send {
     /// - depth = 1 will only find immediate calls
     /// - depth = 2 will find calls that call something that calls the method
     ///
-    /// and so on. A high depth value will make this call take a long time and
-    /// generally a lot of indirection will cause noise in the output, as each
-    /// method call further away you are the more the input can be transformed
-    /// before the call you're interested in.
-    ///
-    /// Generally, I wouldn't go above depth = 3 for good results.
-    fn find_callers(
-        &self,
-        method: &MethodCallSearch,
-        depth: usize,
-        limit: Option<usize>,
-    ) -> Result<Vec<ClassSourceCallPath>>;
+    /// and so on.
+    fn find_callers(&self, method: &MethodSearch, call_source: Option<&str>, depth: usize) -> Result<Vec<MethodCallPath>>;
 
     /// Find all calls leaving the given method up to a given depth.
-    fn find_outgoing_calls(
-        &self,
-        from: &MethodMeta,
-        source: &str,
-        depth: usize,
-        limit: Option<usize>,
-    ) -> Result<Vec<ClassCallPath>>;
+    fn find_outgoing_calls(&self, from: &MethodSearch, depth: usize)
+        -> Result<Vec<MethodCallPath>>;
 
     /// Get all classes defined by the given source
     fn get_classes_for(&self, source: &str) -> Result<Vec<ClassName>>;
 
     /// Get all methods defined by the given soruce
-    fn get_methods_for(&self, source: &str) -> Result<Vec<MethodMeta>>;
+    fn get_methods_for(&self, source: &str) -> Result<Vec<MethodSpec>>;
 
     /// Wipe the database
     fn wipe(&self, ctx: &dyn Context) -> Result<()>;
 
     /// Remove all references to the given source from the database
     fn remove_source(&self, source: &str) -> Result<()>;
-
-    /// Adds the contents of a given directory to the graph.
-    #[cfg(feature = "setup")]
-    fn add_directory(
-        &self,
-        ctx: &dyn Context,
-        opts: super::setup::AddDirectoryOptions,
-        monitor: &dyn crate::tasks::EventMonitor<super::setup::SetupEvent>,
-        cancel: &crate::tasks::TaskCancelCheck,
-    ) -> Result<()>;
-
-    /// Used for REPL implementation
-    fn eval(&self, script: &str, writer: &mut dyn Write) -> Result<()>;
 }

@@ -47,11 +47,27 @@ pub(crate) fn sql_db_row(
         })
         .collect::<Vec<Field>>();
 
+    let has_id = stripped_fields.iter().any(|it| {
+        it.ident.as_ref().map(|id| {
+            id.to_string() == "id"
+        }).unwrap_or(false)
+    });
+
     define_insertable(&st, &stripped_fields, &diesel_attrs, &mut tokens);
+
+    let derives = if has_id {
+        quote! {
+            ::std::clone::Clone, ::diesel::Queryable, ::diesel::Identifiable, ::diesel::AsChangeset
+        }
+    } else {
+        quote! {
+            ::std::clone::Clone, ::diesel::Queryable, ::diesel::AsChangeset
+        }
+    };
 
     let code = quote! {
         #[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
-        #[derive(::std::clone::Clone, ::diesel::Queryable, ::diesel::Identifiable, ::diesel::AsChangeset)]
+        #[derive(#derives)]
         #( #attrs )*
         #vis struct #ident #generics {
             #(
@@ -146,7 +162,7 @@ fn define_insertable(
         .collect::<Vec<InsertSetter>>();
 
     let code = quote! {
-        /// Auto generated type for inserting a #name into the database
+        /// Auto generated type for inserting into the database
         #[derive(Insertable)]
         #(#atts)*
         #vis struct #new_name #lifetime {
