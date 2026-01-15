@@ -16,17 +16,38 @@ enum Command {
     #[command()]
     ShowProgress(ShowProgress),
 
-    /// Manually modify the progress database
+    /// Manually clear the progress step
+    #[command()]
+    ClearProgress(ClearProgress),
+
+    /// Manually set the progress step
     #[command()]
     SetProgress(SetProgress),
 }
 
 impl Meta {
-    pub fn run(&self) -> anyhow::Result<()> {
-        match &self.command {
+    pub fn run(self) -> anyhow::Result<()> {
+        match self.command {
             Command::ShowProgress(c) => c.run(),
+            Command::ClearProgress(c) => c.run(),
             Command::SetProgress(c) => c.run(),
         }
+    }
+}
+
+#[derive(Args)]
+struct ClearProgress {
+    /// The step to chanage
+    #[arg(short, long)]
+    step: Prereq,
+}
+
+impl ClearProgress {
+    fn run(self) -> anyhow::Result<()> {
+        let ctx = DefaultContext::new();
+        let db = MetaSqliteDatabase::new(&ctx)?;
+        db.update_prereq(self.step, false)?;
+        Ok(())
     }
 }
 
@@ -35,17 +56,13 @@ struct SetProgress {
     /// The step to chanage
     #[arg(short, long)]
     step: Prereq,
-
-    /// Set this flag to mark complete, otherwise incomplete
-    #[arg(short, long)]
-    completed: bool,
 }
 
 impl SetProgress {
-    fn run(&self) -> anyhow::Result<()> {
+    fn run(self) -> anyhow::Result<()> {
         let ctx = DefaultContext::new();
         let db = MetaSqliteDatabase::new(&ctx)?;
-        db.update_prereq(self.step, self.completed)?;
+        db.update_prereq(self.step, true)?;
         Ok(())
     }
 }
@@ -54,7 +71,7 @@ impl SetProgress {
 struct ShowProgress {}
 
 impl ShowProgress {
-    fn run(&self) -> anyhow::Result<()> {
+    fn run(self) -> anyhow::Result<()> {
         let ctx = DefaultContext::new();
         let db = MetaSqliteDatabase::new(&ctx)?;
         let progress = db.get_all_progress()?;
