@@ -22,7 +22,10 @@ use dtu::{
     Context, DefaultContext,
 };
 
-use crate::db::get_path_for_diff_source;
+use crate::{
+    db::get_path_for_diff_source,
+    utils::{hook_to_signals, task_canceller},
+};
 
 use super::{monitor::PrintMonitor, setup::start_monitor_thread};
 
@@ -89,10 +92,11 @@ impl AddApk {
             db.delete_apk_by_id(id)?;
         }
 
-        let (_cancel, check) = TaskCanceller::new();
+        let (cancel, check) = TaskCanceller::new();
+        let _cancel = hook_to_signals(cancel)?;
         let (mon, chan) = ChannelEventMonitor::create();
-        let thread_handle = start_monitor_thread(self.quiet, chan);
 
+        let thread_handle = start_monitor_thread(self.quiet, chan);
         let task = AddApkTask::new(
             &ctx,
             &db,
@@ -103,12 +107,13 @@ impl AddApk {
             ApkIdentifier::new(0, 0),
             &check,
         );
-
-        task.run()?;
-
+        let res = task.run();
         drop(mon);
-
-        let err_reporter = thread_handle.join().expect("failed to join thread");
+        let err_reporter = thread_handle
+            .join()
+            .expect("failed to join thread")
+            .unwrap();
+        res?;
 
         if self.no_diff {
             return err_reporter.as_err();
@@ -131,10 +136,9 @@ impl AddApk {
     ) -> anyhow::Result<()> {
         let diff_db_path = get_path_for_diff_source(ctx, &source.name)?;
         let diff_db = DeviceSqliteDatabase::new_from_path(path_must_str(&diff_db_path))?;
-        let (_cancel, check) = TaskCanceller::new();
-        let (mon, _join) = PrintMonitor::start()?;
+        let (_cancel, check) = task_canceller()?;
+        let (mon, _handle) = PrintMonitor::start()?;
         let opts = DiffOptions::new(source);
-
         let mut task = DiffTask::new(opts, db, &diff_db, check, &mon);
         task.do_system_services = false;
         let res = task.run();

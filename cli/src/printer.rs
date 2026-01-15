@@ -89,8 +89,9 @@ impl StatusPrinter {
     fn restore(&self) {
         if self.is_tty && self.style_enabled.load(Ordering::Relaxed) {
             with_stdout(|s| {
-                _ = queue!(s, Show, RestorePosition);
+                _ = queue!(s, Show, RestorePosition, Clear(ClearType::FromCursorDown));
             });
+        } else {
         }
         self.flush();
     }
@@ -189,9 +190,6 @@ impl StatusPrinter {
         }
 
         let should_style = self.should_style();
-        if should_style {
-            self.ensure_status_line();
-        }
         with_stdout(|s| {
             if should_style {
                 _ = queue!(s, PrintStyledContent(StyledContent::new(style, content)));
@@ -200,6 +198,10 @@ impl StatusPrinter {
             }
             if with_nl {
                 _ = queue!(s, Print("\n"));
+            }
+            if should_style {
+                _ = s.flush();
+                self.ensure_status_line(s);
             }
         });
     }
@@ -210,7 +212,7 @@ impl StatusPrinter {
         Some(terminal::size().ok()?.1 - 1)
     }
 
-    fn scroll_and_print_status_line(&self, num_lines: u16) {
+    fn scroll_and_print_status_line(&self, num_lines: u16, s: &mut Stdout) {
         let _status_line = self.status_line.borrow();
         let status_line = match _status_line.as_ref() {
             None => return,
@@ -230,32 +232,28 @@ impl StatusPrinter {
         let remaining_lines = last_row - cur_row;
         let write_at = last_row - num_lines + 1;
 
-        with_stdout(|s| {
-            if remaining_lines < num_lines {
-                _ = queue!(s, ScrollUp(num_lines));
-                cur_row = cur_row.checked_sub(num_lines).unwrap_or(0);
-            }
+        if remaining_lines < num_lines {
+            _ = queue!(s, ScrollUp(num_lines));
+            cur_row = cur_row.checked_sub(num_lines).unwrap_or(0);
+        }
 
-            _ = queue!(
-                s,
-                MoveTo(0, write_at),
-                status_line,
-                MoveTo(cur_col, cur_row)
-            );
-            _ = s.flush();
-        });
+        _ = queue!(
+            s,
+            MoveTo(0, write_at),
+            status_line,
+            MoveTo(cur_col, cur_row)
+        );
+        _ = s.flush();
     }
 
-    fn ensure_status_line(&self) {
+    fn ensure_status_line(&self, s: &mut Stdout) {
         let num_lines = self.num_status_lines.load(Ordering::Relaxed);
 
         if num_lines == 0 || self.can_fit_line(num_lines).unwrap_or(true) {
             return;
         }
-        with_stdout(|s| {
-            _ = queue!(s, Clear(ClearType::FromCursorDown));
-        });
-        self.scroll_and_print_status_line(num_lines);
+        _ = queue!(s, Clear(ClearType::FromCursorDown));
+        self.scroll_and_print_status_line(num_lines, s);
     }
 
     pub fn flush(&self) {
@@ -273,12 +271,6 @@ impl StatusPrinter {
             return;
         }
 
-        // Just clear everything after where we are, it's easier and we'll hit the bottom
-        // of the terminal pretty quickly anyway.
-        with_stdout(|s| {
-            _ = queue!(s, Clear(ClearType::FromCursorDown));
-        });
-
         let as_string = content.to_string();
 
         let nls = self.get_num_lines(&as_string).unwrap_or(0);
@@ -286,7 +278,12 @@ impl StatusPrinter {
         let psc = PrintStyledContent(StyledContent::new(style, as_string));
         _ = self.status_line.borrow_mut().insert(psc.clone());
 
-        self.scroll_and_print_status_line(nls);
+        // Just clear everything after where we are, it's easier and we'll hit the bottom
+        // of the terminal pretty quickly anyway.
+        with_stdout(|s| {
+            _ = queue!(s, Clear(ClearType::FromCursorDown));
+            self.scroll_and_print_status_line(nls, s);
+        });
     }
 
     pub fn update_status_line(&self, content: impl Display) {

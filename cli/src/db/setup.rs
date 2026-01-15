@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::fs;
-use std::thread::JoinHandle;
 
 use anyhow::bail;
 use clap::{self, Args};
@@ -9,13 +8,14 @@ use crossterm::style::{ContentStyle, Stylize};
 use dtu::db::graph::get_default_graphdb;
 
 use crate::printer::{color, StatusPrinter};
+use crate::utils::{task_canceller, CancelCheckThread};
 use dtu::db::sql::device::{
     get_project_dbsetup_helper, ApkIdentifier, DiffOptions, DiffTask, SetupEvent, SetupOptions,
     EMULATOR_DIFF_SOURCE,
 };
 use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
-use dtu::tasks::{ChannelEventMonitor, TaskCanceller};
+use dtu::tasks::ChannelEventMonitor;
 use dtu::utils::{path_must_str, DevicePath};
 use dtu::{Context, DefaultContext};
 
@@ -119,8 +119,8 @@ fn update_apk_status(
 pub(super) fn start_monitor_thread(
     silent: bool,
     chan: Receiver<SetupEvent>,
-) -> JoinHandle<ErrorReporter> {
-    std::thread::spawn(move || {
+) -> CancelCheckThread<ErrorReporter> {
+    CancelCheckThread::spawn(move |cancel_check| {
         let mut errs = ErrorReporter::default();
 
         let mut printer = StatusPrinter::new();
@@ -132,7 +132,7 @@ pub(super) fn start_monitor_thread(
         let mut done: usize = 0;
         let mut count: usize = 0;
 
-        loop {
+        while !cancel_check.was_cancelled() {
             let evt = match chan.recv() {
                 Ok(v) => v,
                 Err(_) => break,
@@ -220,33 +220,28 @@ impl Setup {
         let graph = get_default_graphdb(&ctx)?;
 
         let (mon, chan) = ChannelEventMonitor::create();
-        let thread_handle = start_monitor_thread(self.quiet, chan);
-
-        let (_cancel, check) = TaskCanceller::new();
-
+        let (_cancel, check) = task_canceller()?;
+        let join = start_monitor_thread(self.quiet, chan);
         let opts = SetupOptions::default().set_force(self.force);
-
-        db.setup(&ctx, opts, &helper, Some(&mon), &graph, &mdb, check)?;
-
+        let res = db.setup(&ctx, opts, &helper, Some(&mon), &graph, &mdb, check);
         drop(mon);
-
-        let err_reporter = thread_handle.join().expect("failed to join thread");
+        let err_reporter = join.join().expect("failed to join thread").unwrap();
+        res?;
 
         if self.no_diff {
             return err_reporter.as_err();
         }
 
         let source = db.get_diff_source_by_name(EMULATOR_DIFF_SOURCE)?;
-        let (_cancel, check) = TaskCanceller::new();
-        let (mon, _join) = PrintMonitor::start()?;
+        let (_cancel, check) = task_canceller()?;
         let opts = DiffOptions::new(source);
-
         let api_level = self.api_level.unwrap_or_else(|| ctx.get_target_api_level());
         let aosp_db = get_aosp_database(&ctx, api_level)?;
+        let (mon, join) = PrintMonitor::start()?;
         let task = DiffTask::new(opts, &db, &aosp_db, check, &mon);
-
         let res = task.run();
         drop(mon);
+        _ = join.join();
         res?;
 
         mdb.update_prereq(Prereq::EmulatorDiff, true)?;

@@ -1,34 +1,49 @@
-use crossbeam::channel::{bounded, unbounded, Receiver, Sender, TryRecvError};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+
+use crossbeam::channel::{bounded, Receiver, Sender};
 
 /// Allows cancelling active tasks
+#[derive(Clone)]
 pub struct TaskCanceller {
-    tx: Option<Sender<()>>,
+    cancel: Arc<AtomicBool>,
+}
+
+impl Drop for TaskCanceller {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed)
+    }
 }
 
 impl TaskCanceller {
     pub fn new() -> (Self, TaskCancelCheck) {
-        let (tx, rx) = unbounded();
-        (Self { tx: Some(tx) }, TaskCancelCheck { rx })
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let cancel = Arc::clone(&cancelled);
+        (
+            Self { cancel },
+            TaskCancelCheck {
+                cancelled: Arc::clone(&cancelled),
+            },
+        )
     }
 
-    /// Cancel the task. This can be invoked more than once, but it is
-    /// essentially a noop after the first invocation.
+    /// Cancel the task. This can be invoked more than once, but only the first
+    /// invocation matters.
     pub fn cancel(&mut self) {
-        self.tx.take().map(|tx| drop(tx));
+        self.cancel.store(true, Ordering::Relaxed);
     }
 }
 
 pub struct TaskCancelCheck {
-    rx: Receiver<()>,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl TaskCancelCheck {
     /// Check to see if the task has been cancelled
     pub fn was_cancelled(&self) -> bool {
-        match self.rx.try_recv() {
-            Err(TryRecvError::Disconnected) => true,
-            _ => false,
-        }
+        self.cancelled.load(Ordering::Relaxed)
     }
 
     /// Convenience wrapper to check [was_cancelled] and return an error if

@@ -1,15 +1,16 @@
 use std::fs;
 use std::path::PathBuf;
 
-use super::monitor::{start_import_print_thread, start_smalisa_print_thread};
+use crate::graph::monitor::{start_import_print_thread, start_smalisa_print_thread};
+use crate::utils::task_canceller;
+
 use clap::{self, Args};
-use crossbeam::channel::{bounded, Sender};
+use crossbeam::channel::{unbounded, Sender};
 use dtu::db::graph::db::FRAMEWORK_SOURCE;
 use dtu::db::graph::{get_default_graphdb, GraphDatabaseSetup, InitialImportOptions};
 use dtu::db::sql::{MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
-use dtu::tasks::smalisa;
-use dtu::tasks::{ChannelEventMonitor, EventMonitor, TaskCancelCheck, TaskCanceller};
+use dtu::tasks::{smalisa, ChannelEventMonitor, EventMonitor, TaskCancelCheck};
 use dtu::utils::{opt_deny, path_must_name, Denylist, DevicePath, OptDenylist};
 use dtu::{Context, DefaultContext};
 
@@ -77,21 +78,18 @@ impl Setup {
     ) -> anyhow::Result<()> {
         let source_dir = ctx.get_smali_dir()?.join("framework");
         let (mon, chan) = ChannelEventMonitor::create();
-        let (source_tx, source_rx) = bounded(0);
-
-        let _join = start_smalisa_print_thread(
-            String::from("framework"),
-            source_rx,
-            chan,
-            num_sources,
-        );
-
-        let (cancel, check) = TaskCanceller::new();
+        let (source_tx, source_rx) = unbounded();
+        let (cancel, check) = task_canceller()?;
+        let _handle =
+            start_smalisa_print_thread(String::from("framework"), source_rx, chan, num_sources);
         let opts = smalisa::AddDirectoryOptions::new(String::from(FRAMEWORK_SOURCE), source_dir);
 
         smalisa::AddDirTask::new(ctx, &mon, opts, &check).run()?;
 
         for path in apk_paths {
+            if check.was_cancelled() {
+                break;
+            }
             self.smalisa_apk_dir(&ctx, &mon, &path, &check, &source_tx)?;
         }
 
@@ -110,14 +108,13 @@ impl Setup {
         let db = get_default_graphdb(&ctx)?;
 
         let (mon, chan) = ChannelEventMonitor::create();
-        let _join = start_import_print_thread(String::from("framework"), chan, num_sources);
-        let opts = InitialImportOptions::new(deny);
-        let (cancel, check) = TaskCanceller::new();
+        let (cancel, check) = task_canceller()?;
 
-        let res = db.run_initial_import(ctx, opts, &mon, &check);
+        let _handle = start_import_print_thread(String::from("framework"), chan, num_sources);
+        let opts = InitialImportOptions::new(deny);
+        db.run_initial_import(ctx, opts, &mon, &check)?;
         drop(mon);
         drop(cancel);
-        res?;
         Ok(())
     }
 

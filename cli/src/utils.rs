@@ -1,8 +1,4 @@
-use anyhow::bail;
-use itertools::Itertools;
-use promptly::prompt;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
+use std::any::Any;
 use std::ffi::CString;
 use std::fmt::Display;
 use std::fs;
@@ -12,10 +8,21 @@ use std::io::ErrorKind;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::thread::JoinHandle;
+
+use anyhow::bail;
+use itertools::Itertools;
+use promptly::prompt;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use signal_hook::consts::TERM_SIGNALS;
+use signal_hook::iterator::Handle;
+use signal_hook::iterator::Signals;
 
 use dtu::adb::{Adb, ExecAdb};
 use dtu::app::server::{ConnectError, TcpAppServer};
 use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase};
+use dtu::tasks::{TaskCancelCheck, TaskCanceller};
 use dtu::utils::{find_file_for_class, find_smali_file_for_class, ClassName, DevicePath};
 use dtu::{run_cmd, Context};
 
@@ -317,3 +324,97 @@ pub fn invoke_dtu_clipboard(ctx: &dyn Context, content: &str) -> anyhow::Result<
     }
     Ok(())
 }
+
+pub struct HookedSignals {
+    sig_handle: Handle,
+    _join_handle: JoinHandle<()>,
+}
+
+impl Drop for HookedSignals {
+    fn drop(&mut self) {
+        if !self.sig_handle.is_closed() {
+            self.sig_handle.close();
+        }
+    }
+}
+
+pub fn hook_to_signals(mut cancel: TaskCanceller) -> anyhow::Result<HookedSignals> {
+    let mut sigs = Signals::new(TERM_SIGNALS)?;
+    let sig_handle = sigs.handle();
+    let _join_handle = std::thread::spawn(move || {
+        let mut seen_exit = false;
+        for sig in sigs.forever() {
+            if seen_exit {
+                _ = signal_hook::low_level::emulate_default_handler(sig);
+            } else {
+                cancel.cancel();
+                seen_exit = true;
+            }
+        }
+    });
+
+    Ok(HookedSignals {
+        sig_handle,
+        _join_handle,
+    })
+}
+
+pub fn task_canceller() -> anyhow::Result<(HookedSignals, TaskCancelCheck)> {
+    let (cancel, check) = TaskCanceller::new();
+    Ok((hook_to_signals(cancel)?, check))
+}
+
+// This type can be returned from print threads to ensure that the thread is shutdown and joined but
+// it can easily be misused and lead to a deadlock. Essentially, ensure that the `TaskCancelCheck`
+// is used within whichever thread this is made from.
+pub struct CancelCheckThread<T>
+where
+    T: Send + 'static,
+{
+    canceller: TaskCanceller,
+    join_handle: Option<JoinHandle<T>>,
+}
+
+impl<T> Drop for CancelCheckThread<T>
+where
+    T: Send + 'static,
+{
+    fn drop(&mut self) {
+        _ = self.shutdown();
+    }
+}
+
+impl<T> CancelCheckThread<T>
+where
+    T: Send + 'static,
+{
+    pub fn spawn<F>(f: F) -> Self
+    where
+        F: FnOnce(TaskCancelCheck) -> T,
+        F: Send + 'static,
+    {
+        let (canceller, cancel_check) = TaskCanceller::new();
+        let join_handle = std::thread::spawn(move || f(cancel_check));
+
+        Self {
+            canceller,
+            join_handle: Some(join_handle),
+        }
+    }
+
+    pub fn join(mut self) -> Result<Option<T>, Box<dyn Any + Send + 'static>> {
+        self.shutdown()
+    }
+
+    fn shutdown(&mut self) -> Result<Option<T>, Box<dyn Any + Send + 'static>> {
+        match self.join_handle.take() {
+            None => Ok(None),
+            Some(v) => {
+                self.canceller.cancel();
+                v.join().map(|it| Some(it))
+            }
+        }
+    }
+}
+
+pub type EmptyCancelCheckThread = CancelCheckThread<()>;

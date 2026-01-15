@@ -6,9 +6,10 @@ use clap::{self, Args};
 use dtu::db::sql::device::{models, DiffOptions, DiffTask, EMULATOR_DIFF_SOURCE};
 use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
-use dtu::tasks::TaskCanceller;
 use dtu::utils::path_must_str;
 use dtu::{Context, DefaultContext};
+
+use crate::utils::task_canceller;
 
 use super::get_aosp_database;
 use super::monitor::PrintMonitor;
@@ -89,15 +90,13 @@ impl EmulatorDiff {
         db: &DeviceSqliteDatabase,
         other_db: &DeviceSqliteDatabase,
     ) -> anyhow::Result<()> {
-        let (cancel, check) = TaskCanceller::new();
-
+        let (_cancel, check) = task_canceller()?;
         let (mon, _join) = PrintMonitor::start()?;
 
         let opts = DiffOptions::new(new_source);
         let task = DiffTask::new(opts, db, other_db, check, &mon);
         let res = task.run();
         drop(mon);
-        drop(cancel);
         Ok(res?)
     }
 }

@@ -1,14 +1,15 @@
 use std::path::PathBuf;
 
-use super::monitor::{start_import_print_thread, start_smalisa_print_thread};
+use crate::graph::monitor::{start_import_print_thread, start_smalisa_print_thread};
 use crate::parsers::DevicePathValueParser;
+use crate::utils::task_canceller;
 use clap::{self, Args};
 use crossbeam::channel::bounded;
 use dtu::db::graph::AddDirectoryOptions;
 use dtu::db::graph::{get_default_graphdb, GraphDatabaseSetup};
 use dtu::db::sql::{MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
-use dtu::tasks::{smalisa, ChannelEventMonitor, TaskCanceller};
+use dtu::tasks::{smalisa, ChannelEventMonitor};
 use dtu::utils::DevicePath;
 use dtu::{Context, DefaultContext};
 
@@ -32,26 +33,30 @@ impl ImportApkMethods {
     }
 
     fn smalisa_dir(&self, ctx: &dyn Context, apk_dir: &PathBuf) -> anyhow::Result<()> {
-        let (_cancel, check) = TaskCanceller::new();
+        let (cancel, check) = task_canceller()?;
         let (mon, chan) = ChannelEventMonitor::create();
         let (_source_tx, source_rx) = bounded(0);
 
-        let _join =
+        let _handle =
             start_smalisa_print_thread(self.apk.device_file_name().into(), source_rx, chan, 1);
         let opts = smalisa::AddDirectoryOptions::new(self.apk.get_squashed_string(), apk_dir);
         smalisa::AddDirTask::new(ctx, &mon, opts, &check).run()?;
+
+        drop(mon);
+        drop(cancel);
         Ok(())
     }
 
     fn import_smalisa(&self, ctx: &dyn Context, apk_dir: &PathBuf) -> anyhow::Result<()> {
         let db = get_default_graphdb(&ctx)?;
-        let (_cancel, check) = TaskCanceller::new();
+        let (cancel, check) = task_canceller()?;
         let (mon, chan) = ChannelEventMonitor::create();
 
-        let _join = start_import_print_thread(self.apk.device_file_name().into(), chan, 1);
+        let _handle = start_import_print_thread(self.apk.device_file_name().into(), chan, 1);
         let opts = AddDirectoryOptions::new(self.apk.get_squashed_string(), apk_dir);
-
         db.add_directory(&ctx, opts, &mon, &check)?;
+        drop(mon);
+        drop(cancel);
         Ok(())
     }
 }

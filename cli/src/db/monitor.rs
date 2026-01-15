@@ -1,9 +1,9 @@
 use crossbeam::channel::RecvTimeoutError;
 use crossterm::style::{ContentStyle, Stylize};
-use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::printer::{color, StatusPrinter};
+use crate::utils::EmptyCancelCheckThread;
 use dtu::db::sql::device::diff::DiffEvent;
 use dtu::tasks::ChannelEventMonitor;
 
@@ -19,11 +19,11 @@ pub struct PrintMonitor {
 
 impl PrintMonitor {
     /// Start the PrintMonitor and get a ChannelEventMonitor and JoinHandle back
-    pub fn start() -> anyhow::Result<(ChannelEventMonitor<DiffEvent>, JoinHandle<()>)> {
+    pub fn start() -> anyhow::Result<(ChannelEventMonitor<DiffEvent>, EmptyCancelCheckThread)> {
         let (mon, chan) = ChannelEventMonitor::create();
-        let join = std::thread::spawn(move || {
+        let thread = EmptyCancelCheckThread::spawn(move |cancel_check| {
             let mut pm = Self::new();
-            loop {
+            while !cancel_check.was_cancelled() {
                 match chan.recv_timeout(Duration::from_millis(250)) {
                     Ok(it) => pm.on_event(it),
                     Err(RecvTimeoutError::Disconnected) => break,
@@ -31,7 +31,7 @@ impl PrintMonitor {
                 }
             }
         });
-        Ok((mon, join))
+        Ok((mon, thread))
     }
 
     fn new() -> Self {

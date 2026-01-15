@@ -7,13 +7,13 @@ use clap::{self, Args, Subcommand};
 use dtu::db::sql::device::{models, DiffOptions, DiffTask};
 use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase};
 use dtu::prereqs::Prereq;
-use dtu::tasks::TaskCanceller;
 use dtu::utils::{ensure_prereq, path_must_str};
 use dtu::DefaultContext;
 
 use super::get_path_for_diff_source;
 use super::monitor::PrintMonitor;
 use crate::parsers::DiffSourceValueParser;
+use crate::utils::task_canceller;
 
 #[derive(Args)]
 pub struct DiffSource {
@@ -92,8 +92,8 @@ impl Add {
         db: &DeviceSqliteDatabase,
         other_db: &DeviceSqliteDatabase,
     ) -> anyhow::Result<()> {
-        let (_cancel, check) = TaskCanceller::new();
-        let (mon, _join) = PrintMonitor::start()?;
+        let (_cancel, check) = task_canceller()?;
+        let (mon, _handle) = PrintMonitor::start()?;
         let opts = DiffOptions::new(new_source);
         let task = DiffTask::new(opts, db, other_db, check, &mon);
         let res = task.run();

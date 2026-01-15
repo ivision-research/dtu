@@ -1,8 +1,8 @@
 use std::path::Path;
-use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::printer::{color, StatusPrinter};
+use crate::utils::EmptyCancelCheckThread;
 use crossbeam::channel::{Receiver, RecvTimeoutError};
 use crossterm::style::{ContentStyle, Stylize};
 use dtu::db::graph::SetupEvent;
@@ -137,8 +137,6 @@ impl SmalisaPrintMonitor {
 
 struct ImportPrintMonitor {
     source: String,
-    count: usize,
-    total: usize,
     sources_done: usize,
     num_sources: usize,
     printer: StatusPrinter,
@@ -149,11 +147,18 @@ impl ImportPrintMonitor {
         Self {
             num_sources,
             source: step,
-            count: 0,
-            total: 0,
             sources_done: 0,
             printer: StatusPrinter::new(),
         }
+    }
+
+    fn show_status(&self) {
+        let status = format!(
+            "{} | Total progress: {}/{}",
+            self.source, self.sources_done, self.num_sources
+        );
+        self.printer
+            .update_status_line_styled(status, ContentStyle::default().with(color::CYAN));
     }
 
     fn on_event(&mut self, evt: SetupEvent) {
@@ -165,29 +170,18 @@ impl ImportPrintMonitor {
             }
             SetupEvent::SourceDone { .. } => {
                 self.sources_done += 1;
-                let status = format!(
-                    "{} | {}/{} | Total progress: {}/{}",
-                    self.source, self.count, self.total, self.sources_done, self.num_sources
-                );
-                self.printer.update_status_line(status);
+                self.show_status();
             }
             SetupEvent::SourceStarted { source } => {
                 self.source = source;
-                let status = format!(
-                    "{} | {}/{} | Total progress: {}/{}",
-                    self.source, self.count, self.total, self.sources_done, self.num_sources
-                );
-                self.printer.update_status_line(status);
+                self.show_status();
             }
 
             SetupEvent::ImportStarted { path } => {
                 let as_path: &Path = path.as_ref();
-                self.printer.print(format!(
-                    "{} | Importing {}...",
-                    self.source,
-                    path_must_name(as_path)
-                ));
-                self.printer.flush();
+                self.printer
+                    .print(format!("Importing {}...", path_must_name(as_path)));
+                self.show_status();
             }
             SetupEvent::ImportDone { .. } => {
                 self.printer.println("done");
@@ -201,10 +195,10 @@ pub(crate) fn start_smalisa_print_thread(
     source_rx: Receiver<String>,
     events: Receiver<smalisa::Event>,
     num_sources: usize,
-) -> JoinHandle<()> {
-    std::thread::spawn(move || {
+) -> EmptyCancelCheckThread {
+    EmptyCancelCheckThread::spawn(move |cancel_check| {
         let mut pm = SmalisaPrintMonitor::new(initial_step, num_sources);
-        loop {
+        while !cancel_check.was_cancelled() {
             if let Ok(new_source) = source_rx.try_recv() {
                 pm.source = new_source;
             }
@@ -222,10 +216,10 @@ pub(crate) fn start_import_print_thread(
     initial_step: String,
     events: Receiver<SetupEvent>,
     num_sources: usize,
-) -> JoinHandle<()> {
-    std::thread::spawn(move || {
+) -> EmptyCancelCheckThread {
+    EmptyCancelCheckThread::spawn(move |cancel_check| {
         let mut pm = ImportPrintMonitor::new(initial_step, num_sources);
-        loop {
+        while !cancel_check.was_cancelled() {
             match events.recv_timeout(Duration::from_millis(250)) {
                 Ok(it) => pm.on_event(it),
                 Err(RecvTimeoutError::Disconnected) => break,
