@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, hash::Hash};
 
 use crate::utils::ClassName;
 use serde::de::Visitor;
@@ -120,7 +120,7 @@ where
     deser.deserialize_u64(V)
 }
 
-#[derive(PartialEq, Eq, Hash, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Eq, Clone, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(test, derive(Debug, PartialOrd, Ord))]
 pub struct MethodSpec {
     pub class: ClassName,
@@ -133,6 +133,28 @@ pub struct MethodSpec {
         deserialize_with = "deserialize_flags"
     )]
     pub access_flags: AccessFlag,
+}
+
+impl Hash for MethodSpec {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Intentionally leaving out access_flags here
+        self.class.hash(state);
+        self.name.hash(state);
+        self.signature.hash(state);
+        self.ret.hash(state);
+        self.source.hash(state);
+    }
+}
+
+impl PartialEq for MethodSpec {
+    fn eq(&self, other: &Self) -> bool {
+        // Intentionally leaving out access_flags here
+        self.source == other.source
+            && self.class == other.class
+            && self.name == other.name
+            && self.signature == other.signature
+            && self.ret == other.ret
+    }
 }
 
 impl Display for MethodSpec {
