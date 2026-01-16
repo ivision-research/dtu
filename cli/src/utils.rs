@@ -34,7 +34,7 @@ use dtu::{run_cmd, Context};
 pub fn project_cacheable<F, R: Serialize + DeserializeOwned>(
     ctx: &dyn Context,
     cache_file: &str,
-    force: bool,
+    mut force: bool,
     f: F,
 ) -> anyhow::Result<R>
 where
@@ -44,6 +44,10 @@ where
         .get_project_cache_dir()?
         .join(cache_file)
         .with_extension("json");
+
+    if !force {
+        force = ctx.has_env("DTU_CACHEBUST");
+    }
 
     if !force && cache_path.exists() {
         let f = File::open(&cache_path)?;
