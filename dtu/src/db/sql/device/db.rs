@@ -1,9 +1,14 @@
+use std::collections::HashMap;
+
 use diesel::delete;
 use diesel::prelude::*;
 use diesel_migrations::{embed_migrations, EmbeddedMigrations};
 
 pub const EMULATOR_DIFF_SOURCE: &'static str = "emulator";
 
+use crate::db::sql::device::schema::system_service_impls;
+use crate::db::sql::device::schema::system_services;
+use crate::utils::ClassName;
 use crate::Context;
 
 use super::common::*;
@@ -44,6 +49,9 @@ macro_rules! def_diff_item {
 
 pub trait Database: Sync + Send {
     fn wipe(&self) -> Result<()>;
+
+    fn get_all_system_service_impls(&self) -> Result<HashMap<String, Vec<SystemServiceImpl>>>;
+
     def_standard_crud!(
         add_permission,
         add_permissions,
@@ -484,6 +492,40 @@ impl Database for DeviceSqliteDatabase {
                     permissions: perms.into_iter().map(|it| it.name).collect::<Vec<String>>(),
                 })
                 .collect::<Vec<ApkWithPermissions>>())
+        })
+    }
+
+    fn get_all_system_service_impls(&self) -> Result<HashMap<String, Vec<SystemServiceImpl>>> {
+        self.with_connection(|c| {
+            let mut result: HashMap<String, Vec<SystemServiceImpl>> = HashMap::new();
+
+            let rows = system_service_impls::table
+                .inner_join(system_services::table)
+                .select((
+                    system_services::name,
+                    system_service_impls::id,
+                    system_service_impls::system_service_id,
+                    system_service_impls::class_name,
+                    system_service_impls::source,
+                ))
+                .load::<(String, i32, i32, ClassName, String)>(c)?
+                .into_iter();
+
+            for (service, id, system_service_id, class_name, source) in rows {
+                let impl_ = SystemServiceImpl {
+                    id,
+                    system_service_id,
+                    class_name,
+                    source,
+                };
+                if let Some(into) = result.get_mut(&service) {
+                    into.push(impl_);
+                } else {
+                    let v = vec![impl_];
+                    result.insert(service, v);
+                }
+            }
+            Ok(result)
         })
     }
 
