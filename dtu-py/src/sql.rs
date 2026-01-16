@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{
     context::PyContext,
     exception::DtuError,
@@ -8,9 +10,6 @@ use dtu::db::sql::{
     DefaultDeviceDatabase, DeviceDatabase,
 };
 use pyo3::prelude::*;
-
-#[pyclass]
-pub struct DeviceDB(DefaultDeviceDatabase);
 
 struct DBError(dtu::db::sql::Error);
 
@@ -28,6 +27,9 @@ impl From<DBError> for PyErr {
 
 type Result<T> = std::result::Result<T, DBError>;
 
+#[pyclass(module = "dtu")]
+pub struct DeviceDB(DefaultDeviceDatabase);
+
 /// Provide read only access to the Device database
 #[pymethods]
 impl DeviceDB {
@@ -39,12 +41,28 @@ impl DeviceDB {
             None => get_default_devicedb(&dtu::DefaultContext::new()),
         }?))
     }
-
+    fn get_all_system_service_impls(&self) -> Result<HashMap<String, Vec<PySystemServiceImpl>>> {
+        Ok(HashMap::from_iter(
+            self.0
+                .get_all_system_service_impls()?
+                .into_iter()
+                .map(|(service, impls)| {
+                    (
+                        service,
+                        impls
+                            .into_iter()
+                            .map(PySystemServiceImpl::from)
+                            .collect::<Vec<PySystemServiceImpl>>(),
+                    )
+                }),
+        ))
+    }
 
     #[pyo3(name = "get_permission_by_id")]
     fn py_get_permission_by_id(&self, sel: i32) -> Result<PyPermission> {
         self.get_permission_by_id(sel)
     }
+
     #[pyo3(name = "get_permissions")]
     fn py_get_permissions(&self) -> Result<Vec<PyPermission>> {
         self.get_permissions()
@@ -503,7 +521,7 @@ impl DeviceDB {
     py_call_get_multi_by!(get_endpoints_by_security, bool, PyFuzzResult);
 }
 
-#[pyclass(frozen, name = "DeviceProperty")]
+#[pyclass(module = "dtu", frozen, name = "DeviceProperty")]
 #[derive(Clone)]
 pub struct PyDeviceProperty(pub(crate) DeviceProperty);
 
@@ -532,7 +550,7 @@ impl PyDeviceProperty {
     }
 }
 
-#[pyclass(frozen, name = "Permission")]
+#[pyclass(module = "dtu", frozen, name = "Permission")]
 #[derive(Clone)]
 pub struct PyPermission(pub(crate) Permission);
 
@@ -565,7 +583,7 @@ impl PyPermission {
     }
 }
 
-#[pyclass(frozen, name = "ApkPermission")]
+#[pyclass(module = "dtu", frozen, name = "ApkPermission")]
 #[derive(Clone)]
 pub struct PyApkPermission(pub(crate) ApkPermission);
 
@@ -591,7 +609,7 @@ impl PyApkPermission {
     }
 }
 
-#[pyclass(frozen, name = "PermissionDiff")]
+#[pyclass(module = "dtu", frozen, name = "PermissionDiff")]
 #[derive(Clone)]
 pub struct PyPermissionDiff(pub(crate) PermissionDiff);
 
@@ -629,7 +647,7 @@ impl PyPermissionDiff {
     }
 }
 
-#[pyclass(frozen, name = "DiffedPermission")]
+#[pyclass(module = "dtu", frozen, name = "DiffedPermission")]
 #[derive(Clone)]
 pub struct PyDiffedPermission(pub(crate) DiffedPermission);
 
@@ -662,7 +680,7 @@ impl PyDiffedPermission {
     }
 }
 
-#[pyclass(frozen, name = "ProtectedBroadcast")]
+#[pyclass(module = "dtu", frozen, name = "ProtectedBroadcast")]
 #[derive(Clone)]
 pub struct PyProtectedBroadcast(pub(crate) ProtectedBroadcast);
 
@@ -687,7 +705,7 @@ impl PyProtectedBroadcast {
     }
 }
 
-#[pyclass(frozen, name = "UnprotectedBroadcast")]
+#[pyclass(module = "dtu", frozen, name = "UnprotectedBroadcast")]
 #[derive(Clone)]
 pub struct PyUnprotectedBroadcast(pub(crate) UnprotectedBroadcast);
 
@@ -716,7 +734,7 @@ impl PyUnprotectedBroadcast {
     }
 }
 
-#[pyclass(frozen, name = "Apk")]
+#[pyclass(module = "dtu", frozen, name = "Apk")]
 #[derive(Clone)]
 pub struct PyApk(pub(crate) Apk);
 
@@ -757,7 +775,7 @@ impl PyApk {
     }
 }
 
-#[pyclass(frozen, name = "ApkWithPermissions")]
+#[pyclass(module = "dtu", frozen, name = "ApkWithPermissions")]
 #[derive(Clone)]
 pub struct PyApkWithPermissions(pub(crate) ApkWithPermissions);
 
@@ -779,7 +797,7 @@ impl PyApkWithPermissions {
     }
 }
 
-#[pyclass(frozen, name = "DiffedApk")]
+#[pyclass(module = "dtu", frozen, name = "DiffedApk")]
 #[derive(Clone)]
 pub struct PyDiffedApk(pub(crate) DiffedApk);
 
@@ -804,7 +822,7 @@ impl PyDiffedApk {
     }
 }
 
-#[pyclass(frozen, name = "ApkDiff")]
+#[pyclass(module = "dtu", frozen, name = "ApkDiff")]
 #[derive(Clone)]
 pub struct PyApkDiff(pub(crate) ApkDiff);
 
@@ -834,7 +852,7 @@ impl PyApkDiff {
     }
 }
 
-#[pyclass(frozen, name = "Receiver")]
+#[pyclass(module = "dtu", frozen, name = "Receiver")]
 #[derive(Clone)]
 pub struct PyReceiver(pub(crate) Receiver);
 
@@ -879,7 +897,7 @@ impl PyReceiver {
     }
 }
 
-#[pyclass(frozen, name = "ReceiverDiff")]
+#[pyclass(module = "dtu", frozen, name = "ReceiverDiff")]
 #[derive(Clone)]
 pub struct PyReceiverDiff(pub(crate) ReceiverDiff);
 
@@ -921,7 +939,7 @@ impl PyReceiverDiff {
     }
 }
 
-#[pyclass(frozen, name = "DiffedReceiver")]
+#[pyclass(module = "dtu", frozen, name = "DiffedReceiver")]
 #[derive(Clone)]
 pub struct PyDiffedReceiver(pub(crate) DiffedReceiver);
 
@@ -958,7 +976,7 @@ impl PyDiffedReceiver {
     }
 }
 
-#[pyclass(frozen, name = "Service")]
+#[pyclass(module = "dtu", frozen, name = "Service")]
 #[derive(Clone)]
 pub struct PyService(pub(crate) Service);
 
@@ -1007,7 +1025,7 @@ impl PyService {
     }
 }
 
-#[pyclass(frozen, name = "ServiceDiff")]
+#[pyclass(module = "dtu", frozen, name = "ServiceDiff")]
 #[derive(Clone)]
 pub struct PyServiceDiff(pub(crate) ServiceDiff);
 
@@ -1049,7 +1067,7 @@ impl PyServiceDiff {
     }
 }
 
-#[pyclass(frozen, name = "DiffedService")]
+#[pyclass(module = "dtu", frozen, name = "DiffedService")]
 #[derive(Clone)]
 pub struct PyDiffedService(pub(crate) DiffedService);
 
@@ -1086,7 +1104,7 @@ impl PyDiffedService {
     }
 }
 
-#[pyclass(frozen, name = "Activity")]
+#[pyclass(module = "dtu", frozen, name = "Activity")]
 #[derive(Clone)]
 pub struct PyActivity(pub(crate) Activity);
 
@@ -1131,7 +1149,7 @@ impl PyActivity {
     }
 }
 
-#[pyclass(frozen, name = "ActivityDiff")]
+#[pyclass(module = "dtu", frozen, name = "ActivityDiff")]
 #[derive(Clone)]
 pub struct PyActivityDiff(pub(crate) ActivityDiff);
 
@@ -1173,7 +1191,7 @@ impl PyActivityDiff {
     }
 }
 
-#[pyclass(frozen, name = "DiffedActivity")]
+#[pyclass(module = "dtu", frozen, name = "DiffedActivity")]
 #[derive(Clone)]
 pub struct PyDiffedActivity(pub(crate) DiffedActivity);
 
@@ -1210,7 +1228,7 @@ impl PyDiffedActivity {
     }
 }
 
-#[pyclass(frozen, name = "Provider")]
+#[pyclass(module = "dtu", frozen, name = "Provider")]
 #[derive(Clone)]
 pub struct PyProvider(pub(crate) Provider);
 
@@ -1267,7 +1285,7 @@ impl PyProvider {
     }
 }
 
-#[pyclass(frozen, name = "ProviderDiff")]
+#[pyclass(module = "dtu", frozen, name = "ProviderDiff")]
 #[derive(Clone)]
 pub struct PyProviderDiff(pub(crate) ProviderDiff);
 
@@ -1325,7 +1343,7 @@ impl PyProviderDiff {
     }
 }
 
-#[pyclass(frozen, name = "DiffedProvider")]
+#[pyclass(module = "dtu", frozen, name = "DiffedProvider")]
 #[derive(Clone)]
 pub struct PyDiffedProvider(pub(crate) DiffedProvider);
 
@@ -1378,7 +1396,7 @@ impl PyDiffedProvider {
     }
 }
 
-#[pyclass(frozen, name = "SystemServiceImpl")]
+#[pyclass(module = "dtu", frozen, name = "SystemServiceImpl")]
 #[derive(Clone)]
 pub struct PySystemServiceImpl(pub(crate) SystemServiceImpl);
 
@@ -1411,7 +1429,7 @@ impl PySystemServiceImpl {
     }
 }
 
-#[pyclass(frozen, name = "SystemServiceMethod")]
+#[pyclass(module = "dtu", frozen, name = "SystemServiceMethod")]
 #[derive(Clone)]
 pub struct PySystemServiceMethod(pub(crate) SystemServiceMethod);
 
@@ -1456,7 +1474,7 @@ impl PySystemServiceMethod {
     }
 }
 
-#[pyclass(frozen, name = "SystemServiceMethodDiff")]
+#[pyclass(module = "dtu", frozen, name = "SystemServiceMethodDiff")]
 #[derive(Clone)]
 pub struct PySystemServiceMethodDiff(pub(crate) SystemServiceMethodDiff);
 
@@ -1490,7 +1508,7 @@ impl PySystemServiceMethodDiff {
     }
 }
 
-#[pyclass(frozen, name = "DiffedSystemServiceMethod")]
+#[pyclass(module = "dtu", frozen, name = "DiffedSystemServiceMethod")]
 #[derive(Clone)]
 pub struct PyDiffedSystemServiceMethod(pub(crate) DiffedSystemServiceMethod);
 
@@ -1519,7 +1537,7 @@ impl PyDiffedSystemServiceMethod {
     }
 }
 
-#[pyclass(frozen, name = "SystemService")]
+#[pyclass(module = "dtu", frozen, name = "SystemService")]
 #[derive(Clone)]
 pub struct PySystemService(pub(crate) SystemService);
 
@@ -1552,7 +1570,7 @@ impl PySystemService {
     }
 }
 
-#[pyclass(frozen, name = "SystemServiceDiff")]
+#[pyclass(module = "dtu", frozen, name = "SystemServiceDiff")]
 #[derive(Clone)]
 pub struct PySystemServiceDiff(pub(crate) SystemServiceDiff);
 
@@ -1582,7 +1600,7 @@ impl PySystemServiceDiff {
     }
 }
 
-#[pyclass(frozen, name = "DiffedSystemService")]
+#[pyclass(module = "dtu", frozen, name = "DiffedSystemService")]
 #[derive(Clone)]
 pub struct PyDiffedSystemService(pub(crate) DiffedSystemService);
 
@@ -1607,7 +1625,7 @@ impl PyDiffedSystemService {
     }
 }
 
-#[pyclass(frozen, name = "DiffSource")]
+#[pyclass(module = "dtu", frozen, name = "DiffSource")]
 #[derive(Clone)]
 pub struct PyDiffSource(pub(crate) DiffSource);
 
@@ -1632,7 +1650,7 @@ impl PyDiffSource {
     }
 }
 
-#[pyclass(frozen, name = "FuzzResult")]
+#[pyclass(module = "dtu", frozen, name = "FuzzResult")]
 #[derive(Clone)]
 pub struct PyFuzzResult(pub(crate) FuzzResult);
 

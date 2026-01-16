@@ -5,7 +5,7 @@ use std::hash::{Hash, Hasher};
 use dtu::utils::bytes_to_hex;
 use pyo3::prelude::*;
 
-#[pyclass(name = "ParcelValue")]
+#[pyclass(module = "dtu", name = "ParcelValue")]
 #[derive(Clone)]
 pub enum ParcelValue {
     Long {

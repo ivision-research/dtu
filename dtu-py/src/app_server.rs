@@ -18,7 +18,7 @@ use crate::{
     parcel_string::{build_parcel_string, ParcelValue},
 };
 
-#[pyclass(name = "AppServer")]
+#[pyclass(module = "dtu", name = "AppServer")]
 pub struct PyAppServer(TcpAppServer);
 
 struct AppServerError(dtu::app_server::Error);
@@ -277,7 +277,7 @@ impl PyAppServer {
     }
 }
 
-#[pyclass(frozen, name = "CommandResult")]
+#[pyclass(module = "dtu", frozen, name = "CommandResult")]
 #[derive(Clone)]
 pub struct PyCommandResult(pub(crate) CommandResult);
 

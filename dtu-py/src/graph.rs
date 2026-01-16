@@ -177,7 +177,7 @@ impl DerefMut for GraphDB {
     }
 }
 
-#[pyclass(name = "ClassSpec")]
+#[pyclass(module = "dtu", name = "ClassSpec")]
 pub struct PyClassSpec(ClassSpec);
 
 #[pymethods]
@@ -216,7 +216,7 @@ impl From<ClassSpec> for PyClassSpec {
     }
 }
 
-#[pyclass(frozen, name = "MethodSpec")]
+#[pyclass(module = "dtu", frozen, name = "MethodSpec")]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PyMethodSpec(pub(crate) MethodSpec);
 
@@ -264,7 +264,7 @@ impl From<PyMethodSpec> for MethodSpec {
     }
 }
 
-#[pyclass(frozen, name = "MethodCallPath")]
+#[pyclass(module = "dtu", frozen, name = "MethodCallPath")]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PyMethodCallPath(pub(crate) MethodCallPath);
 

@@ -1,4 +1,8 @@
-use std::{borrow::Cow, process::ExitStatus};
+use std::{
+    borrow::Cow,
+    hash::{DefaultHasher, Hash, Hasher},
+    process::ExitStatus,
+};
 
 use dtu::{
     command::{err_on_status, CmdOutput},
@@ -11,7 +15,7 @@ use pyo3::prelude::*;
 use crate::exception::DtuBaseError;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-#[pyclass(eq, frozen, name = "DevicePath")]
+#[pyclass(module = "dtu", eq, frozen, name = "DevicePath")]
 pub struct PyDevicePath(DevicePath);
 
 impl From<DevicePath> for PyDevicePath {
@@ -64,7 +68,7 @@ impl PyDevicePath {
     }
 }
 
-#[pyclass(frozen, eq, name = "UnknownBool")]
+#[pyclass(module = "dtu", frozen, eq, name = "UnknownBool")]
 #[derive(Clone, Copy, PartialEq)]
 pub struct PyUnknownBool(pub(crate) UnknownBool);
 
@@ -131,7 +135,7 @@ impl From<PyUnknownBool> for UnknownBool {
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-#[pyclass(eq, frozen, name = "ClassName")]
+#[pyclass(module = "dtu", eq, frozen, name = "ClassName")]
 pub struct PyClassName(ClassName);
 
 impl From<ClassName> for PyClassName {
@@ -199,9 +203,15 @@ impl PyClassName {
     fn get_smali_name(&self) -> Cow<'_, str> {
         self.0.get_smali_name()
     }
+
+    fn __hash__(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
 }
 
-#[pyclass(name = "CmdOutput")]
+#[pyclass(module = "dtu", name = "CmdOutput")]
 #[derive(Clone)]
 pub struct PyCmdOutput(CmdOutput);
 
@@ -237,7 +247,7 @@ impl PyCmdOutput {
     }
 }
 
-#[pyclass(name = "ExitStatus")]
+#[pyclass(module = "dtu", name = "ExitStatus")]
 #[derive(Clone, Copy)]
 pub struct PyExitStatus(ExitStatus);
 
@@ -259,7 +269,7 @@ impl PyExitStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[pyclass(frozen, eq, hash, name = "AccessFlag")]
+#[pyclass(module = "dtu", frozen, eq, hash, name = "AccessFlag")]
 pub struct PyAccessFlag(pub(crate) AccessFlag);
 
 impl From<AccessFlag> for PyAccessFlag {

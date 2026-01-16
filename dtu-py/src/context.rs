@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::exception::DtuBaseError;
 
 #[derive(Clone)]
-#[pyclass(name = "Context")]
+#[pyclass(module = "dtu", name = "Context")]
 pub struct PyContext(DefaultContext);
 
 type Result<T> = std::result::Result<T, DtuBaseError>;

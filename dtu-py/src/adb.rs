@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::{context::PyContext, exception::DtuBaseError, types::PyCmdOutput};
 
-#[pyclass(name = "Adb")]
+#[pyclass(module = "dtu", name = "Adb")]
 pub struct PyAdb(ExecAdb);
 
 type Result<T> = std::result::Result<T, DtuBaseError>;

@@ -4,12 +4,12 @@ use pyo3::types::PyAnyMethods;
 
 use crate::{context::PyContext, exception::DtuBaseError, types::PyDevicePath};
 
-#[pyclass(name = "DeviceFS")]
+#[pyclass(module = "dtu", name = "DeviceFS")]
 pub struct PyDeviceFS(Box<dyn DeviceFSHelper>);
 
 type Result<T> = std::result::Result<T, DtuBaseError>;
 
-#[pyclass(name = "FindType")]
+#[pyclass(module = "dtu", name = "FindType")]
 #[derive(Clone, Copy)]
 pub enum PyFindType {
     Any,
@@ -27,7 +27,7 @@ impl From<PyFindType> for FindType {
     }
 }
 
-#[pyclass(name = "FindLimits")]
+#[pyclass(module = "dtu", name = "FindLimits")]
 #[derive(Clone, Copy)]
 pub struct PyFindLimits {
     pub mindepth: Option<usize>,
@@ -43,7 +43,7 @@ impl From<PyFindLimits> for FindLimits {
     }
 }
 
-#[pyclass(name = "FindName")]
+#[pyclass(module = "dtu", name = "FindName")]
 #[derive(Clone)]
 pub enum PyFindName {
     /// Search by suffix: -name '*.jar'

@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 
 use crate::{context::PyContext, exception::DtuBaseError};
 
-#[pyclass(name = "FileStore")]
+#[pyclass(module = "dtu", name = "FileStore")]
 pub struct PyFileStore {
     ctx: PyContext,
     fs: Box<dyn FileStore>,
