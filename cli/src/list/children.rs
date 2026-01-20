@@ -1,6 +1,6 @@
 use anyhow::bail;
 use clap::Args;
-use dtu::db::graph::db::FRAMEWORK_SOURCE;
+use dtu::db::graph::FRAMEWORK_SOURCE;
 use dtu::db::graph::models::ClassSearch;
 use dtu::db::graph::{get_default_graphdb, ClassSpec, GraphDatabase};
 use dtu::prereqs::Prereq;

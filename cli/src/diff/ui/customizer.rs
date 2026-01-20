@@ -6,8 +6,8 @@ use std::ops::Deref;
 use ratatui::style::Style;
 use ratatui::widgets::{Paragraph, Widget};
 
-use dtu::db::sql::device::models::{DiffedProvider, DiffedSystemServiceMethod};
-use dtu::db::sql::{ApkIPC, ApkIPCKind, DeviceDatabase, DeviceSqliteDatabase};
+use dtu::db::device::models::{DiffedProvider, DiffedSystemServiceMethod};
+use dtu::db::{ApkIPC, ApkIPCKind, DeviceDatabase, DeviceSqliteDatabase};
 
 use crate::diff::{smali_sig_contains_class, smali_sig_looks_like_binder};
 use crate::ui::widgets::{

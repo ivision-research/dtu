@@ -1,7 +1,7 @@
 use clap::Args;
-use dtu::db::sql::device::models::DiffedSystemService;
-use dtu::db::sql::device::EMULATOR_DIFF_SOURCE;
-use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
+use dtu::db::device::models::DiffedSystemService;
+use dtu::db::device::EMULATOR_DIFF_SOURCE;
+use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::DefaultContext;
 

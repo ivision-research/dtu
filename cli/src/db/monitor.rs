@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use crate::printer::{color, StatusPrinter};
 use crate::utils::EmptyCancelCheckThread;
-use dtu::db::sql::device::diff::DiffEvent;
+use dtu::db::device::diff::DiffEvent;
 use dtu::tasks::ChannelEventMonitor;
 
 pub struct PrintMonitor {

@@ -1,9 +1,9 @@
 use anyhow::bail;
 use clap::{self, Args, Subcommand};
 use dtu::app::server::AppServer;
-use dtu::db::sql;
-use dtu::db::sql::device::models::{self, Apk, SystemServiceMethod};
-use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
+use dtu::db;
+use dtu::db::device::models::{self, Apk, SystemServiceMethod};
+use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::utils::ClassName;
 use dtu::DefaultContext;
@@ -116,7 +116,7 @@ impl SystemService {
 
         let service = match db.get_system_service_by_name(&self.service) {
             Ok(v) => Some(v),
-            Err(sql::Error::NotFound) if self.interface.is_some() => None,
+            Err(db::Error::NotFound) if self.interface.is_some() => None,
             Err(e) => return Err(e.into()),
         };
 

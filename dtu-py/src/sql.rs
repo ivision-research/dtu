@@ -5,16 +5,16 @@ use crate::{
     exception::DtuError,
     types::{PyClassName, PyDevicePath, PyUnknownBool}, utils::{reduce, unpickle},
 };
-use dtu::db::sql::{
+use dtu::db::{
     device::{get_default_devicedb, models::*},
     DefaultDeviceDatabase, DeviceDatabase,
 };
 use pyo3::{prelude::*, types::PyTuple};
 
-struct DBError(dtu::db::sql::Error);
+struct DBError(dtu::db::Error);
 
-impl From<dtu::db::sql::Error> for DBError {
-    fn from(value: dtu::db::sql::Error) -> Self {
+impl From<dtu::db::Error> for DBError {
+    fn from(value: dtu::db::Error) -> Self {
         Self(value)
     }
 }

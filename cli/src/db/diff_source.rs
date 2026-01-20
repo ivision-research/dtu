@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use anyhow::bail;
 use clap::{self, Args, Subcommand};
 
-use dtu::db::sql::device::{models, DiffOptions, DiffTask};
-use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase};
+use dtu::db::device::{models, DiffOptions, DiffTask};
+use dtu::db::{DeviceDatabase, DeviceSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::utils::{ensure_prereq, path_must_str};
 use dtu::DefaultContext;

@@ -1,8 +1,69 @@
 use std::{fmt::Display, hash::Hash};
 
-use crate::utils::ClassName;
-use serde::de::Visitor;
+use diesel::prelude::*;
+use dtu_proc_macro::sql_db_row;
+use serde::Deserialize;
 use smalisa::AccessFlag;
+
+use crate::utils::ClassName;
+
+use super::schema::*;
+
+#[sql_db_row]
+#[diesel(table_name = calls)]
+pub struct Call {
+    pub caller: i32,
+    pub callee: i32,
+}
+
+#[sql_db_row]
+#[diesel(table_name = supers)]
+pub struct Super {
+    pub parent: i32,
+    pub child: i32,
+}
+
+#[sql_db_row]
+#[diesel(table_name = interfaces)]
+pub struct Interface {
+    pub interface: i32,
+    pub class: i32,
+}
+
+#[sql_db_row]
+#[diesel(table_name = methods)]
+pub struct Method {
+    pub id: i32,
+    pub class: i32,
+    pub name: String,
+    pub args: String,
+    pub ret: String,
+    pub access_flags: i64,
+    pub source: i32,
+}
+
+#[sql_db_row]
+#[diesel(table_name = classes)]
+pub struct Class {
+    pub id: i32,
+    pub name: String,
+    pub access_flags: i64,
+    pub source: i32,
+}
+
+#[sql_db_row]
+#[diesel(table_name = sources)]
+pub struct Source {
+    pub id: i32,
+    pub name: String,
+}
+
+#[sql_db_row]
+#[diesel(table_name = _load_status)]
+pub struct LoadStatus {
+    pub source: i32,
+    pub kind: i32,
+}
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(test, derive(PartialEq, Eq, Debug, PartialOrd, Ord))]
@@ -99,25 +160,9 @@ fn deserialize_flags<'de, D>(deser: D) -> std::result::Result<AccessFlag, D::Err
 where
     D: serde::Deserializer<'de>,
 {
-    struct V;
-
-    impl<'v> Visitor<'v> for V {
-        type Value = AccessFlag;
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            write!(
-                formatter,
-                "an unsigned integer representing the AccessFlag bitfield"
-            )
-        }
-        fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
-        where
-            E: serde::de::Error,
-        {
-            Ok(AccessFlag::from_bits_truncate(v))
-        }
-    }
-
-    deser.deserialize_u64(V)
+    Ok(AccessFlag::from_bits_truncate(
+        <u64 as Deserialize>::deserialize(deser)?,
+    ))
 }
 
 #[derive(Eq, Clone, serde::Serialize, serde::Deserialize)]

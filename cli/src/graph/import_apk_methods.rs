@@ -7,7 +7,7 @@ use clap::{self, Args};
 use crossbeam::channel::bounded;
 use dtu::db::graph::AddDirectoryOptions;
 use dtu::db::graph::{get_default_graphdb, GraphDatabaseSetup};
-use dtu::db::sql::{MetaDatabase, MetaSqliteDatabase};
+use dtu::db::{MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::tasks::{smalisa, ChannelEventMonitor};
 use dtu::utils::DevicePath;

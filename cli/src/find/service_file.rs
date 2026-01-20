@@ -1,7 +1,7 @@
 use anyhow::bail;
 use clap::{self, Args, Subcommand};
-use dtu::db::sql::device::models::SystemService;
-use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase};
+use dtu::db::device::models::SystemService;
+use dtu::db::{DeviceDatabase, DeviceSqliteDatabase};
 use dtu::utils::{
     find_files_for_class, find_smali_file_for_class, try_proj_home_relative, ClassName,
 };

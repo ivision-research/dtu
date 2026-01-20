@@ -13,8 +13,8 @@ use walkdir::WalkDir;
 
 use dtu_proc_macro::{wraps_base_error, wraps_decompile_error};
 
-use crate::db::sql::meta::models::{DecompileStatus, InsertDecompileStatus, ProgressStep};
-use crate::db::sql::{self, MetaDatabase};
+use crate::db::meta::models::{DecompileStatus, InsertDecompileStatus, ProgressStep};
+use crate::db::{self, MetaDatabase};
 use crate::decompile::{decompile_file, ApexFile, ApkFile, Decompile, FrameworkFileType};
 use crate::devicefs::FindType;
 use crate::prereqs::Prereq;
@@ -67,14 +67,14 @@ pub enum Error {
     InstallApktoolFramework(String),
 
     #[error("{0}")]
-    DBError(sql::Error),
+    DBError(db::Error),
 
     #[error("invalid path")]
     InvalidPath,
 }
 
-impl From<sql::Error> for Error {
-    fn from(value: sql::Error) -> Self {
+impl From<db::Error> for Error {
+    fn from(value: db::Error) -> Self {
         Self::DBError(value)
     }
 }
@@ -362,7 +362,7 @@ impl<'a> Pull<'a> {
             .get_decompile_status_by_device_path(device_path.as_ref())
         {
             Ok(e) => e,
-            Err(sql::Error::NotFound) => self.create_new_decompile_status(device_path)?,
+            Err(db::Error::NotFound) => self.create_new_decompile_status(device_path)?,
             Err(e) => return Err(Error::DBError(e)),
         };
         Ok(status)

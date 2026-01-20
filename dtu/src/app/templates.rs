@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 
 use crate::app::AppTestStatus;
 use crate::app_server::{get_server_port, APP_SERVER_PORT};
-use crate::db::sql::meta::models::AppActivity;
-use crate::db::sql::{self, MetaDatabase};
+use crate::db::meta::models::AppActivity;
+use crate::db::{self, MetaDatabase};
 use crate::utils::{ensure_dir_exists, ClassName};
 use crate::Context;
 
@@ -23,14 +23,14 @@ pub enum Error {
     RenderError(String),
 
     #[error("{0}")]
-    DB(sql::Error),
+    DB(db::Error),
 
     #[error("bad zip file {0}")]
     BadZip(String),
 }
 
-impl From<sql::Error> for Error {
-    fn from(value: sql::Error) -> Self {
+impl From<db::Error> for Error {
+    fn from(value: db::Error) -> Self {
         Self::DB(value)
     }
 }

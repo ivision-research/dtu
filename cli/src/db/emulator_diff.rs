@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use anyhow::bail;
 use clap::{self, Args};
 
-use dtu::db::sql::device::{models, DiffOptions, DiffTask, EMULATOR_DIFF_SOURCE};
-use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
+use dtu::db::device::{models, DiffOptions, DiffTask, EMULATOR_DIFF_SOURCE};
+use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::utils::path_must_str;
 use dtu::{Context, DefaultContext};

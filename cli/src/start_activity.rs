@@ -1,7 +1,7 @@
 use clap::{self, Args};
 
 use dtu::app::server::AppServer;
-use dtu::db::sql::{MetaDatabase, MetaSqliteDatabase};
+use dtu::db::{MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::DefaultContext;
 

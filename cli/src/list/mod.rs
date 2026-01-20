@@ -2,8 +2,8 @@ use std::fmt::Display;
 
 use clap::{self, Args, Subcommand};
 
-use dtu::db::sql::device::models;
-use dtu::db::sql::{ApkIPC, DeviceDatabase, DeviceSqliteDatabase};
+use dtu::db::device::models;
+use dtu::db::{ApkIPC, DeviceDatabase, DeviceSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::utils::ensure_prereq;
 use dtu::DefaultContext;

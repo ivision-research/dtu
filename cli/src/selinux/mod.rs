@@ -1,5 +1,5 @@
 use clap::{self, Args, Subcommand};
-use dtu::db::sql::MetaSqliteDatabase;
+use dtu::db::MetaSqliteDatabase;
 use dtu::devicefs::get_project_devicefs_helper;
 use dtu::tasks::selinux::{pull, Options};
 use dtu::tasks::NoopMonitor;

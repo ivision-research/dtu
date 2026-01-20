@@ -6,7 +6,7 @@ use std::{
 use anyhow::bail;
 use clap::{self, Args};
 use dtu::{
-    db::sql::{
+    db::{
         self,
         device::{
             get_default_devicedb, models::DiffSource, AddApkTask, ApkIdentifier, DiffOptions,
@@ -79,7 +79,7 @@ impl AddApk {
 
         let apk_id = match db.get_apk_by_device_path(device_path.as_device_str()) {
             Ok(v) => Some(v.id),
-            Err(sql::Error::NotFound) => None,
+            Err(db::Error::NotFound) => None,
             Err(e) => return Err(e.into()),
         };
 

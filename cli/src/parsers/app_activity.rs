@@ -1,9 +1,9 @@
 use clap::builder::{NonEmptyStringValueParser, TypedValueParser};
 
 use crate::parsers::simple_error;
-use dtu::db::sql;
-use dtu::db::sql::meta::models::AppActivity;
-use dtu::db::sql::{MetaDatabase, MetaSqliteDatabase};
+use dtu::db;
+use dtu::db::meta::models::AppActivity;
+use dtu::db::{MetaDatabase, MetaSqliteDatabase};
 use dtu::DefaultContext;
 
 #[derive(Clone)]
@@ -24,7 +24,7 @@ impl TypedValueParser for AppActivityValueParser {
         let ctx = DefaultContext::new();
         let meta = MetaSqliteDatabase::new(&ctx).map_err(simple_error)?;
         let act = match meta.get_app_activity_by_name(val.as_str()) {
-            Err(sql::Error::NotFound) => {
+            Err(db::Error::NotFound) => {
                 let activities = meta.get_app_activities().map_err(simple_error)?;
                 let mut opts = String::new();
                 for a in activities {

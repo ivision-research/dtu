@@ -3,8 +3,8 @@ use std::process::exit;
 
 use crate::parsers::parse_intent_string;
 use dtu::app::server::AppServer;
-use dtu::db::sql::meta::models::AppActivity;
-use dtu::db::sql::MetaDatabase;
+use dtu::db::meta::models::AppActivity;
+use dtu::db::MetaDatabase;
 use dtu::Context;
 
 use crate::parsers::AppActivityValueParser;

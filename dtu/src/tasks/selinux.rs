@@ -1,4 +1,4 @@
-use crate::db::sql::{self, MetaDatabase};
+use crate::db::{self, MetaDatabase};
 use crate::devicefs::{DeviceFSHelper, FindName, FindType};
 use crate::prereqs::Prereq;
 use crate::tasks::EventMonitor;
@@ -16,11 +16,11 @@ pub struct Options {
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("{0}")]
-    DBError(sql::Error),
+    DBError(db::Error),
 }
 
-impl From<sql::Error> for Error {
-    fn from(value: sql::Error) -> Self {
+impl From<db::Error> for Error {
+    fn from(value: db::Error) -> Self {
         Self::DBError(value)
     }
 }

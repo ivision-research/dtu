@@ -3,12 +3,12 @@ use std::path::PathBuf;
 use anyhow::bail;
 use clap::{self, Args};
 
-use dtu::db::graph::db::{GraphDatabase, FRAMEWORK_SOURCE};
-use dtu::db::sql::device::diff::SystemServiceDiffTask;
-use dtu::db::sql::device::models::SystemService;
-use dtu::db::sql::device::setup::{AddSystemServiceTask, ServiceMeta};
-use dtu::db::sql::device::SetupEvent;
-use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase};
+use dtu::db::graph::{GraphDatabase, FRAMEWORK_SOURCE};
+use dtu::db::device::diff::SystemServiceDiffTask;
+use dtu::db::device::models::SystemService;
+use dtu::db::device::setup::{AddSystemServiceTask, ServiceMeta};
+use dtu::db::device::SetupEvent;
+use dtu::db::{DeviceDatabase, DeviceSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::tasks::{EventMonitor, NoopMonitor, TaskCanceller};
 use dtu::utils::{ensure_prereq, find_smali_file_for_class, path_must_str, ClassName, DevicePath};

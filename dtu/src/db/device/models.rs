@@ -8,11 +8,11 @@ use serde::{Deserialize, Serialize};
 
 use dtu_proc_macro::sql_db_row;
 
-use crate::db::graph::db::FRAMEWORK_SOURCE;
-use crate::db::sql::common::{
+use crate::db::common::{
     ApkComponent, ApkIPC, ApkIPCKind, Enablable, Exportable, Idable, PermissionMode,
     PermissionProtected,
 };
+use crate::db::graph::FRAMEWORK_SOURCE;
 use crate::manifest::{self, ApktoolManifestResolver};
 use crate::utils::{path_must_str, ClassName, DevicePath};
 use crate::UnknownBool;

@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use crate::parsers::{parse_intent_string, parse_parcel_string};
 use crate::utils::get_app_server;
 use dtu::app::server::{AppServer, ProviderUriBuilder};
-use dtu::db::sql::{MetaDatabase, MetaSqliteDatabase};
+use dtu::db::{MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::DefaultContext;
 

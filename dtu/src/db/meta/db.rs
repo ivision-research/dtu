@@ -2,7 +2,7 @@ use diesel::prelude::*;
 use diesel::{delete, insert_into, update};
 use diesel_migrations::{embed_migrations, EmbeddedMigrations};
 
-use crate::db::sql::meta::schema::{app_activities, app_permissions, key_values, progress};
+use super::schema::*;
 use crate::Context;
 
 use super::common::*;

@@ -21,7 +21,7 @@ use signal_hook::iterator::Signals;
 
 use dtu::adb::{Adb, ExecAdb};
 use dtu::app::server::{ConnectError, TcpAppServer};
-use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase};
+use dtu::db::{DeviceDatabase, DeviceSqliteDatabase};
 use dtu::tasks::{TaskCancelCheck, TaskCanceller};
 use dtu::utils::{find_file_for_class, find_smali_file_for_class, ClassName, DevicePath};
 use dtu::{run_cmd, Context};

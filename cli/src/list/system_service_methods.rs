@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use std::io::stdout;
 
 use clap::Args;
-use dtu::db::sql::device::models::{DiffedSystemServiceMethod, SystemService, SystemServiceMethod};
-use dtu::db::sql::device::{get_default_devicedb, EMULATOR_DIFF_SOURCE};
-use dtu::db::sql::meta::get_default_metadb;
-use dtu::db::sql::{DeviceDatabase, MetaDatabase};
+use dtu::db::device::models::{DiffedSystemServiceMethod, SystemService, SystemServiceMethod};
+use dtu::db::device::{get_default_devicedb, EMULATOR_DIFF_SOURCE};
+use dtu::db::meta::get_default_metadb;
+use dtu::db::{DeviceDatabase, MetaDatabase};
 use dtu::prereqs::Prereq;
 use dtu::DefaultContext;
 use serde::Serialize;

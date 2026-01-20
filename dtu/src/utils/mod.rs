@@ -26,7 +26,7 @@ pub fn ensure_prereq(
     ctx: &dyn crate::Context,
     prereq: crate::prereqs::Prereq,
 ) -> crate::Result<()> {
-    use crate::db::sql::{MetaDatabase, MetaSqliteDatabase};
+    use crate::db::{MetaDatabase, MetaSqliteDatabase};
 
     let mdb = MetaSqliteDatabase::new(ctx).map_err(|e| crate::Error::Generic(e.to_string()))?;
     mdb.ensure_prereq(prereq)

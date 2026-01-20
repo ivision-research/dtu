@@ -1,8 +1,8 @@
 use clap::Args;
 
-use dtu::db::sql::device::models::Apk;
-use dtu::db::sql::device::EMULATOR_DIFF_SOURCE;
-use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
+use dtu::db::device::models::Apk;
+use dtu::db::device::EMULATOR_DIFF_SOURCE;
+use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::{Context, DefaultContext};
 

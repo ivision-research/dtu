@@ -15,8 +15,8 @@ use crate::diff::get_diff_source;
 use crate::parsers::DiffSourceValueParser;
 use crate::ui::{restore_terminal, setup_terminal, TerminalImpl};
 use applet::Applet;
-use dtu::db::sql::device::models::DiffSource;
-use dtu::db::sql::MetaDatabase;
+use dtu::db::device::models::DiffSource;
+use dtu::db::MetaDatabase;
 
 #[derive(Args)]
 pub struct UI {

@@ -2,6 +2,7 @@
 
 This new version contains significant breaking changes to the graph database and also adds Python bindings.
 
+- **BREAKING** Flattened the `db` module structure
 - **BREAKING** Changed graph database backend to sqlite instead of cozo
 - **BREAKING** Changed the `GraphDatabase` trait significantly
     - Removed the REPL functionality -- this is straightforward for sqlite

@@ -2,7 +2,7 @@ use crate::circular::CircularVec;
 use crate::diff::ui::applet::{FilterBox, FilterBoxFunction};
 use crate::ui::widgets::{CheckBox, ClosureWidget, ComboBox, ComboBoxState, BG_COLOR, FG_COLOR};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
-use dtu::db::sql::device::models::{DiffedSystemServiceMethod, SystemService};
+use dtu::db::device::models::{DiffedSystemServiceMethod, SystemService};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::Style;
 use ratatui::widgets::{StatefulWidget, Widget};

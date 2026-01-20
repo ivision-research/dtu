@@ -20,9 +20,9 @@ mod create;
 use create::*;
 use dtu::app::server::get_server_port;
 use dtu::app::{render_into, AppGradleBuild, AppTestStatus, TemplateRenderer};
-use dtu::db::sql::meta::db::{APP_ID_KEY, APP_PKG_KEY};
-use dtu::db::sql::meta::models::AppActivity;
-use dtu::db::sql::{MetaDatabase, MetaSqliteDatabase};
+use dtu::db::meta::db::{APP_ID_KEY, APP_PKG_KEY};
+use dtu::db::meta::models::AppActivity;
+use dtu::db::{MetaDatabase, MetaSqliteDatabase};
 
 #[derive(Args)]
 pub struct App {

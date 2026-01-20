@@ -1,22 +1,29 @@
 pub mod db;
 pub mod models;
 
-use crate::Context;
+mod schema;
+use super::common;
+
+mod traitdef;
+pub use traitdef::*;
+
+pub use models::{
+    ClassSearch, ClassSpec, MethodCallPath, MethodSearch, MethodSearchParams, MethodSpec,
+};
 
 #[cfg(feature = "setup")]
-pub mod setup;
+mod setup;
+
 #[cfg(feature = "setup")]
-pub use setup::*;
+mod setup_task;
+#[cfg(feature = "setup")]
+pub use setup_task::*;
 
-pub use db::{Error, GraphDatabase, Result};
+pub use db::GraphSqliteDatabase;
 
-pub use crate::db::sql::graph::GraphSqliteDatabase as SqliteGraphDatabase;
-
-pub use models::ClassSpec;
-
-pub type DefaultGraphDatabase = SqliteGraphDatabase;
+pub type DefaultGraphDatabase = GraphSqliteDatabase;
 
 /// Get the default GraphDB implementation
-pub fn get_default_graphdb(ctx: &dyn Context) -> Result<SqliteGraphDatabase> {
-    Ok(SqliteGraphDatabase::new(&ctx)?)
+pub fn get_default_graphdb(ctx: &dyn crate::Context) -> super::common::Result<GraphSqliteDatabase> {
+    Ok(GraphSqliteDatabase::new(&ctx)?)
 }

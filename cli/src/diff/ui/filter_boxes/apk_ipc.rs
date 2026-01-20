@@ -1,5 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
-use dtu::db::sql::{ApkIPC, PermissionMode};
+use dtu::db::{ApkIPC, PermissionMode};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::Style;
 use ratatui::widgets::{StatefulWidget, Widget};
@@ -11,7 +11,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use crate::circular::CircularVec;
-use dtu::db::sql::device::models::*;
+use dtu::db::device::models::*;
 
 use crate::diff::ui::applet::{FilterBox, FilterBoxFunction};
 use crate::ui::widgets::{CheckBox, ClosureWidget, ComboBox, ComboBoxState, BG_COLOR, FG_COLOR};

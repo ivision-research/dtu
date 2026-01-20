@@ -10,7 +10,7 @@ use crate::diff::ui::customizer::Customizer;
 use crate::diff::ui::ui::ActiveTab;
 use crate::ui::widgets::{ClosureWidget, GREY};
 use crossterm::event::{KeyEvent, MouseEvent};
-use dtu::db::sql::Idable;
+use dtu::db::Idable;
 use dtu::Context;
 
 pub trait Tab {

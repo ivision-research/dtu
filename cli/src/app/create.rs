@@ -11,11 +11,11 @@ use regex::Regex;
 
 use crate::utils::{exec_open_file, prompt_choice};
 use dtu::askama::DynTemplate;
-use dtu::db::sql;
-use dtu::db::sql::device::models::{SystemService, SystemServiceMethod};
-use dtu::db::sql::meta::db::APP_PKG_KEY;
-use dtu::db::sql::meta::models::InsertAppActivity;
-use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase};
+use dtu::db;
+use dtu::db::device::models::{SystemService, SystemServiceMethod};
+use dtu::db::meta::db::APP_PKG_KEY;
+use dtu::db::meta::models::InsertAppActivity;
+use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase};
 use dtu::utils::ClassName;
 use dtu::Context;
 
@@ -167,7 +167,7 @@ impl ProviderFile {
 
         let db = DeviceSqliteDatabase::new(ctx)?;
         match db.get_provider_containing_authority(&self.authority) {
-            Err(sql::Error::NotFound) => bail!("invalid authority {}", self.authority),
+            Err(db::Error::NotFound) => bail!("invalid authority {}", self.authority),
             Err(e) => return Err(e.into()),
             Ok(_) => {}
         }
@@ -233,7 +233,7 @@ impl SystemServiceFile {
 
         let service = match db.get_system_service_by_name(&self.service) {
             Ok(v) => Some(v),
-            Err(sql::Error::NotFound) if self.interface.is_some() => None,
+            Err(db::Error::NotFound) if self.interface.is_some() => None,
             Err(e) => return Err(e.into()),
         };
 

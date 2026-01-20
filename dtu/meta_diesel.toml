@@ -1,5 +1,5 @@
 [print_schema]
-file = "src/db/sql/meta/schema.rs"
+file = "src/db/meta/schema.rs"
 
 [migrations_directory]
 dir = "migrations/meta_migrations"

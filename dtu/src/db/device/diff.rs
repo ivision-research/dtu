@@ -2,10 +2,10 @@ use std::collections::{HashMap, HashSet};
 
 use dtu_proc_macro::wraps_base_error;
 
-use crate::db::sql::device::db::Database;
-use crate::db::sql::device::models::*;
-use crate::db::sql::device::models::{Apk, DiffSource, SystemService, SystemServiceMethod};
-use crate::db::sql::{self, ApkIPC, Error, Idable, PermissionMode};
+use crate::db::device::db::Database;
+use crate::db::device::models::*;
+use crate::db::device::models::{Apk, DiffSource, SystemService, SystemServiceMethod};
+use crate::db::{self, ApkIPC, Error, Idable, PermissionMode};
 use crate::tasks::{EventMonitor, TaskCancelCheck};
 use crate::utils::ClassName;
 use crate::UnknownBool;
@@ -366,8 +366,8 @@ impl<'a> DiffTask<'a> {
     where
         T: Idable,
         D: Idable,
-        GetAll: Fn(&dyn Database) -> sql::Result<Vec<T>>,
-        GetDone: Fn(&dyn Database, i32) -> sql::Result<Vec<D>>,
+        GetAll: Fn(&dyn Database) -> db::Result<Vec<T>>,
+        GetDone: Fn(&dyn Database, i32) -> db::Result<Vec<D>>,
     {
         let all = get_all(self.db)?;
         let done = get_done(self.db, self.source.id)?

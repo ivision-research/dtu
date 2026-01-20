@@ -22,13 +22,12 @@ use dtu_proc_macro::{define_setters, wraps_base_error};
 use crate::adb::{Adb, ExecAdb, ADB_CONFIG_KEY};
 use crate::command::err_on_status;
 use crate::context::Context;
-use crate::db::graph::db;
-use crate::db::graph::db::{GraphDatabase, FRAMEWORK_SOURCE};
+use crate::db::common::Error;
+use crate::db::device::db::Database;
+use crate::db::device::models::*;
 use crate::db::graph::models::{ClassSearch, ClassSpec};
-use crate::db::sql::common::Error;
-use crate::db::sql::device::db::Database;
-use crate::db::sql::device::models::*;
-use crate::db::sql::MetaDatabase;
+use crate::db::graph::{GraphDatabase, FRAMEWORK_SOURCE};
+use crate::db::MetaDatabase;
 use crate::fsdump::FSDumpAccess;
 use crate::manifest::{self, IPC};
 use crate::prereqs::Prereq;
@@ -54,8 +53,6 @@ pub enum SetupError {
     AlreadySetup,
     #[error("database error {0}")]
     DB(Error),
-    #[error("graph database error {0}")]
-    GraphDB(db::Error),
     #[error("no frameworks dir")]
     NoFrameworksDir,
     #[error("user cancelled")]
@@ -68,12 +65,6 @@ pub enum SetupError {
     Generic(String),
     #[error("invalid manifest for {0} - {1}")]
     InvalidManifest(String, String),
-}
-
-impl From<db::Error> for SetupError {
-    fn from(value: db::Error) -> Self {
-        Self::GraphDB(value)
-    }
 }
 
 impl<'a> From<smalisa::ParseError<'a>> for SetupError {

@@ -2,8 +2,8 @@ use crate::diff::{get_diff_source, smali_sig_contains_class, smali_sig_looks_lik
 use crate::parsers::DiffSourceValueParser;
 use clap::{self, Args, Subcommand};
 use crossterm::style::{Attribute, ContentStyle, Stylize};
-use dtu::db::sql::device::models::{DiffSource, SystemService};
-use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase};
+use dtu::db::device::models::{DiffSource, SystemService};
+use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase};
 use dtu::Context;
 
 use crate::parsers::SystemServiceValueParser;

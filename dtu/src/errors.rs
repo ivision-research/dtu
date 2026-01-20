@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-#[cfg(feature = "sql")]
-use crate::db::sql;
+#[cfg(any(feature = "sql", feature = "graph"))]
+use crate::db;
 #[cfg(feature = "sql")]
 use crate::prereqs::Prereq;
 use crate::utils::path_must_str;
@@ -72,8 +72,8 @@ impl Error {
 }
 
 #[cfg(feature = "sql")]
-impl From<sql::Error> for Error {
-    fn from(value: sql::Error) -> Self {
+impl From<db::Error> for Error {
+    fn from(value: db::Error) -> Self {
         Self::Generic(value.to_string())
     }
 }

@@ -4,9 +4,9 @@ use csv::{ReaderBuilder, StringRecord};
 
 use dtu_proc_macro::{wraps_base_error, wraps_decompile_error};
 
-use crate::db::sql::device::db::Database;
-use crate::db::sql::device::models::{FuzzResult, InsertFuzzResult};
-use crate::db::sql::{self, DeviceSqliteDatabase};
+use crate::db::device::db::Database;
+use crate::db::device::models::{FuzzResult, InsertFuzzResult};
+use crate::db::{self, DeviceSqliteDatabase};
 use crate::Context;
 
 #[wraps_base_error]
@@ -17,11 +17,11 @@ pub enum Error {
     CSVError,
 
     #[error("{0}")]
-    DBError(sql::Error),
+    DBError(db::Error),
 }
 
-impl From<sql::Error> for Error {
-    fn from(value: sql::Error) -> Self {
+impl From<db::Error> for Error {
+    fn from(value: db::Error) -> Self {
         Self::DBError(value)
     }
 }

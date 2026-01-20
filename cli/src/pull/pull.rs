@@ -5,7 +5,7 @@ use clap::{self, Args};
 use crossterm::event;
 use dtu::devicefs::get_project_devicefs_helper;
 use dtu::{
-    db::sql::meta::get_default_metadb,
+    db::meta::get_default_metadb,
     tasks::{
         pull::{pull, Event, Options},
         ChannelEventMonitor, EventMonitor, TaskCanceller,

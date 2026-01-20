@@ -1,5 +1,5 @@
 use clap::{self, Args};
-use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase};
+use dtu::db::{DeviceDatabase, DeviceSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::utils::ensure_prereq;
 use dtu::Context;

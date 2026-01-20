@@ -1,6 +1,6 @@
 use crate::progress::{FAIL_MARKER, SUCCESS_MARKER};
 use clap::{self, Args, Subcommand};
-use dtu::db::sql::{MetaDatabase, MetaSqliteDatabase};
+use dtu::db::{MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::DefaultContext;
 

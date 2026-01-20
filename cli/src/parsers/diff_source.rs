@@ -1,7 +1,7 @@
 use crate::parsers::simple_error;
 use clap::builder::{NonEmptyStringValueParser, TypedValueParser};
-use dtu::db::sql::device::models::DiffSource;
-use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
+use dtu::db::device::models::DiffSource;
+use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::DefaultContext;
 

@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use std::io::stdout;
 
 use clap::{self, Args};
-use dtu::db::sql::device::get_default_devicedb;
-use dtu::db::sql::device::models::{Activity, Provider, Receiver, Service};
+use dtu::db::device::get_default_devicedb;
+use dtu::db::device::models::{Activity, Provider, Receiver, Service};
 use sha2::{Digest, Sha256};
 
 use crate::find::utils::get_method_search;
@@ -13,7 +13,7 @@ use crate::printer::{color, Printer};
 use crate::utils::project_cacheable;
 use dtu::db::graph::models::{MethodCallPath, MethodSpec};
 use dtu::db::graph::GraphDatabase;
-use dtu::db::sql::{ApkIPC, DeviceDatabase, Enablable, Exportable};
+use dtu::db::{ApkIPC, DeviceDatabase, Enablable, Exportable};
 use dtu::utils::{hex, ClassName, DevicePath};
 use dtu::Context;
 

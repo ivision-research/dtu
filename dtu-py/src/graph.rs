@@ -23,10 +23,10 @@ use crate::{
 #[pyclass]
 pub struct GraphDB(DefaultGraphDatabase);
 
-struct GraphError(dtu::db::graph::Error);
+struct GraphError(dtu::db::Error);
 
-impl From<dtu::db::graph::Error> for GraphError {
-    fn from(value: dtu::db::graph::Error) -> Self {
+impl From<dtu::db::Error> for GraphError {
+    fn from(value: dtu::db::Error) -> Self {
         Self(value)
     }
 }

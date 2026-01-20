@@ -9,11 +9,11 @@ use dtu::db::graph::get_default_graphdb;
 
 use crate::printer::{color, StatusPrinter};
 use crate::utils::{task_canceller, CancelCheckThread};
-use dtu::db::sql::device::{
+use dtu::db::device::{
     get_project_dbsetup_helper, ApkIdentifier, DiffOptions, DiffTask, SetupEvent, SetupOptions,
     EMULATOR_DIFF_SOURCE,
 };
-use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
+use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::tasks::ChannelEventMonitor;
 use dtu::utils::{path_must_str, DevicePath};

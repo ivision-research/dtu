@@ -1,4 +1,4 @@
-pub use crate::db::sql::meta::models::AppTestStatus;
+pub use crate::db::meta::models::AppTestStatus;
 
 pub mod templates;
 pub use templates::*;

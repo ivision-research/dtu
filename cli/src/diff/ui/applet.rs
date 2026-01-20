@@ -8,11 +8,11 @@ use ratatui::style::Style;
 use ratatui::text::Text;
 use ratatui::widgets::{Borders, ListItem, Paragraph, Widget};
 
-use dtu::db::sql::device::models::{
+use dtu::db::device::models::{
     Apk, DiffSource, DiffedActivity, DiffedApk, DiffedProvider, DiffedReceiver, DiffedService,
     DiffedSystemService, DiffedSystemServiceMethod, SystemService,
 };
-use dtu::db::sql::{ApkIPC, DeviceDatabase, DeviceSqliteDatabase, Idable};
+use dtu::db::{ApkIPC, DeviceDatabase, DeviceSqliteDatabase, Idable};
 use dtu::Context;
 
 use crate::diff::ui::customizer::{

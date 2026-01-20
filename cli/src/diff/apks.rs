@@ -2,10 +2,10 @@ use anyhow::bail;
 use clap::{self, Args, Subcommand};
 
 use crate::diff::get_diff_source;
-use dtu::db::sql::device::models::{
+use dtu::db::device::models::{
     Apk, DiffSource, DiffedActivity, DiffedProvider, DiffedReceiver, DiffedService, Permission,
 };
-use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase};
+use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase};
 use dtu::Context;
 
 use crate::parsers::{ApkValueParser, DiffSourceValueParser};

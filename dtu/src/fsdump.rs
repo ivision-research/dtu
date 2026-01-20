@@ -13,7 +13,7 @@ use walkdir::WalkDir;
 
 use crate::command::LineCallback;
 #[cfg(feature = "setup")]
-use crate::db::sql::device::{DatabaseSetupHelper, PackageCallback, ServiceMeta};
+use crate::db::device::{DatabaseSetupHelper, PackageCallback, ServiceMeta};
 
 use crate::devicefs::{FindLimits, FindName, FindType};
 #[cfg(feature = "setup")]

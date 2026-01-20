@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use anyhow::bail;
 use clap::{self, Args, Subcommand};
 
-use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
+use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::filestore::get_filestore;
 use dtu::prereqs::Prereq;
 use dtu::utils::ensure_dir_exists;

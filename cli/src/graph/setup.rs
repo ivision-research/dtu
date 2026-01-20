@@ -6,9 +6,9 @@ use crate::utils::task_canceller;
 
 use clap::{self, Args};
 use crossbeam::channel::{unbounded, Sender};
-use dtu::db::graph::db::FRAMEWORK_SOURCE;
+use dtu::db::graph::FRAMEWORK_SOURCE;
 use dtu::db::graph::{get_default_graphdb, GraphDatabaseSetup, InitialImportOptions};
-use dtu::db::sql::{MetaDatabase, MetaSqliteDatabase};
+use dtu::db::{MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::tasks::{smalisa, ChannelEventMonitor, EventMonitor, TaskCancelCheck};
 use dtu::utils::{opt_deny, path_must_name, Denylist, DevicePath, OptDenylist};

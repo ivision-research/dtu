@@ -1,8 +1,8 @@
 use crate::parsers::simple_error;
 use crate::utils::{find_fully_qualified_apk, prompt_choice};
 use clap::builder::{NonEmptyStringValueParser, TypedValueParser};
-use dtu::db::sql::device::models::Apk;
-use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
+use dtu::db::device::models::Apk;
+use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::utils::DevicePath;
 use dtu::DefaultContext;

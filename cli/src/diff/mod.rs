@@ -1,12 +1,12 @@
 use clap::{self, Args, Subcommand};
-use dtu::db::sql::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
+use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::{Context, DefaultContext};
 
 mod apks;
 use apks::Apks;
-use dtu::db::sql::device::models::DiffSource;
-use dtu::db::sql::device::EMULATOR_DIFF_SOURCE;
+use dtu::db::device::models::DiffSource;
+use dtu::db::device::EMULATOR_DIFF_SOURCE;
 use dtu::utils::{ClassName, SmaliMethodSignatureIterator};
 
 mod system_services;

@@ -6,8 +6,7 @@ use diesel_migrations::{embed_migrations, EmbeddedMigrations};
 
 pub const EMULATOR_DIFF_SOURCE: &'static str = "emulator";
 
-use crate::db::sql::device::schema::system_service_impls;
-use crate::db::sql::device::schema::system_services;
+use super::schema::{system_service_impls, system_services};
 use crate::utils::ClassName;
 use crate::Context;
 

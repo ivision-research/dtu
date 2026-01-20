@@ -1,6 +1,6 @@
 use clap::{self, Args, Subcommand};
-use dtu::db::sql::meta::get_default_metadb;
-use dtu::db::sql::MetaDatabase;
+use dtu::db::meta::get_default_metadb;
+use dtu::db::MetaDatabase;
 use dtu::prereqs::Prereq;
 use dtu::DefaultContext;
 
