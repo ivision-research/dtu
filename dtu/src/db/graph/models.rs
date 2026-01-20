@@ -180,6 +180,18 @@ pub struct MethodSpec {
     pub access_flags: AccessFlag,
 }
 
+//impl<DB> FromSqlRow<(String, String, String, String, i64, String), DB> for MethodSpec
+//where
+//    DB: Backend,
+//{
+//    fn build_from_row<'a>(
+//        row: &impl diesel::row::Row<'a, DB>,
+//    ) -> diesel::deserialize::Result<Self> {
+//        let raw =
+//            <(String, String, String, String, i64, String) as FromSqlRow>::build_from_row(row)?;
+//    }
+//}
+
 impl Hash for MethodSpec {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         // Intentionally leaving out access_flags here

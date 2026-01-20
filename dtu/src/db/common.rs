@@ -397,6 +397,18 @@ macro_rules! def_insert_multi {
 }
 
 #[macro_export]
+macro_rules! def_insert {
+    (
+        $ins_one:ident,
+        $ins_multi:ident,
+        $ins_type:ty
+    ) => {
+        def_insert_one!($ins_one, $ins_type);
+        def_insert_multi!($ins_multi, $ins_type);
+    };
+}
+
+#[macro_export]
 macro_rules! def_standard_crud {
     (
         $ins_one:ident,

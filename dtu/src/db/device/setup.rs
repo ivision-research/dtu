@@ -29,7 +29,7 @@ use crate::db::graph::models::{ClassSearch, ClassSpec};
 use crate::db::graph::{GraphDatabase, FRAMEWORK_SOURCE};
 use crate::db::MetaDatabase;
 use crate::fsdump::FSDumpAccess;
-use crate::manifest::{self, IPC};
+use crate::manifest::{self, ApktoolManifestResolver, IPC};
 use crate::prereqs::Prereq;
 use crate::tasks::task::{EventMonitor, TaskCancelCheck};
 use crate::unknownbool::UnknownBool;
@@ -39,6 +39,7 @@ use crate::utils::fs::{
     find_files_for_class, find_smali_file_for_class, path_has_ext, path_must_str,
 };
 use crate::utils::open_file;
+use crate::Manifest;
 
 use super::db::DeviceSqliteDatabase;
 
@@ -206,6 +207,366 @@ macro_rules! on_event {
             m.on_event($event);
         }
     };
+}
+
+struct AddManifestTask<'a> {
+    apk_id: i32,
+    ctx: &'a dyn Context,
+    pkg: Cow<'a, str>,
+    device_path: &'a DevicePath,
+    db: &'a dyn Database,
+    cancel: &'a TaskCancelCheck,
+    monitor: Option<&'a dyn EventMonitor<SetupEvent>>,
+    identifier: ApkIdentifier,
+    resolver: &'a ApktoolManifestResolver,
+    manifest: &'a Manifest,
+}
+
+impl<'a> AddManifestTask<'a> {
+    fn run(&self) -> SetupResult<()> {
+        log::trace!("Adding apk receivers");
+        self.add_manifest_receivers(self.manifest.get_receivers())?;
+
+        self.cancel_check()?;
+        log::trace!("Adding apk services");
+
+        self.add_manifest_services(self.manifest.get_services())?;
+
+        self.cancel_check()?;
+
+        log::trace!("Adding apk providers");
+
+        self.add_manifest_providers(self.manifest.get_providers())?;
+
+        self.cancel_check()?;
+
+        log::trace!("Adding apk activities");
+
+        self.add_manifest_activities(
+            self.manifest.get_activities(),
+            self.manifest.get_activity_aliases(),
+        )?;
+
+        self.cancel_check()?;
+
+        log::trace!("Adding apk permissions");
+
+        self.add_manifest_permissions(
+            self.manifest.get_permissions(),
+            self.manifest.get_uses_permissions(),
+        )?;
+
+        Ok(())
+    }
+
+    #[inline]
+    fn cancel_check(&self) -> SetupResult<()> {
+        self.cancel.check(SetupError::Cancelled)
+    }
+
+    fn add_manifest_receivers(&self, rcvers: &[manifest::Receiver]) -> SetupResult<()> {
+        for r in rcvers {
+            self.add_manifest_receiver(&r)?;
+        }
+        Ok(())
+    }
+
+    fn add_manifest_receiver(&self, rcv: &manifest::Receiver) -> SetupResult<()> {
+        let common = IPCCommon::from_ipc(rcv, self.resolver);
+
+        let enabled = common.is_enabled();
+        let exported = common.is_exported();
+        let permission = common.permission();
+        let (raw_class_name, pkg_name) = common.class_and_package(&self.pkg);
+        let class_name = ClassName::from_split_manifest(pkg_name, raw_class_name);
+
+        on_event!(
+            &self.monitor,
+            SetupEvent::AddingApkReceiver {
+                identifier: self.identifier,
+                class_name: class_name.clone(),
+            }
+        );
+
+        let ins = InsertReceiver {
+            apk_id: self.apk_id,
+            permission,
+            class_name,
+            exported,
+            enabled,
+            pkg: pkg_name,
+        };
+        self.db.add_receiver(&ins)?;
+
+        Ok(())
+    }
+
+    fn add_manifest_provider(&self, prov: &manifest::Provider) -> SetupResult<()> {
+        let common = IPCCommon::from_ipc(prov, self.resolver);
+
+        let (raw_class_name, pkg_name) = common.class_and_package(&self.pkg);
+        let class_name = ClassName::from_split_manifest(pkg_name, raw_class_name);
+
+        let write_perm = prov.write_permission(self.resolver);
+        let read_perm = prov.read_permission(self.resolver);
+        let authorities = prov.authorities(self.resolver);
+        let grant_uri_permissions = prov.grant_uri_permissions(self.resolver).unwrap_or(false);
+        let exported = common.is_exported();
+        let enabled = common.is_enabled();
+        let perms = common.permission();
+
+        on_event!(
+            &self.monitor,
+            SetupEvent::AddingApkProvider {
+                identifier: self.identifier,
+                class_name,
+            }
+        );
+        let ins = InsertProvider {
+            authorities: &authorities,
+            grant_uri_permissions,
+            exported,
+            enabled,
+            apk_id: self.apk_id,
+            name: &common.name,
+            permission: perms,
+            read_permission: read_perm.as_ref().map(|it| it.as_ref()),
+            write_permission: write_perm.as_ref().map(|it| it.as_ref()),
+        };
+        self.db.add_provider(&ins)?;
+
+        Ok(())
+    }
+
+    fn add_manifest_providers(&self, providers: &[manifest::Provider]) -> SetupResult<()> {
+        for p in providers {
+            self.add_manifest_provider(&p)?;
+        }
+        Ok(())
+    }
+
+    fn add_manifest_activities(
+        &self,
+        activities: &[manifest::Activity],
+        aliases: &[manifest::Activity],
+    ) -> SetupResult<()> {
+        for act in activities {
+            self.add_manifest_activity(act)?;
+        }
+
+        for act in aliases {
+            self.add_manifest_activity(act)?;
+        }
+
+        Ok(())
+    }
+
+    fn add_manifest_activity(&self, act: &manifest::Activity) -> SetupResult<()> {
+        let common = IPCCommon::from_ipc(act, self.resolver);
+        let (raw_class_name, pkg_name) = common.class_and_package(&self.pkg);
+        let class_name = ClassName::from_split_manifest(pkg_name, raw_class_name);
+        on_event!(
+            &self.monitor,
+            SetupEvent::AddingApkActivity {
+                identifier: self.identifier,
+                class_name: class_name.clone(),
+            }
+        );
+        let ins = InsertActivity {
+            class_name,
+            exported: common.is_exported(),
+            enabled: common.is_enabled(),
+            pkg: pkg_name,
+            apk_id: self.apk_id,
+            permission: common.permission(),
+        };
+        self.db.add_activity(&ins)?;
+        Ok(())
+    }
+
+    fn add_manifest_services(&self, services: &[manifest::Service]) -> SetupResult<()> {
+        for s in services {
+            self.add_manifest_service(&s)?;
+        }
+        Ok(())
+    }
+
+    fn add_manifest_service(&self, svc: &manifest::Service) -> SetupResult<()> {
+        let common = IPCCommon::from_ipc(svc, self.resolver);
+
+        let enabled = common.is_enabled();
+        let exported = common.is_exported();
+        let permission = common.permission();
+        let (raw_class_name, pkg_name) = common.class_and_package(&self.pkg);
+
+        let class_name = ClassName::from_split_manifest(pkg_name, raw_class_name);
+
+        let returns_binder = self.service_on_bind_returns_nonnull(&class_name);
+
+        on_event!(
+            &self.monitor,
+            SetupEvent::AddingApkService {
+                identifier: self.identifier,
+                class_name: class_name.clone()
+            }
+        );
+        let ins = InsertService {
+            class_name,
+            exported,
+            enabled,
+            pkg: pkg_name,
+            apk_id: self.apk_id,
+            permission,
+            returns_binder,
+        };
+        self.db.add_service(&ins)?;
+
+        Ok(())
+    }
+
+    fn add_manifest_permissions(
+        &self,
+        permissions: &[manifest::Permission],
+        uses_permissions: &[manifest::UsesPermission],
+    ) -> SetupResult<()> {
+        for p in permissions {
+            self.add_manifest_permission(p)?;
+        }
+
+        for up in uses_permissions {
+            let name = up.name(self.resolver);
+            if name.is_empty() {
+                continue;
+            }
+            let ins = InsertApkPermission {
+                apk_id: self.apk_id,
+                name: &name,
+            };
+            match self.db.add_apk_permission(&ins) {
+                Err(Error::UniqueViolation(_)) => {
+                    log::warn!(
+                        "unique constraint violation for APK permission {}, source: {}",
+                        name,
+                        self.device_path.as_device_str()
+                    );
+                }
+                Err(e) => return Err(e.into()),
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
+    fn service_on_bind_returns_nonnull(&self, class: &ClassName) -> UnknownBool {
+        let path = match find_smali_file_for_class(&self.ctx, class, Some(self.device_path)) {
+            None => {
+                log::warn!("couldn't find smali file for {}", class);
+                return UnknownBool::Unknown;
+            }
+            Some(p) => p,
+        };
+
+        let mut file = match open_file(&path) {
+            Err(e) => {
+                log::error!("couldn't open smali file for {}: {}", class, e);
+                return UnknownBool::Unknown;
+            }
+            Ok(f) => f,
+        };
+
+        let lexer = Lexer::new(&mut file);
+        let mut parser = Parser::new(lexer);
+
+        let parsed = match parse_class(&mut parser) {
+            Err(e) => {
+                log::error!("couldn't parse class {}: {}", class, e);
+                return UnknownBool::Unknown;
+            }
+            Ok(c) => c,
+        };
+
+        let method = match parsed
+            .methods
+            .iter()
+            .find(|it| it.name == "onBind" && it.args == "Landroid/content/Intent;")
+        {
+            Some(m) => m,
+            None => {
+                // Could potentially go into the graph database to find a parent
+                // here because onBind _must_ be defined
+                log::warn!("class {} doesn't have an onBind method", class);
+                return UnknownBool::Unknown;
+            }
+        };
+
+        let instructions = method
+            .lines
+            .iter()
+            .map(|it| match it {
+                MethodLine::Instruction(ins) => Some(ins),
+                _ => None,
+            })
+            .filter(|it| it.is_some())
+            .map(|it| it.unwrap())
+            .collect::<Vec<&Invocation>>();
+
+        // Returning null is always just 2 lines:
+        //
+        // const/4 v0, 0x0
+        // return-object v0
+        //
+        // TODO:
+        // There are obviously other cases in which we can be returning null
+        // but doing some sort of logging or something, but for now we're just
+        // trying to get some sort of data
+
+        if instructions.len() != 2 {
+            return UnknownBool::True;
+        }
+
+        // Continuing with the previous train of thought, if the instruction
+        // invocation doesn't take a register and a number then it is returning
+        // something nonnull
+        match instructions[0].args() {
+            // This _can't_ be anything but 0 to be valid Java code, so it's
+            // returning null
+            InvArgs::OneRegNum(_, _) => UnknownBool::False,
+            _ => UnknownBool::True,
+        }
+    }
+
+    fn add_manifest_permission(&self, perm: &manifest::Permission) -> SetupResult<()> {
+        let name = perm.name(self.resolver);
+        let protection_level = perm.protection_level(self.resolver);
+
+        on_event!(
+            &self.monitor,
+            SetupEvent::AddingApkPermission {
+                identifier: self.identifier,
+                permission: name.to_string(),
+            }
+        );
+
+        let ins = InsertPermission {
+            name: &name,
+            protection_level: &protection_level,
+            source_apk_id: self.apk_id,
+        };
+
+        match self.db.add_permission(&ins) {
+            Err(Error::UniqueViolation(_)) => {
+                log::warn!(
+                    "unique constraint violation for permission {}, source: {}",
+                    name,
+                    self.device_path.as_device_str()
+                );
+                Ok(())
+            }
+            Err(e) => Err(e.into()),
+            _ => Ok(()),
+        }
+    }
 }
 
 pub struct AddApkTask<'a> {
@@ -868,11 +1229,11 @@ impl<'a> AddApkTask<'a> {
             log::warn!("apk {} has no manifest", self.device_path);
             return Ok(());
         }
-        let manifest = manifest::Manifest::from_file(&manifest_path).map_err(|e| {
+        let manifest = Manifest::from_file(&manifest_path).map_err(|e| {
             SetupError::InvalidManifest(self.device_path.get_device_string(), e.to_string())
         })?;
 
-        let resolver = manifest::ApktoolManifestResolver::new(self.apktool_out_dir);
+        let resolver = ApktoolManifestResolver::new(self.apktool_out_dir);
 
         let device_path = self.device_path.as_device_str();
 
@@ -895,448 +1256,27 @@ impl<'a> AddApkTask<'a> {
         );
 
         let apk_id = self.db.add_apk(&new_apk)?;
-
         self.cancel_check()?;
 
-        log::trace!("Adding apk receivers");
-        self.add_manifest_receivers_v2(
+        let manifest_task = AddManifestTask {
             apk_id,
-            &pkg,
-            &resolver,
-            manifest.get_receivers(),
-            self.identifier,
-        )?;
-
-        self.cancel_check()?;
-        log::trace!("Adding apk services");
-
-        self.add_manifest_services_v2(
-            apk_id,
-            self.device_path,
-            &pkg,
-            &resolver,
-            manifest.get_services(),
-            self.identifier,
-        )?;
-
-        self.cancel_check()?;
-
-        log::trace!("Adding apk providers");
-
-        self.add_manifest_providers_v2(
-            apk_id,
-            &pkg,
-            &resolver,
-            manifest.get_providers(),
-            self.identifier,
-        )?;
-
-        self.cancel_check()?;
-
-        log::trace!("Adding apk activities");
-
-        self.add_manifest_activities_v2(
-            apk_id,
-            &pkg,
-            &resolver,
-            manifest.get_activities(),
-            manifest.get_activity_aliases(),
-            self.identifier,
-        )?;
-
-        self.cancel_check()?;
-
-        log::trace!("Adding apk permissions");
-
-        self.add_manifest_permissions_v2(
-            apk_id,
-            self.device_path.as_device_str(),
-            &resolver,
-            manifest.get_permissions(),
-            manifest.get_uses_permissions(),
-            self.identifier,
-        )?;
-
-        Ok(())
-    }
-
-    fn add_manifest_receivers_v2(
-        &self,
-        apk_id: i32,
-        pkg: &str,
-        resolver: &dyn manifest::ManifestResolver,
-        rcvers: &[manifest::Receiver],
-        identifier: ApkIdentifier,
-    ) -> SetupResult<()> {
-        for r in rcvers {
-            self.add_manifest_receiver_v2(apk_id, pkg, resolver, &r, identifier)?;
-        }
-        Ok(())
-    }
-
-    fn add_manifest_receiver_v2(
-        &self,
-        apk_id: i32,
-        pkg: &str,
-        resolver: &dyn manifest::ManifestResolver,
-        rcv: &manifest::Receiver,
-        identifier: ApkIdentifier,
-    ) -> SetupResult<()> {
-        let common = IPCCommon::from_ipc(rcv, resolver);
-
-        let enabled = common.is_enabled();
-        let exported = common.is_exported();
-        let permission = common.permission();
-        let (raw_class_name, pkg_name) = common.class_and_package(pkg);
-        let class_name = ClassName::from_split_manifest(pkg_name, raw_class_name);
-
-        on_event!(
-            &self.monitor,
-            SetupEvent::AddingApkReceiver {
-                identifier,
-                class_name: class_name.clone(),
-            }
-        );
-
-        let ins = InsertReceiver {
-            apk_id,
-            permission,
-            class_name,
-            exported,
-            enabled,
-            pkg: pkg_name,
+            ctx: self.ctx,
+            pkg,
+            device_path: self.device_path,
+            db: self.db,
+            cancel: self.cancel,
+            monitor: self.monitor,
+            identifier: self.identifier,
+            manifest: &manifest,
+            resolver: &resolver,
         };
-        self.db.add_receiver(&ins)?;
 
-        Ok(())
-    }
-
-    fn add_manifest_provider_v2(
-        &self,
-        apk_id: i32,
-        pkg: &str,
-        resolver: &dyn manifest::ManifestResolver,
-        prov: &manifest::Provider,
-        identifier: ApkIdentifier,
-    ) -> SetupResult<()> {
-        let common = IPCCommon::from_ipc(prov, resolver);
-
-        let (raw_class_name, pkg_name) = common.class_and_package(pkg);
-        let class_name = ClassName::from_split_manifest(pkg_name, raw_class_name);
-
-        let write_perm = prov.write_permission(resolver);
-        let read_perm = prov.read_permission(resolver);
-        let authorities = prov.authorities(resolver);
-        let grant_uri_permissions = prov.grant_uri_permissions(resolver).unwrap_or(false);
-        let exported = common.is_exported();
-        let enabled = common.is_enabled();
-        let perms = common.permission();
-
-        on_event!(
-            &self.monitor,
-            SetupEvent::AddingApkProvider {
-                identifier,
-                class_name,
-            }
-        );
-        let ins = InsertProvider {
-            authorities: &authorities,
-            grant_uri_permissions,
-            exported,
-            enabled,
-            apk_id,
-            name: &common.name,
-            permission: perms,
-            read_permission: read_perm.as_ref().map(|it| it.as_ref()),
-            write_permission: write_perm.as_ref().map(|it| it.as_ref()),
-        };
-        self.db.add_provider(&ins)?;
-
-        Ok(())
+        manifest_task.run()
     }
 
     #[inline]
     fn cancel_check(&self) -> SetupResult<()> {
         self.cancel.check(SetupError::Cancelled)
-    }
-
-    fn add_manifest_providers_v2(
-        &self,
-        apk_id: i32,
-        pkg: &str,
-        resolver: &dyn manifest::ManifestResolver,
-        providers: &[manifest::Provider],
-        identifier: ApkIdentifier,
-    ) -> SetupResult<()> {
-        for p in providers {
-            self.add_manifest_provider_v2(apk_id, pkg, resolver, &p, identifier)?;
-        }
-        Ok(())
-    }
-
-    fn add_manifest_activities_v2(
-        &self,
-        apk_id: i32,
-        pkg: &str,
-        resolver: &dyn manifest::ManifestResolver,
-        activities: &[manifest::Activity],
-        aliases: &[manifest::Activity],
-        identifier: ApkIdentifier,
-    ) -> SetupResult<()> {
-        for act in activities {
-            self.add_manifest_activity_v2(apk_id, pkg, resolver, act, identifier)?;
-        }
-
-        for act in aliases {
-            self.add_manifest_activity_v2(apk_id, pkg, resolver, act, identifier)?;
-        }
-
-        Ok(())
-    }
-
-    fn add_manifest_activity_v2(
-        &self,
-        apk_id: i32,
-        pkg: &str,
-        resolver: &dyn manifest::ManifestResolver,
-        act: &manifest::Activity,
-        identifier: ApkIdentifier,
-    ) -> SetupResult<()> {
-        let common = IPCCommon::from_ipc(act, resolver);
-        let (raw_class_name, pkg_name) = common.class_and_package(pkg);
-        let class_name = ClassName::from_split_manifest(pkg_name, raw_class_name);
-        on_event!(
-            &self.monitor,
-            SetupEvent::AddingApkActivity {
-                identifier,
-                class_name: class_name.clone(),
-            }
-        );
-        let ins = InsertActivity {
-            class_name,
-            exported: common.is_exported(),
-            enabled: common.is_enabled(),
-            pkg: pkg_name,
-            apk_id,
-            permission: common.permission(),
-        };
-        self.db.add_activity(&ins)?;
-        Ok(())
-    }
-
-    fn add_manifest_services_v2(
-        &self,
-        apk_id: i32,
-        device_path: &DevicePath,
-        pkg: &str,
-        resolver: &dyn manifest::ManifestResolver,
-        services: &[manifest::Service],
-        identifier: ApkIdentifier,
-    ) -> SetupResult<()> {
-        for s in services {
-            self.add_manifest_service_v2(apk_id, device_path, pkg, resolver, &s, identifier)?;
-        }
-        Ok(())
-    }
-
-    fn add_manifest_service_v2(
-        &self,
-        apk_id: i32,
-        device_path: &DevicePath,
-        pkg: &str,
-        resolver: &dyn manifest::ManifestResolver,
-        svc: &manifest::Service,
-        identifier: ApkIdentifier,
-    ) -> SetupResult<()> {
-        let common = IPCCommon::from_ipc(svc, resolver);
-
-        let enabled = common.is_enabled();
-        let exported = common.is_exported();
-        let permission = common.permission();
-        let (raw_class_name, pkg_name) = common.class_and_package(pkg);
-
-        let class_name = ClassName::from_split_manifest(pkg_name, raw_class_name);
-
-        let returns_binder = self.service_on_bind_returns_nonnull(device_path, &class_name);
-
-        on_event!(
-            &self.monitor,
-            SetupEvent::AddingApkService {
-                identifier,
-                class_name: class_name.clone()
-            }
-        );
-        let ins = InsertService {
-            class_name,
-            exported,
-            enabled,
-            pkg: pkg_name,
-            apk_id,
-            permission,
-            returns_binder,
-        };
-        self.db.add_service(&ins)?;
-
-        Ok(())
-    }
-
-    fn add_manifest_permissions_v2(
-        &self,
-        apk_id: i32,
-        source: &str,
-        resolver: &dyn manifest::ManifestResolver,
-        permissions: &[manifest::Permission],
-        uses_permissions: &[manifest::UsesPermission],
-        identifier: ApkIdentifier,
-    ) -> SetupResult<()> {
-        for p in permissions {
-            self.add_manifest_permission_v2(apk_id, source, resolver, p, identifier)?;
-        }
-
-        for up in uses_permissions {
-            let name = up.name(resolver);
-            if name.is_empty() {
-                continue;
-            }
-            let ins = InsertApkPermission {
-                apk_id,
-                name: &name,
-            };
-            match self.db.add_apk_permission(&ins) {
-                Err(Error::UniqueViolation(_)) => {
-                    log::warn!(
-                        "unique constraint violation for APK permission {}, source: {}",
-                        name,
-                        source
-                    );
-                }
-                Err(e) => return Err(e.into()),
-                _ => {}
-            }
-        }
-
-        Ok(())
-    }
-
-    fn add_manifest_permission_v2(
-        &self,
-        apk_id: i32,
-        source: &str,
-        resolver: &dyn manifest::ManifestResolver,
-        perm: &manifest::Permission,
-        identifier: ApkIdentifier,
-    ) -> SetupResult<()> {
-        let name = perm.name(resolver);
-        let protection_level = perm.protection_level(resolver);
-
-        on_event!(
-            &self.monitor,
-            SetupEvent::AddingApkPermission {
-                identifier,
-                permission: name.to_string(),
-            }
-        );
-
-        let ins = InsertPermission {
-            name: &name,
-            protection_level: &protection_level,
-            source_apk_id: apk_id,
-        };
-
-        match self.db.add_permission(&ins) {
-            Err(Error::UniqueViolation(_)) => {
-                log::warn!(
-                    "unique constraint violation for permission {}, source: {}",
-                    name,
-                    source
-                );
-                Ok(())
-            }
-            Err(e) => Err(e.into()),
-            _ => Ok(()),
-        }
-    }
-
-    fn service_on_bind_returns_nonnull(
-        &self,
-        device_path: &DevicePath,
-        class: &ClassName,
-    ) -> UnknownBool {
-        let path = match find_smali_file_for_class(&self.ctx, class, Some(device_path)) {
-            None => {
-                log::warn!("couldn't find smali file for {}", class);
-                return UnknownBool::Unknown;
-            }
-            Some(p) => p,
-        };
-
-        let mut file = match open_file(&path) {
-            Err(e) => {
-                log::error!("couldn't open smali file for {}: {}", class, e);
-                return UnknownBool::Unknown;
-            }
-            Ok(f) => f,
-        };
-
-        let lexer = Lexer::new(&mut file);
-        let mut parser = Parser::new(lexer);
-
-        let parsed = match parse_class(&mut parser) {
-            Err(e) => {
-                log::error!("couldn't parse class {}: {}", class, e);
-                return UnknownBool::Unknown;
-            }
-            Ok(c) => c,
-        };
-
-        let method = match parsed
-            .methods
-            .iter()
-            .find(|it| it.name == "onBind" && it.args == "Landroid/content/Intent;")
-        {
-            Some(m) => m,
-            None => {
-                // Could potentially go into the graph database to find a parent
-                // here because onBind _must_ be defined
-                log::warn!("class {} doesn't have an onBind method", class);
-                return UnknownBool::Unknown;
-            }
-        };
-
-        let instructions = method
-            .lines
-            .iter()
-            .map(|it| match it {
-                MethodLine::Instruction(ins) => Some(ins),
-                _ => None,
-            })
-            .filter(|it| it.is_some())
-            .map(|it| it.unwrap())
-            .collect::<Vec<&Invocation>>();
-
-        // Returning null is always just 2 lines:
-        //
-        // const/4 v0, 0x0
-        // return-object v0
-        //
-        // TODO:
-        // There are obviously other cases in which we can be returning null
-        // but doing some sort of logging or something, but for now we're just
-        // trying to get some sort of data
-
-        if instructions.len() != 2 {
-            return UnknownBool::True;
-        }
-
-        // Continuing with the previous train of thought, if the instruction
-        // invocation doesn't take a register and a number then it is returning
-        // something nonnull
-        match instructions[0].args() {
-            // This _can't_ be anything but 0 to be valid Java code, so it's
-            // returning null
-            InvArgs::OneRegNum(_, _) => UnknownBool::False,
-            _ => UnknownBool::True,
-        }
     }
 }
 

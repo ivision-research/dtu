@@ -370,10 +370,7 @@ impl GraphDatabase for GraphSqliteDatabase {
                 .inner_join(sources::table)
                 .filter(sources::name.eq(source))
                 .select(classes::name))
-            .load::<String>(c)?
-            .into_iter()
-            .map(ClassName::from)
-            .collect())
+            .load::<ClassName>(c)?)
         })
     }
 

@@ -1,7 +1,7 @@
 pub mod db;
 pub mod models;
 
-mod schema;
+pub mod schema;
 use super::common;
 
 mod traitdef;
