@@ -13,3 +13,5 @@ anyhow = "1.0"
 dtu = { path = "../dtu", default-features = false, features = ["graph", "sql", "filestore", "app-server"] }
 pyo3 = { version = "0.27", features = ["anyhow"] }
 regex = { workspace = true }
+serde = { workspace = true }
+postcard = { version = "1.0.0", features = ["alloc"] }

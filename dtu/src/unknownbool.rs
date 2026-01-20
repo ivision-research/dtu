@@ -4,6 +4,7 @@ use diesel::expression::AsExpression;
 use diesel::serialize::{Output, ToSql};
 use diesel::sql_types::Integer;
 use diesel::FromSqlRow;
+use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 
 use std::ops::{BitAnd, BitOr};
@@ -19,6 +20,25 @@ pub enum UnknownBool {
     Unknown = UB_UNKNOWN,
     True = UB_TRUE,
     False = UB_FALSE,
+}
+
+impl Serialize for UnknownBool {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let as_num: i32 = (*self).into();
+        serializer.serialize_i32(as_num)
+    }
+}
+
+impl<'de> Deserialize<'de> for UnknownBool {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(i32::deserialize(deserializer)?.into())
+    }
 }
 
 impl Display for UnknownBool {

@@ -4,6 +4,7 @@ use std::ops::Deref;
 use std::path::PathBuf;
 
 use diesel::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use dtu_proc_macro::sql_db_row;
 
@@ -20,6 +21,7 @@ use super::schema::*;
 
 #[sql_db_row]
 #[diesel(table_name = device_properties)]
+#[derive(Serialize, Deserialize)]
 pub struct DeviceProperty {
     pub id: i32,
     pub name: String,
@@ -33,6 +35,7 @@ impl Display for DeviceProperty {
 }
 
 #[sql_db_row]
+#[derive(Serialize, Deserialize)]
 pub struct Permission {
     pub id: i32,
     pub name: String,
@@ -44,6 +47,7 @@ pub struct Permission {
 #[derive(Associations, Selectable)]
 #[diesel(belongs_to(Apk))]
 #[diesel(table_name = apk_permissions)]
+#[derive(Serialize, Deserialize)]
 pub struct ApkPermission {
     pub id: i32,
     pub name: String,
@@ -57,6 +61,7 @@ impl Display for Permission {
 }
 
 #[sql_db_row]
+#[derive(Serialize, Deserialize)]
 pub struct PermissionDiff {
     pub id: i32,
     pub permission: i32,
@@ -67,7 +72,7 @@ pub struct PermissionDiff {
 }
 
 /// The result of combining an Permission with a PermissionDiff
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DiffedPermission {
     pub permission: Permission,
     pub exists_in_diff: bool,
@@ -114,6 +119,7 @@ impl From<(Permission, PermissionDiff)> for DiffedPermission {
 }
 
 #[sql_db_row]
+#[derive(Serialize, Deserialize)]
 pub struct ProtectedBroadcast {
     pub id: i32,
     pub name: String,
@@ -126,6 +132,7 @@ impl Display for ProtectedBroadcast {
 }
 
 #[sql_db_row]
+#[derive(Serialize, Deserialize)]
 pub struct UnprotectedBroadcast {
     pub id: i32,
     pub name: String,
@@ -139,6 +146,7 @@ impl Display for UnprotectedBroadcast {
 }
 
 #[sql_db_row]
+#[derive(Serialize, Deserialize)]
 pub struct Apk {
     pub id: i32,
     pub app_name: String,
@@ -192,7 +200,7 @@ impl Apk {
 }
 
 /// Apk with the associated permissions that it uses
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ApkWithPermissions {
     pub apk: Apk,
     pub permissions: Vec<String>,
@@ -208,7 +216,7 @@ impl From<(Vec<ApkPermission>, Apk)> for ApkWithPermissions {
 }
 
 /// The result of combining an Apk with an ApkDiff
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DiffedApk {
     pub apk: Apk,
     pub exists_in_diff: bool,
@@ -251,6 +259,7 @@ impl From<(Apk, ApkDiff)> for DiffedApk {
 }
 
 #[sql_db_row]
+#[derive(Serialize, Deserialize)]
 pub struct ApkDiff {
     pub id: i32,
     pub apk: i32,
@@ -265,6 +274,7 @@ impl Display for Apk {
 }
 
 #[sql_db_row]
+#[derive(Serialize, Deserialize)]
 pub struct Receiver {
     pub id: i32,
     pub class_name: ClassName,
@@ -282,6 +292,7 @@ impl Display for Receiver {
 }
 
 #[sql_db_row]
+#[derive(Serialize, Deserialize)]
 pub struct ReceiverDiff {
     pub id: i32,
     pub receiver: i32,
@@ -293,7 +304,7 @@ pub struct ReceiverDiff {
 }
 
 /// The result of combining an Receiver with an ReceiverDiff
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DiffedReceiver {
     pub receiver: Receiver,
     pub exists_in_diff: bool,
@@ -342,6 +353,7 @@ impl Deref for DiffedReceiver {
 }
 
 #[sql_db_row]
+#[derive(Serialize, Deserialize)]
 pub struct Service {
     pub id: i32,
     pub class_name: ClassName,
@@ -360,6 +372,7 @@ impl Display for Service {
 }
 
 #[sql_db_row]
+#[derive(Serialize, Deserialize)]
 pub struct ServiceDiff {
     pub id: i32,
     pub service: i32,
@@ -371,7 +384,7 @@ pub struct ServiceDiff {
 }
 
 /// The result of combining an Service with an ServiceDiff
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DiffedService {
     pub service: Service,
     pub exists_in_diff: bool,
@@ -421,6 +434,7 @@ impl Deref for DiffedService {
 
 #[sql_db_row]
 #[diesel(table_name = activities)]
+#[derive(Serialize, Deserialize)]
 pub struct Activity {
     pub id: i32,
     pub class_name: ClassName,
@@ -438,6 +452,7 @@ impl Display for Activity {
 }
 
 #[sql_db_row]
+#[derive(Serialize, Deserialize)]
 pub struct ActivityDiff {
     pub id: i32,
     pub activity: i32,
@@ -449,7 +464,7 @@ pub struct ActivityDiff {
 }
 
 /// The result of combining an Activity with an ActivityDiff
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DiffedActivity {
     pub activity: Activity,
     pub exists_in_diff: bool,
@@ -546,6 +561,7 @@ impl_apk_ipc!(Service);
 //  so we can do a join
 
 #[sql_db_row]
+#[derive(Serialize, Deserialize)]
 pub struct Provider {
     pub id: i32,
     pub name: String,
@@ -621,6 +637,7 @@ impl Provider {
 }
 
 #[sql_db_row]
+#[derive(Serialize, Deserialize)]
 pub struct ProviderDiff {
     pub id: i32,
     pub provider: i32,
@@ -636,7 +653,7 @@ pub struct ProviderDiff {
 }
 
 /// The result of combining an Provider with an ProviderDiff
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DiffedProvider {
     pub provider: Provider,
     pub exists_in_diff: bool,
@@ -695,6 +712,7 @@ impl Deref for DiffedProvider {
 }
 
 #[sql_db_row]
+#[derive(Serialize, Deserialize)]
 pub struct SystemServiceImpl {
     pub id: i32,
     pub system_service_id: i32,
@@ -724,6 +742,7 @@ impl Display for SystemServiceImpl {
 }
 
 #[sql_db_row]
+#[derive(Serialize, Deserialize)]
 pub struct SystemServiceMethod {
     pub id: i32,
     pub system_service_id: i32,
@@ -759,6 +778,7 @@ impl SystemServiceMethod {
 }
 
 #[sql_db_row]
+#[derive(Serialize, Deserialize)]
 pub struct SystemServiceMethodDiff {
     pub id: i32,
     pub method: i32,
@@ -768,7 +788,7 @@ pub struct SystemServiceMethodDiff {
 }
 
 /// The result of combining an SystemServiceMethod with an SystemServiceMethodDiff
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DiffedSystemServiceMethod {
     pub method: SystemServiceMethod,
     pub exists_in_diff: bool,
@@ -813,6 +833,7 @@ impl Deref for DiffedSystemServiceMethod {
 }
 
 #[sql_db_row]
+#[derive(Serialize, Deserialize)]
 pub struct SystemService {
     pub id: i32,
     pub name: String,
@@ -834,6 +855,7 @@ impl SystemService {
 }
 
 #[sql_db_row]
+#[derive(Serialize, Deserialize)]
 pub struct SystemServiceDiff {
     pub id: i32,
     pub system_service: i32,
@@ -842,7 +864,7 @@ pub struct SystemServiceDiff {
 }
 
 /// The result of combining an SystemService with an SystemServiceDiff
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DiffedSystemService {
     pub service: SystemService,
     pub exists_in_diff: bool,
@@ -885,6 +907,7 @@ impl Deref for DiffedSystemService {
 }
 
 #[sql_db_row]
+#[derive(Serialize, Deserialize)]
 pub struct DiffSource {
     pub id: i32,
     pub name: String,
@@ -897,6 +920,7 @@ impl Display for DiffSource {
 }
 
 #[sql_db_row]
+#[derive(Serialize, Deserialize)]
 pub struct FuzzResult {
     pub id: i32,
     pub service_name: String,

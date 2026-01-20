@@ -7,6 +7,7 @@ use diesel::{
     sql_types::Text,
     FromSqlRow,
 };
+use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 
@@ -43,6 +44,25 @@ pub enum Prereq {
     TestComplete,
     #[cfg(test)]
     TestIncomplete,
+}
+
+impl Serialize for Prereq {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for Prereq {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = <&'_ str as Deserialize>::deserialize(deserializer)?;
+        Self::from_str(s).map_err(|e| serde::de::Error::custom(e))
+    }
 }
 
 impl FromStr for Prereq {

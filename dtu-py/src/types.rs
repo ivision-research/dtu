@@ -1,8 +1,4 @@
-use std::{
-    borrow::Cow,
-    hash::{DefaultHasher, Hash, Hasher},
-    process::ExitStatus,
-};
+use std::{borrow::Cow, hash::Hash, process::ExitStatus};
 
 use dtu::{
     command::{err_on_status, CmdOutput},
@@ -10,12 +6,15 @@ use dtu::{
     utils::{ClassName, DevicePath},
     UnknownBool,
 };
-use pyo3::prelude::*;
+use pyo3::{prelude::*, types::PyTuple};
 
-use crate::exception::DtuBaseError;
+use crate::{
+    exception::DtuBaseError,
+    utils::{reduce, unpickle},
+};
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-#[pyclass(module = "dtu", eq, frozen, name = "DevicePath")]
+#[pyclass(module = "dtu", eq, frozen, hash, name = "DevicePath")]
 pub struct PyDevicePath(DevicePath);
 
 impl From<DevicePath> for PyDevicePath {
@@ -41,6 +40,15 @@ impl PyDevicePath {
     #[new]
     fn new(s: String) -> Self {
         Self(DevicePath::new(s))
+    }
+
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<DevicePath, _>(value)
+    }
+
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, DevicePath>(self, py)
     }
 
     fn __repr__(&self) -> String {
@@ -135,7 +143,7 @@ impl From<PyUnknownBool> for UnknownBool {
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-#[pyclass(module = "dtu", eq, frozen, name = "ClassName")]
+#[pyclass(module = "dtu", eq, frozen, hash, name = "ClassName")]
 pub struct PyClassName(ClassName);
 
 impl From<ClassName> for PyClassName {
@@ -158,6 +166,13 @@ impl AsRef<ClassName> for PyClassName {
 
 #[pymethods]
 impl PyClassName {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<ClassName, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, ClassName>(self, py)
+    }
     #[new]
     fn new(name: String) -> Self {
         Self(ClassName::new(name))
@@ -202,12 +217,6 @@ impl PyClassName {
 
     fn get_smali_name(&self) -> Cow<'_, str> {
         self.0.get_smali_name()
-    }
-
-    fn __hash__(&self) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        self.hash(&mut hasher);
-        hasher.finish()
     }
 }
 

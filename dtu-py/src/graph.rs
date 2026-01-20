@@ -11,12 +11,13 @@ use dtu::{
     },
     utils::ClassName,
 };
-use pyo3::prelude::*;
+use pyo3::{prelude::*, types::PyTuple};
 
 use crate::{
     context::PyContext,
     exception::DtuError,
     types::{PyAccessFlag, PyClassName},
+    utils::{reduce, unpickle},
 };
 
 #[pyclass]
@@ -153,7 +154,7 @@ impl GraphDB {
             .collect())
     }
 
-    /// Get all methods defined by the given soruce
+    /// Get all methods defined by the given source
     fn get_methods_for(&self, source: &str) -> Result<Vec<PyMethodSpec>> {
         Ok(self
             .0
@@ -180,8 +181,21 @@ impl DerefMut for GraphDB {
 #[pyclass(module = "dtu", name = "ClassSpec")]
 pub struct PyClassSpec(ClassSpec);
 
+impl AsRef<ClassSpec> for PyClassSpec {
+    fn as_ref(&self) -> &ClassSpec {
+        &self.0
+    }
+}
+
 #[pymethods]
 impl PyClassSpec {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<ClassSpec, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, ClassSpec>(self, py)
+    }
     fn is_public(&self) -> bool {
         self.0.is_public()
     }
@@ -220,8 +234,21 @@ impl From<ClassSpec> for PyClassSpec {
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PyMethodSpec(pub(crate) MethodSpec);
 
+impl AsRef<MethodSpec> for PyMethodSpec {
+    fn as_ref(&self) -> &MethodSpec {
+        &self.0
+    }
+}
+
 #[pymethods]
 impl PyMethodSpec {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<MethodSpec, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, MethodSpec>(self, py)
+    }
     #[getter]
     fn class_(&self) -> PyClassName {
         self.0.class.clone().into()
@@ -268,8 +295,21 @@ impl From<PyMethodSpec> for MethodSpec {
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PyMethodCallPath(pub(crate) MethodCallPath);
 
+impl AsRef<MethodCallPath> for PyMethodCallPath {
+    fn as_ref(&self) -> &MethodCallPath {
+        &self.0
+    }
+}
+
 #[pymethods]
 impl PyMethodCallPath {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<MethodCallPath, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, MethodCallPath>(self, py)
+    }
     #[getter]
     fn path(&self) -> Vec<PyMethodSpec> {
         self.0.path.clone().into_iter().map(Into::into).collect()

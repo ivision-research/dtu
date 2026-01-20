@@ -10,9 +10,7 @@ pub use readers::*;
 pub mod device_path;
 pub use device_path::*;
 
-#[cfg(feature = "setup")]
 pub mod smali;
-#[cfg(feature = "setup")]
 pub use smali::*;
 
 pub mod hex;

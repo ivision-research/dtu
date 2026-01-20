@@ -11,6 +11,7 @@ mod intent_string;
 mod parcel_string;
 mod sql;
 mod types;
+mod utils;
 
 #[pymodule(name = "dtu")]
 mod pydtu {
@@ -26,7 +27,7 @@ mod pydtu {
     };
 
     #[pymodule_export]
-    use super::graph::{GraphDB, PyClassSpec, PyMethodCallPath};
+    use super::graph::{GraphDB, PyClassSpec, PyMethodCallPath, PyMethodSpec};
 
     #[pymodule_export]
     use super::parcel_string::ParcelValue;
@@ -54,4 +55,7 @@ mod pydtu {
 
     #[pymodule_export]
     use super::devicefs::{PyDeviceFS, PyFindLimits, PyFindName, PyFindType};
+
+    #[pymodule_export]
+    use super::utils::split_smali_args;
 }

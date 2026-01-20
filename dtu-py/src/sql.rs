@@ -3,13 +3,13 @@ use std::collections::HashMap;
 use crate::{
     context::PyContext,
     exception::DtuError,
-    types::{PyClassName, PyDevicePath, PyUnknownBool},
+    types::{PyClassName, PyDevicePath, PyUnknownBool}, utils::{reduce, unpickle},
 };
 use dtu::db::sql::{
     device::{get_default_devicedb, models::*},
     DefaultDeviceDatabase, DeviceDatabase,
 };
-use pyo3::prelude::*;
+use pyo3::{prelude::*, types::PyTuple};
 
 struct DBError(dtu::db::sql::Error);
 
@@ -525,6 +525,12 @@ impl DeviceDB {
 #[derive(Clone)]
 pub struct PyDeviceProperty(pub(crate) DeviceProperty);
 
+impl AsRef<DeviceProperty> for PyDeviceProperty {
+    fn as_ref(&self) -> &DeviceProperty {
+        &self.0
+    }
+}
+
 impl From<DeviceProperty> for PyDeviceProperty {
     fn from(value: DeviceProperty) -> Self {
         Self(value)
@@ -533,6 +539,13 @@ impl From<DeviceProperty> for PyDeviceProperty {
 
 #[pymethods]
 impl PyDeviceProperty {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<DeviceProperty, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, DeviceProperty>(self, py)
+    }
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
@@ -554,6 +567,12 @@ impl PyDeviceProperty {
 #[derive(Clone)]
 pub struct PyPermission(pub(crate) Permission);
 
+impl AsRef<Permission> for PyPermission {
+    fn as_ref(&self) -> &Permission {
+        &self.0
+    }
+}
+
 impl From<Permission> for PyPermission {
     fn from(value: Permission) -> Self {
         Self(value)
@@ -562,6 +581,13 @@ impl From<Permission> for PyPermission {
 
 #[pymethods]
 impl PyPermission {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<Permission, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, Permission>(self, py)
+    }
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
@@ -587,6 +613,12 @@ impl PyPermission {
 #[derive(Clone)]
 pub struct PyApkPermission(pub(crate) ApkPermission);
 
+impl AsRef<ApkPermission> for PyApkPermission {
+    fn as_ref(&self) -> &ApkPermission {
+        &self.0
+    }
+}
+
 impl From<ApkPermission> for PyApkPermission {
     fn from(value: ApkPermission) -> Self {
         Self(value)
@@ -595,6 +627,13 @@ impl From<ApkPermission> for PyApkPermission {
 
 #[pymethods]
 impl PyApkPermission {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<ApkPermission, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, ApkPermission>(self, py)
+    }
     #[getter]
     fn id(&self) -> i32 {
         self.0.id
@@ -613,6 +652,12 @@ impl PyApkPermission {
 #[derive(Clone)]
 pub struct PyPermissionDiff(pub(crate) PermissionDiff);
 
+impl AsRef<PermissionDiff> for PyPermissionDiff {
+    fn as_ref(&self) -> &PermissionDiff {
+        &self.0
+    }
+}
+
 impl From<PermissionDiff> for PyPermissionDiff {
     fn from(value: PermissionDiff) -> Self {
         Self(value)
@@ -621,6 +666,13 @@ impl From<PermissionDiff> for PyPermissionDiff {
 
 #[pymethods]
 impl PyPermissionDiff {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<PermissionDiff, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, PermissionDiff>(self, py)
+    }
     #[getter]
     fn id(&self) -> i32 {
         self.0.id
@@ -651,6 +703,12 @@ impl PyPermissionDiff {
 #[derive(Clone)]
 pub struct PyDiffedPermission(pub(crate) DiffedPermission);
 
+impl AsRef<DiffedPermission> for PyDiffedPermission {
+    fn as_ref(&self) -> &DiffedPermission {
+        &self.0
+    }
+}
+
 impl From<DiffedPermission> for PyDiffedPermission {
     fn from(value: DiffedPermission) -> Self {
         Self(value)
@@ -659,6 +717,13 @@ impl From<DiffedPermission> for PyDiffedPermission {
 
 #[pymethods]
 impl PyDiffedPermission {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<DiffedPermission, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, DiffedPermission>(self, py)
+    }
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
@@ -684,6 +749,12 @@ impl PyDiffedPermission {
 #[derive(Clone)]
 pub struct PyProtectedBroadcast(pub(crate) ProtectedBroadcast);
 
+impl AsRef<ProtectedBroadcast> for PyProtectedBroadcast {
+    fn as_ref(&self) -> &ProtectedBroadcast {
+        &self.0
+    }
+}
+
 impl From<ProtectedBroadcast> for PyProtectedBroadcast {
     fn from(value: ProtectedBroadcast) -> Self {
         Self(value)
@@ -692,6 +763,13 @@ impl From<ProtectedBroadcast> for PyProtectedBroadcast {
 
 #[pymethods]
 impl PyProtectedBroadcast {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<ProtectedBroadcast, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, ProtectedBroadcast>(self, py)
+    }
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
@@ -709,6 +787,12 @@ impl PyProtectedBroadcast {
 #[derive(Clone)]
 pub struct PyUnprotectedBroadcast(pub(crate) UnprotectedBroadcast);
 
+impl AsRef<UnprotectedBroadcast> for PyUnprotectedBroadcast {
+    fn as_ref(&self) -> &UnprotectedBroadcast {
+        &self.0
+    }
+}
+
 impl From<UnprotectedBroadcast> for PyUnprotectedBroadcast {
     fn from(value: UnprotectedBroadcast) -> Self {
         Self(value)
@@ -717,6 +801,13 @@ impl From<UnprotectedBroadcast> for PyUnprotectedBroadcast {
 
 #[pymethods]
 impl PyUnprotectedBroadcast {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<UnprotectedBroadcast, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, UnprotectedBroadcast>(self, py)
+    }
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
@@ -738,6 +829,12 @@ impl PyUnprotectedBroadcast {
 #[derive(Clone)]
 pub struct PyApk(pub(crate) Apk);
 
+impl AsRef<Apk> for PyApk {
+    fn as_ref(&self) -> &Apk {
+        &self.0
+    }
+}
+
 impl From<Apk> for PyApk {
     fn from(value: Apk) -> Self {
         Self(value)
@@ -746,6 +843,13 @@ impl From<Apk> for PyApk {
 
 #[pymethods]
 impl PyApk {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<Apk, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, Apk>(self, py)
+    }
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
@@ -779,6 +883,12 @@ impl PyApk {
 #[derive(Clone)]
 pub struct PyApkWithPermissions(pub(crate) ApkWithPermissions);
 
+impl AsRef<ApkWithPermissions> for PyApkWithPermissions {
+    fn as_ref(&self) -> &ApkWithPermissions {
+        &self.0
+    }
+}
+
 impl From<ApkWithPermissions> for PyApkWithPermissions {
     fn from(value: ApkWithPermissions) -> Self {
         Self(value)
@@ -787,6 +897,13 @@ impl From<ApkWithPermissions> for PyApkWithPermissions {
 
 #[pymethods]
 impl PyApkWithPermissions {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<ApkWithPermissions, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, ApkWithPermissions>(self, py)
+    }
     #[getter]
     fn apk(&self) -> PyApk {
         PyApk(self.0.apk.clone())
@@ -801,6 +918,12 @@ impl PyApkWithPermissions {
 #[derive(Clone)]
 pub struct PyDiffedApk(pub(crate) DiffedApk);
 
+impl AsRef<DiffedApk> for PyDiffedApk {
+    fn as_ref(&self) -> &DiffedApk {
+        &self.0
+    }
+}
+
 impl From<DiffedApk> for PyDiffedApk {
     fn from(value: DiffedApk) -> Self {
         Self(value)
@@ -809,6 +932,13 @@ impl From<DiffedApk> for PyDiffedApk {
 
 #[pymethods]
 impl PyDiffedApk {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<DiffedApk, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, DiffedApk>(self, py)
+    }
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
@@ -826,6 +956,12 @@ impl PyDiffedApk {
 #[derive(Clone)]
 pub struct PyApkDiff(pub(crate) ApkDiff);
 
+impl AsRef<ApkDiff> for PyApkDiff {
+    fn as_ref(&self) -> &ApkDiff {
+        &self.0
+    }
+}
+
 impl From<ApkDiff> for PyApkDiff {
     fn from(value: ApkDiff) -> Self {
         Self(value)
@@ -834,6 +970,13 @@ impl From<ApkDiff> for PyApkDiff {
 
 #[pymethods]
 impl PyApkDiff {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<ApkDiff, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, ApkDiff>(self, py)
+    }
     #[getter]
     fn id(&self) -> i32 {
         self.0.id
@@ -856,6 +999,12 @@ impl PyApkDiff {
 #[derive(Clone)]
 pub struct PyReceiver(pub(crate) Receiver);
 
+impl AsRef<Receiver> for PyReceiver {
+    fn as_ref(&self) -> &Receiver {
+        &self.0
+    }
+}
+
 impl From<Receiver> for PyReceiver {
     fn from(value: Receiver) -> Self {
         Self(value)
@@ -864,6 +1013,13 @@ impl From<Receiver> for PyReceiver {
 
 #[pymethods]
 impl PyReceiver {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<Receiver, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, Receiver>(self, py)
+    }
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
@@ -901,6 +1057,12 @@ impl PyReceiver {
 #[derive(Clone)]
 pub struct PyReceiverDiff(pub(crate) ReceiverDiff);
 
+impl AsRef<ReceiverDiff> for PyReceiverDiff {
+    fn as_ref(&self) -> &ReceiverDiff {
+        &self.0
+    }
+}
+
 impl From<ReceiverDiff> for PyReceiverDiff {
     fn from(value: ReceiverDiff) -> Self {
         Self(value)
@@ -909,6 +1071,13 @@ impl From<ReceiverDiff> for PyReceiverDiff {
 
 #[pymethods]
 impl PyReceiverDiff {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<ReceiverDiff, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, ReceiverDiff>(self, py)
+    }
     #[getter]
     fn id(&self) -> i32 {
         self.0.id
@@ -943,6 +1112,12 @@ impl PyReceiverDiff {
 #[derive(Clone)]
 pub struct PyDiffedReceiver(pub(crate) DiffedReceiver);
 
+impl AsRef<DiffedReceiver> for PyDiffedReceiver {
+    fn as_ref(&self) -> &DiffedReceiver {
+        &self.0
+    }
+}
+
 impl From<DiffedReceiver> for PyDiffedReceiver {
     fn from(value: DiffedReceiver) -> Self {
         Self(value)
@@ -951,6 +1126,13 @@ impl From<DiffedReceiver> for PyDiffedReceiver {
 
 #[pymethods]
 impl PyDiffedReceiver {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<DiffedReceiver, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, DiffedReceiver>(self, py)
+    }
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
@@ -980,6 +1162,12 @@ impl PyDiffedReceiver {
 #[derive(Clone)]
 pub struct PyService(pub(crate) Service);
 
+impl AsRef<Service> for PyService {
+    fn as_ref(&self) -> &Service {
+        &self.0
+    }
+}
+
 impl From<Service> for PyService {
     fn from(value: Service) -> Self {
         Self(value)
@@ -988,6 +1176,13 @@ impl From<Service> for PyService {
 
 #[pymethods]
 impl PyService {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<Service, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, Service>(self, py)
+    }
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
@@ -1029,6 +1224,12 @@ impl PyService {
 #[derive(Clone)]
 pub struct PyServiceDiff(pub(crate) ServiceDiff);
 
+impl AsRef<ServiceDiff> for PyServiceDiff {
+    fn as_ref(&self) -> &ServiceDiff {
+        &self.0
+    }
+}
+
 impl From<ServiceDiff> for PyServiceDiff {
     fn from(value: ServiceDiff) -> Self {
         Self(value)
@@ -1037,6 +1238,13 @@ impl From<ServiceDiff> for PyServiceDiff {
 
 #[pymethods]
 impl PyServiceDiff {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<ServiceDiff, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, ServiceDiff>(self, py)
+    }
     #[getter]
     fn id(&self) -> i32 {
         self.0.id
@@ -1071,6 +1279,12 @@ impl PyServiceDiff {
 #[derive(Clone)]
 pub struct PyDiffedService(pub(crate) DiffedService);
 
+impl AsRef<DiffedService> for PyDiffedService {
+    fn as_ref(&self) -> &DiffedService {
+        &self.0
+    }
+}
+
 impl From<DiffedService> for PyDiffedService {
     fn from(value: DiffedService) -> Self {
         Self(value)
@@ -1079,6 +1293,13 @@ impl From<DiffedService> for PyDiffedService {
 
 #[pymethods]
 impl PyDiffedService {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<DiffedService, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, DiffedService>(self, py)
+    }
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
@@ -1108,6 +1329,12 @@ impl PyDiffedService {
 #[derive(Clone)]
 pub struct PyActivity(pub(crate) Activity);
 
+impl AsRef<Activity> for PyActivity {
+    fn as_ref(&self) -> &Activity {
+        &self.0
+    }
+}
+
 impl From<Activity> for PyActivity {
     fn from(value: Activity) -> Self {
         Self(value)
@@ -1116,6 +1343,13 @@ impl From<Activity> for PyActivity {
 
 #[pymethods]
 impl PyActivity {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<Activity, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, Activity>(self, py)
+    }
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
@@ -1153,6 +1387,12 @@ impl PyActivity {
 #[derive(Clone)]
 pub struct PyActivityDiff(pub(crate) ActivityDiff);
 
+impl AsRef<ActivityDiff> for PyActivityDiff {
+    fn as_ref(&self) -> &ActivityDiff {
+        &self.0
+    }
+}
+
 impl From<ActivityDiff> for PyActivityDiff {
     fn from(value: ActivityDiff) -> Self {
         Self(value)
@@ -1161,6 +1401,13 @@ impl From<ActivityDiff> for PyActivityDiff {
 
 #[pymethods]
 impl PyActivityDiff {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<ActivityDiff, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, ActivityDiff>(self, py)
+    }
     #[getter]
     fn id(&self) -> i32 {
         self.0.id
@@ -1195,6 +1442,12 @@ impl PyActivityDiff {
 #[derive(Clone)]
 pub struct PyDiffedActivity(pub(crate) DiffedActivity);
 
+impl AsRef<DiffedActivity> for PyDiffedActivity {
+    fn as_ref(&self) -> &DiffedActivity {
+        &self.0
+    }
+}
+
 impl From<DiffedActivity> for PyDiffedActivity {
     fn from(value: DiffedActivity) -> Self {
         Self(value)
@@ -1203,6 +1456,13 @@ impl From<DiffedActivity> for PyDiffedActivity {
 
 #[pymethods]
 impl PyDiffedActivity {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<DiffedActivity, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, DiffedActivity>(self, py)
+    }
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
@@ -1232,6 +1492,12 @@ impl PyDiffedActivity {
 #[derive(Clone)]
 pub struct PyProvider(pub(crate) Provider);
 
+impl AsRef<Provider> for PyProvider {
+    fn as_ref(&self) -> &Provider {
+        &self.0
+    }
+}
+
 impl From<Provider> for PyProvider {
     fn from(value: Provider) -> Self {
         Self(value)
@@ -1240,6 +1506,13 @@ impl From<Provider> for PyProvider {
 
 #[pymethods]
 impl PyProvider {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<Provider, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, Provider>(self, py)
+    }
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
@@ -1289,6 +1562,12 @@ impl PyProvider {
 #[derive(Clone)]
 pub struct PyProviderDiff(pub(crate) ProviderDiff);
 
+impl AsRef<ProviderDiff> for PyProviderDiff {
+    fn as_ref(&self) -> &ProviderDiff {
+        &self.0
+    }
+}
+
 impl From<ProviderDiff> for PyProviderDiff {
     fn from(value: ProviderDiff) -> Self {
         Self(value)
@@ -1297,6 +1576,13 @@ impl From<ProviderDiff> for PyProviderDiff {
 
 #[pymethods]
 impl PyProviderDiff {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<ProviderDiff, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, ProviderDiff>(self, py)
+    }
     #[getter]
     fn id(&self) -> i32 {
         self.0.id
@@ -1347,6 +1633,12 @@ impl PyProviderDiff {
 #[derive(Clone)]
 pub struct PyDiffedProvider(pub(crate) DiffedProvider);
 
+impl AsRef<DiffedProvider> for PyDiffedProvider {
+    fn as_ref(&self) -> &DiffedProvider {
+        &self.0
+    }
+}
+
 impl From<DiffedProvider> for PyDiffedProvider {
     fn from(value: DiffedProvider) -> Self {
         Self(value)
@@ -1355,6 +1647,13 @@ impl From<DiffedProvider> for PyDiffedProvider {
 
 #[pymethods]
 impl PyDiffedProvider {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<DiffedProvider, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, DiffedProvider>(self, py)
+    }
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
@@ -1400,6 +1699,12 @@ impl PyDiffedProvider {
 #[derive(Clone)]
 pub struct PySystemServiceImpl(pub(crate) SystemServiceImpl);
 
+impl AsRef<SystemServiceImpl> for PySystemServiceImpl {
+    fn as_ref(&self) -> &SystemServiceImpl {
+        &self.0
+    }
+}
+
 impl From<SystemServiceImpl> for PySystemServiceImpl {
     fn from(value: SystemServiceImpl) -> Self {
         Self(value)
@@ -1408,6 +1713,13 @@ impl From<SystemServiceImpl> for PySystemServiceImpl {
 
 #[pymethods]
 impl PySystemServiceImpl {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<SystemServiceImpl, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, SystemServiceImpl>(self, py)
+    }
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
@@ -1433,6 +1745,12 @@ impl PySystemServiceImpl {
 #[derive(Clone)]
 pub struct PySystemServiceMethod(pub(crate) SystemServiceMethod);
 
+impl AsRef<SystemServiceMethod> for PySystemServiceMethod {
+    fn as_ref(&self) -> &SystemServiceMethod {
+        &self.0
+    }
+}
+
 impl From<SystemServiceMethod> for PySystemServiceMethod {
     fn from(value: SystemServiceMethod) -> Self {
         Self(value)
@@ -1441,6 +1759,13 @@ impl From<SystemServiceMethod> for PySystemServiceMethod {
 
 #[pymethods]
 impl PySystemServiceMethod {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<SystemServiceMethod, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, SystemServiceMethod>(self, py)
+    }
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
@@ -1478,6 +1803,12 @@ impl PySystemServiceMethod {
 #[derive(Clone)]
 pub struct PySystemServiceMethodDiff(pub(crate) SystemServiceMethodDiff);
 
+impl AsRef<SystemServiceMethodDiff> for PySystemServiceMethodDiff {
+    fn as_ref(&self) -> &SystemServiceMethodDiff {
+        &self.0
+    }
+}
+
 impl From<SystemServiceMethodDiff> for PySystemServiceMethodDiff {
     fn from(value: SystemServiceMethodDiff) -> Self {
         Self(value)
@@ -1486,6 +1817,13 @@ impl From<SystemServiceMethodDiff> for PySystemServiceMethodDiff {
 
 #[pymethods]
 impl PySystemServiceMethodDiff {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<SystemServiceMethodDiff, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, SystemServiceMethodDiff>(self, py)
+    }
     #[getter]
     fn id(&self) -> i32 {
         self.0.id
@@ -1512,6 +1850,12 @@ impl PySystemServiceMethodDiff {
 #[derive(Clone)]
 pub struct PyDiffedSystemServiceMethod(pub(crate) DiffedSystemServiceMethod);
 
+impl AsRef<DiffedSystemServiceMethod> for PyDiffedSystemServiceMethod {
+    fn as_ref(&self) -> &DiffedSystemServiceMethod {
+        &self.0
+    }
+}
+
 impl From<DiffedSystemServiceMethod> for PyDiffedSystemServiceMethod {
     fn from(value: DiffedSystemServiceMethod) -> Self {
         Self(value)
@@ -1520,6 +1864,13 @@ impl From<DiffedSystemServiceMethod> for PyDiffedSystemServiceMethod {
 
 #[pymethods]
 impl PyDiffedSystemServiceMethod {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<DiffedSystemServiceMethod, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, DiffedSystemServiceMethod>(self, py)
+    }
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
@@ -1541,6 +1892,12 @@ impl PyDiffedSystemServiceMethod {
 #[derive(Clone)]
 pub struct PySystemService(pub(crate) SystemService);
 
+impl AsRef<SystemService> for PySystemService {
+    fn as_ref(&self) -> &SystemService {
+        &self.0
+    }
+}
+
 impl From<SystemService> for PySystemService {
     fn from(value: SystemService) -> Self {
         Self(value)
@@ -1549,6 +1906,13 @@ impl From<SystemService> for PySystemService {
 
 #[pymethods]
 impl PySystemService {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<SystemService, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, SystemService>(self, py)
+    }
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
@@ -1574,6 +1938,12 @@ impl PySystemService {
 #[derive(Clone)]
 pub struct PySystemServiceDiff(pub(crate) SystemServiceDiff);
 
+impl AsRef<SystemServiceDiff> for PySystemServiceDiff {
+    fn as_ref(&self) -> &SystemServiceDiff {
+        &self.0
+    }
+}
+
 impl From<SystemServiceDiff> for PySystemServiceDiff {
     fn from(value: SystemServiceDiff) -> Self {
         Self(value)
@@ -1582,6 +1952,13 @@ impl From<SystemServiceDiff> for PySystemServiceDiff {
 
 #[pymethods]
 impl PySystemServiceDiff {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<SystemServiceDiff, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, SystemServiceDiff>(self, py)
+    }
     #[getter]
     fn id(&self) -> i32 {
         self.0.id
@@ -1604,6 +1981,12 @@ impl PySystemServiceDiff {
 #[derive(Clone)]
 pub struct PyDiffedSystemService(pub(crate) DiffedSystemService);
 
+impl AsRef<DiffedSystemService> for PyDiffedSystemService {
+    fn as_ref(&self) -> &DiffedSystemService {
+        &self.0
+    }
+}
+
 impl From<DiffedSystemService> for PyDiffedSystemService {
     fn from(value: DiffedSystemService) -> Self {
         Self(value)
@@ -1612,6 +1995,13 @@ impl From<DiffedSystemService> for PyDiffedSystemService {
 
 #[pymethods]
 impl PyDiffedSystemService {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<DiffedSystemService, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, DiffedSystemService>(self, py)
+    }
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
@@ -1629,6 +2019,12 @@ impl PyDiffedSystemService {
 #[derive(Clone)]
 pub struct PyDiffSource(pub(crate) DiffSource);
 
+impl AsRef<DiffSource> for PyDiffSource {
+    fn as_ref(&self) -> &DiffSource {
+        &self.0
+    }
+}
+
 impl From<DiffSource> for PyDiffSource {
     fn from(value: DiffSource) -> Self {
         Self(value)
@@ -1637,6 +2033,13 @@ impl From<DiffSource> for PyDiffSource {
 
 #[pymethods]
 impl PyDiffSource {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<DiffSource, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, DiffSource>(self, py)
+    }
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
@@ -1654,6 +2057,12 @@ impl PyDiffSource {
 #[derive(Clone)]
 pub struct PyFuzzResult(pub(crate) FuzzResult);
 
+impl AsRef<FuzzResult> for PyFuzzResult {
+    fn as_ref(&self) -> &FuzzResult {
+        &self.0
+    }
+}
+
 impl From<FuzzResult> for PyFuzzResult {
     fn from(value: FuzzResult) -> Self {
         Self(value)
@@ -1662,6 +2071,13 @@ impl From<FuzzResult> for PyFuzzResult {
 
 #[pymethods]
 impl PyFuzzResult {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<FuzzResult, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, FuzzResult>(self, py)
+    }
     #[getter]
     fn id(&self) -> i32 {
         self.0.id

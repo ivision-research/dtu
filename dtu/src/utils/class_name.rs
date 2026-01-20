@@ -1,4 +1,3 @@
-use serde::de::Visitor;
 use serde::{Deserialize, Serialize, Serializer};
 use std::borrow::Cow;
 use std::convert::Infallible;
@@ -176,7 +175,7 @@ impl Serialize for ClassName {
         S: Serializer,
     {
         let java_name = self.get_java_name();
-        serializer.serialize_str(&java_name)
+        java_name.serialize(serializer)
     }
 }
 
@@ -185,23 +184,7 @@ impl<'de> Deserialize<'de> for ClassName {
     where
         D: serde::Deserializer<'de>,
     {
-        struct V;
-        impl<'de> Visitor<'de> for V {
-            type Value = ClassName;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("Java class name")
-            }
-
-            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(ClassName::new(v.into()))
-            }
-        }
-
-        deserializer.deserialize_str(V)
+        Ok(ClassName::new(String::deserialize(deserializer)?))
     }
 }
 

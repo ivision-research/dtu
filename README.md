@@ -124,11 +124,13 @@ There are a few limitations due to the static nature of this testing, but it has
 `dtu` also [exposes some bindings via Python](./dtu-py). While not all functionality that is available in the Rust crate is available there is a significant amount:
 
 - The `Context` object - `dtu.Context`
-- Read only access to the graph - `dtu.GraphDB`
+- Read only access to the graph - `dtu.GraphDB` (also` dtu.CachingGraphDB` to cache result as pickles)
 - Read only access to the device database - `dtu.DeviceDB`
 - ADB access - `dtu.Adb`
 - Access to the application server - `dtu.AppServer`
 - Device filesystem access - `dtu.DeviceFS`
 - dtu file store access - `dtu.FileStore`
+
+All custom types exported by the module are pickleable.
 
 Documentation is available via `help(dtu)` in the Python REPL.

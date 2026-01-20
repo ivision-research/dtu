@@ -3,7 +3,6 @@ use std::hash::Hash;
 use std::path::{Path, PathBuf};
 
 use crate::{DEVICE_PATH_SEP_CHAR, REPLACED_DEVICE_PATH_SEP_CHAR};
-use serde::de::Visitor;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "sql")]
@@ -49,7 +48,7 @@ impl Serialize for DevicePath {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.raw_path)
+        self.raw_path.serialize(serializer)
     }
 }
 
@@ -58,21 +57,9 @@ impl<'de> Deserialize<'de> for DevicePath {
     where
         D: serde::Deserializer<'de>,
     {
-        struct V;
-        impl<'de> Visitor<'de> for V {
-            type Value = DevicePath;
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a device path")
-            }
-            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(DevicePath::new(v))
-            }
-        }
-
-        deserializer.deserialize_str(V)
+        Ok(DevicePath::new(<&'_ str as Deserialize>::deserialize(
+            deserializer,
+        )?))
     }
 }
 

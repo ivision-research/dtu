@@ -2,6 +2,12 @@ from pathlib import Path
 from typing import ClassVar, Optional, Mapping, Sequence, Callable
 
 
+def split_smali_args(args: str) -> list[str]:
+    """
+    Take a combined smali signature and split it into individual arguments
+    """
+
+
 class Context:
     def __new__(cls) -> Context: ...
 
@@ -284,6 +290,9 @@ class GraphDB:
 
     def get_classes_for(self, src: str) -> list[ClassName]: ...
     def get_methods_for(self, source: str) -> list[MethodSpec]: ...
+
+
+class CachingGraphDB(GraphDB): ...
 
 
 class ClassSpec:

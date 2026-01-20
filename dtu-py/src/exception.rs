@@ -12,6 +12,12 @@ impl From<dtu::Error> for DtuBaseError {
     }
 }
 
+impl DtuError {
+    pub fn mapper<T: ToString>(value: T) -> PyErr {
+        DtuError::new_err(value.to_string())
+    }
+}
+
 impl From<io::Error> for DtuBaseError {
     fn from(value: io::Error) -> Self {
         Self(value.into())
