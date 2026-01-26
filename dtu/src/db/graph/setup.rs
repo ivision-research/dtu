@@ -104,8 +104,8 @@ impl<'a> SetupContext<'a> {
     fn stage_supers(self) -> Result<()> {
         self.do_load(|c, record| -> Result<()> {
             let rp = RecordParser::new(record, "supers.csv");
-            let parent = rp.get(0)?;
-            let child = rp.get(1)?;
+            let child = rp.get(0)?;
+            let parent = rp.get(1)?;
             let sql = "INSERT INTO named_supers(parent, child) VALUES(?, ?)";
             query!(sql_query(sql)
                 .bind::<Text, _>(parent)
@@ -118,8 +118,8 @@ impl<'a> SetupContext<'a> {
     fn stage_impls(self) -> Result<()> {
         self.do_load(|c, record| -> Result<()> {
             let rp = RecordParser::new(record, "impls.csv");
-            let iface = rp.get(0)?;
-            let class = rp.get(1)?;
+            let class = rp.get(0)?;
+            let iface = rp.get(1)?;
             let sql = "INSERT INTO named_interfaces(interface, class) VALUES(?, ?)";
             query!(sql_query(sql).bind::<Text, _>(iface).bind::<Text, _>(class)).execute(c)?;
             Ok(())
