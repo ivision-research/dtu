@@ -1,3 +1,5 @@
+use itertools::join;
+
 use crate::{
     adb::{Adb, ExecAdb, ADB_CONFIG_KEY},
     command::{quote, LineCallback},
@@ -271,7 +273,7 @@ where
             };
 
             let apk_path = &line[start..end];
-            if apk_path.len() == 0 {
+            if apk_path.is_empty() {
                 log::warn!("apk missing path for line: {}", line);
                 return Ok(());
             }
@@ -290,7 +292,31 @@ where
             &mut on_serr,
         )?;
 
-        self.streamed_find_no_stderr("find / -type f -name '*.apk' -print0 2>/dev/null", on_apk)?;
+        // To avoid searching in places like `/proc` or `/dev` we have to first list the content of
+        // `/` and include all of those directories since `-prune` might not exist.
+
+        let mut directories = Vec::new();
+        let ignored = &["/proc", "/dev", "/sys"];
+
+        let mut on_base_dir = |line: &str| {
+            if line.is_empty() {
+                return Ok(());
+            }
+            if ignored.iter().any(|it| *it == line) {
+                return Ok(());
+            }
+            directories.push(String::from(line));
+            Ok(())
+        };
+
+        self.streamed_find_no_stderr("find / -type d -mindepth 1 -maxdepth 1", &mut on_base_dir)?;
+
+        let search_dirs = join(directories.iter().map(|it| quote(it.as_str())), " ");
+
+        self.streamed_find_no_stderr(
+            &format!("find {search_dirs} -type f -name '*.apk' -print0 2>/dev/null"),
+            on_apk,
+        )?;
 
         Ok(())
     }

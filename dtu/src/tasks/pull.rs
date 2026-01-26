@@ -1,5 +1,5 @@
 use std::cmp;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{HashSet, HashMap};
 use std::fs;
 use std::fs::{read_dir, DirEntry};
 use std::hash::{Hash, Hasher};
@@ -887,7 +887,7 @@ where {
     /// Find all APKs via `pm package list -f`. This is likely the most
     /// comprehensive way to search for APKs.
     fn find_apks(&self, tx: Sender<String>) -> Result<()> {
-        let mut seen: BTreeSet<String> = BTreeSet::new();
+        let mut seen: HashSet<String> = HashSet::new();
 
         let mut on_line = |apk_path: &str| -> anyhow::Result<()> {
             if seen.contains(apk_path) {
