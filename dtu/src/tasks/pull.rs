@@ -890,7 +890,7 @@ where {
         let mut seen: HashSet<String> = HashSet::new();
 
         let mut on_line = |apk_path: &str| -> anyhow::Result<()> {
-            if seen.contains(apk_path) {
+            if apk_path.is_empty() || seen.contains(apk_path) {
                 return Ok(());
             }
 
