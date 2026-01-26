@@ -173,7 +173,6 @@ pub struct SetupParams<'a> {
     pub compile_sdk_version: u32,
     pub min_sdk_version: u32,
     pub target_sdk_version: u32,
-    pub kotlin_version: &'a str,
     pub kotlin_jvm_version: u32,
     pub android_plugin_version: &'a str,
 }
@@ -227,13 +226,11 @@ struct ExperimentingActivityKt<'a> {
 #[template(path = "app/setup/root_build.gradle.kts.j2")]
 pub struct RootGradleBuild<'a> {
     pub android_plugin_version: &'a str,
-    pub kotlin_version: &'a str,
 }
 
 impl<'a> From<&'a SetupParams<'a>> for RootGradleBuild<'a> {
     fn from(value: &'a SetupParams<'a>) -> Self {
         Self {
-            kotlin_version: value.kotlin_version,
             android_plugin_version: value.android_plugin_version,
         }
     }
@@ -250,7 +247,6 @@ pub struct AppGradleBuild<'a> {
     pub min_sdk_version: u32,
     pub target_sdk_version: u32,
     pub kotlin_jvm_version: u32,
-    pub kotlin_version: &'a str,
 }
 
 impl<'a> From<&'a SetupParams<'a>> for AppGradleBuild<'a> {
@@ -262,22 +258,20 @@ impl<'a> From<&'a SetupParams<'a>> for AppGradleBuild<'a> {
             compile_sdk_version: value.compile_sdk_version,
             min_sdk_version: value.min_sdk_version,
             target_sdk_version: value.target_sdk_version,
-            kotlin_version: value.kotlin_version,
             kotlin_jvm_version: value.kotlin_jvm_version,
         }
     }
 }
 
 pub const DEFAULT_KOTLIN_JVM_VERSION: u32 = 17;
-pub const DEFAULT_COMPILE_SDK: u32 = 35;
+pub const DEFAULT_COMPILE_SDK: u32 = 36;
 pub const DEFAULT_MIN_SDK: u32 = 27;
 pub const DEFAULT_TARGET_SDK: u32 = DEFAULT_COMPILE_SDK;
-pub const DEFAULT_KOTLIN_VERSION: &'static str = "2.1.10";
-pub const DEFAULT_ANDROID_PLUGIN_VERSION: &'static str = "8.10.0";
+pub const DEFAULT_ANDROID_PLUGIN_VERSION: &'static str = "9.0.0";
 pub const DEFAULT_PKG_NAME: &'static str = "c.arve";
 pub const DEFAULT_APP_ID: &'static str = "c.arve";
 pub const DEFAULT_PROJECT_NAME: &'static str = "DeviceTestApp";
-pub const DEFAULT_BUILD_TOOLS_VERSION: &'static str = "35.0.0";
+pub const DEFAULT_BUILD_TOOLS_VERSION: &'static str = "36.0.0";
 
 impl<'a> Default for AppGradleBuild<'a> {
     fn default() -> Self {
@@ -288,7 +282,6 @@ impl<'a> Default for AppGradleBuild<'a> {
             build_tools_version: DEFAULT_BUILD_TOOLS_VERSION,
             min_sdk_version: DEFAULT_MIN_SDK,
             target_sdk_version: DEFAULT_TARGET_SDK,
-            kotlin_version: DEFAULT_KOTLIN_VERSION,
             kotlin_jvm_version: DEFAULT_KOTLIN_JVM_VERSION,
         }
     }
@@ -305,7 +298,6 @@ impl<'a> Default for SetupParams<'a> {
             build_tools_version: DEFAULT_BUILD_TOOLS_VERSION,
             min_sdk_version: DEFAULT_MIN_SDK,
             target_sdk_version: DEFAULT_TARGET_SDK,
-            kotlin_version: DEFAULT_KOTLIN_VERSION,
             android_plugin_version: DEFAULT_ANDROID_PLUGIN_VERSION,
             kotlin_jvm_version: DEFAULT_KOTLIN_JVM_VERSION,
         }

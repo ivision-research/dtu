@@ -3,7 +3,7 @@
 {
   description = "Android Device Testing Utilities (dtu)";
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/25.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/25.11";
 
     crane.url = "github:ipetkov/crane";
     flake-utils.url = "github:numtide/flake-utils";
@@ -51,7 +51,7 @@
 
         inherit (pkgs) lib;
 
-        jdk = pkgs.jdk24_headless;
+        jdk = pkgs.jdk17_headless;
 
         rustPkg = pkgs.rust-bin.stable.latest.minimal;
 
@@ -155,7 +155,7 @@
           # Needed for Darwin
           postPatch = ''
           substituteInPlace ./libsepol/src/Makefile \
-            --replace "-fno-semantic-interposition" ""
+            --replace-quiet "-fno-semantic-interposition" ""
           '';
           buildPhase = ''
           make -C libsepol/src libsepol.so.2
@@ -192,7 +192,7 @@
 
           postPatch = ''
           substituteInPlace src/Makefile \
-            --replace "-Werror" ""
+            --replace-quiet "-Werror" ""
           '';
 
           buildPhase = ''
@@ -206,7 +206,7 @@
 
         envInputs = with pkgs; [
           android-tools
-          gradle
+          gradle_9
           jadx
           awscli2
           smaliPkg
@@ -214,6 +214,7 @@
           baksmaliPkg
           secilc
           vdexExtractor
+          jdk
         ];
 
       in

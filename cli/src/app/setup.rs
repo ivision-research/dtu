@@ -25,7 +25,7 @@ pub struct Setup {
     force: bool,
 
     /// Set the gradle version
-    #[arg(long, default_value_t = String::from("8.14"))]
+    #[arg(long, default_value_t = String::from("9.3"))]
     gradle_version: String,
 
     /// Set the project name, otherwise generated from the device

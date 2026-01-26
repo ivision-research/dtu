@@ -5,7 +5,7 @@ use clap::{self, Args};
 use dtu::adb::Adb;
 use dtu::prereqs::Prereq;
 use dtu::utils::{path_must_str, OS_PATH_SEP};
-use dtu::{run_cmd, Context, DefaultContext};
+use dtu::{Context, DefaultContext};
 
 use crate::parsers::AppActivityValueParser;
 use crate::utils::get_adb;
@@ -224,7 +224,6 @@ impl App {
 
     fn install(&self, ctx: &dyn Context, app_id: &str, app_pkg: &str) -> anyhow::Result<()> {
         let adb = get_adb(ctx, true)?;
-        self.build(ctx)?;
         let app_dir = ctx.get_test_app_dir()?;
         let output = app_dir.join(Path::new(
             "app/build/outputs/apk/generated/app-generated.apk",
