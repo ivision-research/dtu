@@ -2299,7 +2299,7 @@ dependencies = [
 [[package]]
 name = "smalisa"
 version = "0.2.0"
-source = "git+https://github.com/ivision-research/smalisa.git?rev=18c99a477a8f43b1cc2239db937c57e64f771ebe#18c99a477a8f43b1cc2239db937c57e64f771ebe"
+source = "git+https://github.com/ivision-research/smalisa.git?rev=3fa60ea2c21af15c0cecfacca334858900ec9c77#3fa60ea2c21af15c0cecfacca334858900ec9c77"
 dependencies = [
  "bitflags 2.9.0",
  "smallvec",

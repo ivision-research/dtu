@@ -14,7 +14,7 @@ tempfile = "3.19"
 zip = { version = "4.3", default-features = false, features = ["deflate", "deflate64"] }
 rayon = "1.10"
 blanket = "0.2"
-smalisa = { git = "https://github.com/ivision-research/smalisa.git", rev = "18c99a477a8f43b1cc2239db937c57e64f771ebe", default-features = false, optional = true }
+smalisa = { git = "https://github.com/ivision-research/smalisa.git", rev = "3fa60ea2c21af15c0cecfacca334858900ec9c77", default-features = false, optional = true }
 csv = "1.3"
 sha2 = { workspace = true }
 walkdir = "2"
