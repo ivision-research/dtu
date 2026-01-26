@@ -1,3 +1,4 @@
+use std::ffi::CString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -218,7 +219,14 @@ impl App {
         let app_dir = ctx.get_test_app_dir()?;
         let app_dir_string = app_dir.to_str().expect("valid paths");
         let gradlew = self.get_gradlew(&app_dir)?;
-        run_cmd(gradlew, &["-p", app_dir_string, "assembleGenerated"])?.err_on_status()?;
+        let gradlew_cstring = CString::new(gradlew.as_str())?;
+        let args = &[
+            &gradlew_cstring,
+            &CString::new("-p")?,
+            &CString::new(app_dir_string)?,
+            &CString::new("assembleGenerated")?,
+        ];
+        nix::unistd::execv(&gradlew_cstring, args)?;
         Ok(())
     }
 

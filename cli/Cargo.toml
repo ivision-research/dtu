@@ -16,6 +16,7 @@ unicode-width = "0.2"
 promptly = "0.3"
 rustyline = "15.0"
 signal-hook = "0.3"
+nix = { version = "0.31", features = ["process"] }
 
 flexi_logger = { workspace = true }
 clap = { workspace = true }

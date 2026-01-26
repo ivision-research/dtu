@@ -134,9 +134,9 @@ pub fn exec_open_file(ctx: &dyn Context, file_name: &str) -> anyhow::Result<()> 
     let cmd_cstr = CString::new(cmd.as_str())?;
     let file_cstr = CString::new(file_name)?;
 
-    let args = &[cmd_cstr.as_ptr(), file_cstr.as_ptr(), std::ptr::null()];
+    let args = &[&cmd_cstr, &file_cstr];
 
-    unsafe { libc::execv(cmd_cstr.as_ptr(), args.as_ptr()) };
+    nix::unistd::execv(&cmd_cstr, args)?;
 
     panic!("execve failed")
 }
