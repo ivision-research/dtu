@@ -57,7 +57,7 @@ impl<'de> Deserialize<'de> for DevicePath {
     where
         D: serde::Deserializer<'de>,
     {
-        Ok(DevicePath::new(<&'_ str as Deserialize>::deserialize(
+        Ok(DevicePath::new(<String as Deserialize>::deserialize(
             deserializer,
         )?))
     }
