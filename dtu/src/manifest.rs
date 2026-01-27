@@ -779,6 +779,17 @@ where
 
 #[cfg_attr(test, derive(Debug, PartialEq))]
 #[derive(Deserialize)]
+pub struct ProtectedBroadcast {
+    #[serde(rename = "@name")]
+    name: String,
+}
+
+impl ProtectedBroadcast {
+    cow_getter!(name);
+}
+
+#[cfg_attr(test, derive(Debug, PartialEq))]
+#[derive(Deserialize)]
 pub struct Permission {
     #[serde(rename = "@name")]
     name: String,
@@ -822,6 +833,8 @@ pub struct Manifest {
     pub uses_permissions: Vec<UsesPermission>,
     #[serde(rename = "permission", default = "Vec::new")]
     pub permissions: Vec<Permission>,
+    #[serde(rename = "protected-broadcast", default = "Vec::new")]
+    pub protected_broadcasts: Vec<ProtectedBroadcast>,
     pub application: Application,
 }
 
@@ -853,6 +866,10 @@ impl Manifest {
             None => Some(false),
             Some(v) => resolver.resolve_bool(v),
         }
+    }
+
+    pub fn get_protected_broadcasts(&self) -> &[ProtectedBroadcast] {
+        self.protected_broadcasts.as_slice()
     }
 
     pub fn get_permissions(&self) -> &[Permission] {

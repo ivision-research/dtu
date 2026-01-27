@@ -15,6 +15,9 @@ use smali_file::SmaliFile;
 mod permission;
 use permission::Permission;
 
+mod protected_broadcast;
+use protected_broadcast::ProtectedBroadcast;
+
 mod utils;
 
 mod callers;
@@ -33,6 +36,10 @@ enum Command {
     /// Find service related smali files
     #[command()]
     ServiceFile(ServiceFile),
+
+    /// Find a protected broadcast
+    #[command()]
+    ProtectedBroadcast(ProtectedBroadcast),
 
     /// Find a permission
     #[command()]
@@ -71,6 +78,7 @@ impl Find {
         match self.command {
             Command::ServiceFile(c) => c.run(&ctx),
             Command::Permission(c) => c.run(&ctx),
+            Command::ProtectedBroadcast(c) => c.run(&ctx),
             Command::SmaliFile(c) => c.run(&ctx),
 
             Command::Callers(c) => {

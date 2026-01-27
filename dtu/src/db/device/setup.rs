@@ -256,12 +256,30 @@ impl<'a> AddManifestTask<'a> {
             self.manifest.get_uses_permissions(),
         )?;
 
+        log::trace!("Adding protected broadcasts");
+        self.add_protected_broadcasts(self.manifest.get_protected_broadcasts())?;
+
         Ok(())
     }
 
     #[inline]
     fn cancel_check(&self) -> SetupResult<()> {
         self.cancel.check(SetupError::Cancelled)
+    }
+
+    fn add_protected_broadcasts(&self, pbs: &[manifest::ProtectedBroadcast]) -> SetupResult<()> {
+        for pb in pbs {
+            self.add_protected_broadcast(&pb)?;
+        }
+        Ok(())
+    }
+
+    fn add_protected_broadcast(&self, pb: &manifest::ProtectedBroadcast) -> SetupResult<()> {
+        let ins = InsertProtectedBroadcast {
+            name: &pb.name(self.resolver),
+        };
+        self.db.add_protected_broadcast(&ins)?;
+        Ok(())
     }
 
     fn add_manifest_receivers(&self, rcvers: &[manifest::Receiver]) -> SetupResult<()> {

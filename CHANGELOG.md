@@ -14,6 +14,7 @@ This new version contains significant breaking changes to the graph database and
 - **BREAKING** Changed the way prerequisistes are stored in the meta database
 - **BREAKING** Made `FileStore` require `Send` and `Sync`
 - **BREAKING** `meta set-progress` now sets to true and `clear-progress` added to set to false
+- Exposed the `SqliteConnection` on the `DeviceSqliteDatabase`
 - Added some methods to `DeviceDatabase`
 - Create Python bindings for the databases and the application server
 - Exposed some functionality that was not previous `pub` or was just `pub (crate)`

@@ -52,6 +52,17 @@ pub trait Database: Sync + Send {
     fn get_all_system_service_impls(&self) -> Result<HashMap<String, Vec<SystemServiceImpl>>>;
 
     def_standard_crud!(
+        add_protected_broadcast,
+        add_protected_broadcasts,
+        InsertProtectedBroadcast,
+        get_protected_broadcasts,
+        get_protected_broadcast_by_id,
+        update_protected_broadcast,
+        ProtectedBroadcast,
+        delete_protected_broadcast_by_id
+    );
+
+    def_standard_crud!(
         add_permission,
         add_permissions,
         InsertPermission,
@@ -315,12 +326,22 @@ impl DeviceSqliteDatabase {
     }
 
     #[inline]
-    fn with_connection<F, R>(&self, f: F) -> R
+    pub fn with_connection<F, R>(&self, f: F) -> R
     where
         R: Send,
         F: FnOnce(&mut SqliteConnection) -> R + Send,
     {
         self.db_thread.with_connection(f)
+    }
+
+    #[inline]
+    pub fn with_transaction<F, T, E>(&self, f: F) -> std::result::Result<T, E>
+    where
+        T: Send,
+        E: From<diesel::result::Error> + Send,
+        F: FnOnce(&mut SqliteConnection) -> std::result::Result<T, E> + Send,
+    {
+        self.db_thread.transaction(f)
     }
 }
 
@@ -434,6 +455,18 @@ impl Database for DeviceSqliteDatabase {
         SystemService,
         system_services,
         name.like
+    );
+
+    impl_standard_crud!(
+        protected_broadcasts,
+        add_protected_broadcast,
+        add_protected_broadcasts,
+        InsertProtectedBroadcast,
+        get_protected_broadcasts,
+        get_protected_broadcast_by_id,
+        update_protected_broadcast,
+        ProtectedBroadcast,
+        delete_protected_broadcast_by_id
     );
 
     impl_standard_crud!(
