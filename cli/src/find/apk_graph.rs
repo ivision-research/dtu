@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use crate::find::utils::get_method_search;
 use crate::parsers::DevicePathValueParser;
 use crate::printer::{color, Printer};
-use crate::utils::project_cacheable;
+use crate::utils::{ostr, project_cacheable};
 use dtu::db::graph::models::{MethodCallPath, MethodSpec};
 use dtu::db::graph::GraphDatabase;
 use dtu::db::{ApkIPC, DeviceDatabase, Enablable, Exportable};
@@ -22,10 +22,10 @@ pub struct ApkIPCCallsGeneric {
     no_cache: bool,
     json: bool,
     depth: usize,
-    cache: Cow<'static, str>,
+    cache: String,
 
-    method: Cow<'static, str>,
-    signature: Cow<'static, str>,
+    method: Option<String>,
+    signature: Option<String>,
     class: Option<ClassName>,
 }
 
@@ -47,10 +47,12 @@ impl ApkIPCCallsGeneric {
         providers: &[Provider],
         mut results: &mut ApkCallsResult,
     ) -> anyhow::Result<()> {
-        let class = self.class.as_ref();
-        let name = self.method.as_ref();
-        let signature = self.signature.as_ref();
-        let search = get_method_search(Some(name), class, Some(signature), source)?;
+        let search = get_method_search(
+            ostr(&self.method),
+            self.class.as_ref(),
+            ostr(&self.signature),
+            source,
+        )?;
 
         let mut lookup = HashMap::new();
 
@@ -186,8 +188,12 @@ impl From<FindIPCCalls> for ApkIPCCallsGeneric {
     fn from(value: FindIPCCalls) -> Self {
         let mut hasher = Sha256::new();
 
-        hasher.update(value.name.as_bytes());
-        hasher.update(value.signature.as_bytes());
+        if let Some(v) = &value.name {
+            hasher.update(v.as_bytes());
+        }
+        if let Some(v) = &value.signature {
+            hasher.update(v.as_bytes());
+        }
         if let Some(v) = &value.class {
             hasher.update(v.as_str().as_bytes());
         }
@@ -201,10 +207,10 @@ impl From<FindIPCCalls> for ApkIPCCallsGeneric {
             no_cache: value.no_cache,
             json: value.json,
             depth: value.depth,
-            cache: Cow::Owned(cache),
-            method: Cow::Owned(String::from(value.name)),
+            cache,
+            method: value.name,
             class: value.class,
-            signature: Cow::Owned(String::from(value.signature)),
+            signature: value.signature,
         }
     }
 }
@@ -216,10 +222,10 @@ impl From<FindParseUri> for ApkIPCCallsGeneric {
             no_cache: value.no_cache,
             json: value.json,
             depth: 1,
-            cache: Cow::Borrowed("ipc-ParseUri"),
-            method: Cow::Borrowed("parseUri"),
+            cache: "ipc-ParseUri".into(),
+            method: Some(String::from("parseUri")),
             class: Some(ClassName::new("Landroid/content/Intent;".into())),
-            signature: Cow::Borrowed("Ljava/lang/String;I"),
+            signature: Some(String::from("Ljava/lang/String;I")),
         }
     }
 }
@@ -379,11 +385,11 @@ pub struct FindIPCCalls {
 
     /// Method name
     #[arg(short, long)]
-    name: String,
+    name: Option<String>,
 
     /// Method signature
     #[arg(short, long)]
-    signature: String,
+    signature: Option<String>,
 
     /// Method class
     #[arg(short, long)]

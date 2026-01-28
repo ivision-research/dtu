@@ -422,3 +422,8 @@ where
 }
 
 pub type EmptyCancelCheckThread = CancelCheckThread<()>;
+
+/// Helper to convert things to [Option<&str>]s
+pub fn ostr<T: AsRef<str>>(s: &Option<T>) -> Option<&str> {
+    s.as_ref().map(|it| it.as_ref())
+}

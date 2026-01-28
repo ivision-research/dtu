@@ -2,6 +2,7 @@ use clap::{self, Args};
 
 use crate::find::utils::get_method_search;
 use crate::printer::{color, Printer};
+use crate::utils::ostr;
 use dtu::db::graph::GraphDatabase;
 use dtu::utils::ClassName;
 
@@ -17,7 +18,7 @@ pub struct FindCallers {
 
     /// Method name
     #[arg(short, long)]
-    name: String,
+    name: Option<String>,
 
     /// Method signature
     #[arg(short, long)]
@@ -36,21 +37,25 @@ impl FindCallers {
     pub fn run(&self, db: &dyn GraphDatabase) -> anyhow::Result<()> {
         let class_ref = self.class.as_ref();
         let search = get_method_search(
-            Some(self.name.as_str()),
+            ostr(&self.name),
             class_ref,
-            self.signature.as_ref().map(String::as_str),
-            self.method_source.as_ref().map(String::as_str),
+            ostr(&self.signature),
+            ostr(&self.method_source),
         )?;
-        let mpaths = db.find_callers(
-            &search,
-            self.call_source.as_ref().map(String::as_str),
-            self.depth,
-        )?;
+        let mpaths = db.find_callers(&search, ostr(&self.call_source), self.depth)?;
 
         let printer = Printer::new();
 
+        // If the name isn't provided we have to show it :)
+        let take_offset = if self.name.is_some() {
+            1
+        } else {
+            0
+        };
+
         for p in mpaths {
-            let mut iter = p.path.iter().take(p.path.len() - 1);
+
+            let mut iter = p.path.iter().take(p.path.len() - take_offset);
             let first = match iter.next() {
                 Some(v) => v,
                 None => continue,
