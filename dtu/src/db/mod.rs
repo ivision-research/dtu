@@ -11,7 +11,6 @@ pub mod meta;
 #[cfg(feature = "graph")]
 pub mod graph;
 
-pub use device::db::{Database as DeviceDatabase, DeviceSqliteDatabase};
-pub use device::DefaultDeviceDatabase;
+pub use device::db::DeviceDatabase;
 pub use meta::db::{Database as MetaDatabase, MetaSqliteDatabase};
 pub use meta::DefaultMetaDatabase;

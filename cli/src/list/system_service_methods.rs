@@ -4,7 +4,7 @@ use std::io::stdout;
 
 use clap::Args;
 use dtu::db::device::models::{DiffedSystemServiceMethod, SystemService, SystemServiceMethod};
-use dtu::db::device::{get_default_devicedb, EMULATOR_DIFF_SOURCE};
+use dtu::db::device::EMULATOR_DIFF_SOURCE;
 use dtu::db::meta::get_default_metadb;
 use dtu::db::{DeviceDatabase, MetaDatabase};
 use dtu::prereqs::Prereq;
@@ -89,7 +89,7 @@ impl SystemServiceMethods {
             meta.ensure_prereq(Prereq::EmulatorDiff)?;
         }
 
-        let db = get_default_devicedb(&ctx)?;
+        let db = DeviceDatabase::new(&ctx)?;
 
         let methods = self.get_map(&db)?;
 
@@ -118,7 +118,7 @@ impl SystemServiceMethods {
         Ok(())
     }
 
-    fn get_map(&self, db: &dyn DeviceDatabase) -> anyhow::Result<Methods> {
+    fn get_map(&self, db: &DeviceDatabase) -> anyhow::Result<Methods> {
         match &self.service {
             Some(s) => self.get_methods_for_service(db, s),
             None => self.get_all_methods(db),
@@ -127,7 +127,7 @@ impl SystemServiceMethods {
 
     fn get_methods_for_service(
         &self,
-        db: &dyn DeviceDatabase,
+        db: &DeviceDatabase,
         service: &SystemService,
     ) -> anyhow::Result<Methods> {
         let all_methods = if self.only_non_aosp {
@@ -155,7 +155,7 @@ impl SystemServiceMethods {
         }])
     }
 
-    fn get_all_methods(&self, db: &dyn DeviceDatabase) -> anyhow::Result<Methods> {
+    fn get_all_methods(&self, db: &DeviceDatabase) -> anyhow::Result<Methods> {
         let mut map: HashMap<String, Vec<MethodDef>> = HashMap::new();
 
         if self.only_non_aosp {
@@ -178,7 +178,7 @@ impl SystemServiceMethods {
     }
 
     fn collect_methods<T, It, GetServiceId>(
-        db: &dyn DeviceDatabase,
+        db: &DeviceDatabase,
         map: &mut HashMap<String, Vec<MethodDef>>,
         methods: It,
         get_service_id: GetServiceId,

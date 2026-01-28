@@ -3,7 +3,7 @@ use crate::parsers::DiffSourceValueParser;
 use clap::{self, Args, Subcommand};
 use crossterm::style::{Attribute, ContentStyle, Stylize};
 use dtu::db::device::models::{DiffSource, SystemService};
-use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase};
+use dtu::db::{DeviceDatabase, MetaDatabase};
 use dtu::Context;
 
 use crate::parsers::SystemServiceValueParser;
@@ -27,7 +27,7 @@ enum Command {
 
 impl SystemServices {
     pub fn run(&self, ctx: &dyn Context, meta: &dyn MetaDatabase) -> anyhow::Result<()> {
-        let db = DeviceSqliteDatabase::new(ctx)?;
+        let db = DeviceDatabase::new(ctx)?;
         let ran_cmd = self.run_command(&ctx, meta, &db)?;
         if ran_cmd {
             return Ok(());
@@ -47,7 +47,7 @@ impl SystemServices {
         &self,
         ctx: &dyn Context,
         meta: &dyn MetaDatabase,
-        db: &dyn DeviceDatabase,
+        db: &DeviceDatabase,
     ) -> anyhow::Result<bool> {
         let cmd = match self.command.as_ref() {
             None => return Ok(false),
@@ -116,7 +116,7 @@ impl Methods {
         &self,
         ctx: &dyn Context,
         meta: &dyn MetaDatabase,
-        db: &dyn DeviceDatabase,
+        db: &DeviceDatabase,
     ) -> anyhow::Result<()> {
         let diff_source = get_diff_source(ctx, meta, &self.diff_source)?.id;
         let printer = Printer::new();

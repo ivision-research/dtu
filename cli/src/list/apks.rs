@@ -2,7 +2,7 @@ use clap::Args;
 
 use dtu::db::device::models::Apk;
 use dtu::db::device::EMULATOR_DIFF_SOURCE;
-use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
+use dtu::db::{DeviceDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::{Context, DefaultContext};
 
@@ -35,7 +35,7 @@ impl Apks {
         let ctx = DefaultContext::new();
         let meta = MetaSqliteDatabase::new(&ctx)?;
         meta.ensure_prereq(Prereq::SQLDatabaseSetup)?;
-        let db = DeviceSqliteDatabase::new(&ctx)?;
+        let db = DeviceDatabase::new(&ctx)?;
         if self.only_non_aosp {
             meta.ensure_prereq(Prereq::EmulatorDiff)?;
             self.show_non_aosp(&ctx, &db)
@@ -44,7 +44,7 @@ impl Apks {
         }
     }
 
-    fn show_non_aosp(&self, _ctx: &dyn Context, db: &dyn DeviceDatabase) -> anyhow::Result<()> {
+    fn show_non_aosp(&self, _ctx: &dyn Context, db: &DeviceDatabase) -> anyhow::Result<()> {
         let diff_source = db.get_diff_source_by_name(EMULATOR_DIFF_SOURCE)?;
         let apks = db.get_apk_diffs_by_diff_id(diff_source.id)?;
         let mut filt = apks
@@ -55,7 +55,7 @@ impl Apks {
         Ok(())
     }
 
-    fn show_all(&self, _ctx: &dyn Context, db: &dyn DeviceDatabase) -> anyhow::Result<()> {
+    fn show_all(&self, _ctx: &dyn Context, db: &DeviceDatabase) -> anyhow::Result<()> {
         let apks = db.get_apks()?;
         let mut it = apks.iter();
         self.show_apks(&mut it);

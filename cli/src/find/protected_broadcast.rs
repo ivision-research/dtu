@@ -1,6 +1,6 @@
 use clap::{self, Args};
-use dtu::db::device::get_default_devicedb;
 use dtu::db::device::schema::protected_broadcasts;
+use dtu::db::DeviceDatabase;
 use dtu::diesel::prelude::*;
 use dtu::prereqs::Prereq;
 use dtu::utils::ensure_prereq;
@@ -19,7 +19,7 @@ impl ProtectedBroadcast {
 
         let like = format!("%{}%", self.containing);
 
-        let db = get_default_devicedb(ctx)?;
+        let db = DeviceDatabase::new(ctx)?;
         let perms = db.with_connection(|c| {
             protected_broadcasts::table
                 .filter(protected_broadcasts::name.like(like))

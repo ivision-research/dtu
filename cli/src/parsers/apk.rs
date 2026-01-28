@@ -2,7 +2,7 @@ use crate::parsers::simple_error;
 use crate::utils::{find_fully_qualified_apk, prompt_choice};
 use clap::builder::{NonEmptyStringValueParser, TypedValueParser};
 use dtu::db::device::models::Apk;
-use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
+use dtu::db::{DeviceDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::utils::DevicePath;
 use dtu::DefaultContext;
@@ -61,7 +61,7 @@ impl TypedValueParser for ApkValueParser {
         let meta = MetaSqliteDatabase::new(&ctx).map_err(simple_error)?;
         meta.ensure_prereq(Prereq::SQLDatabaseSetup)
             .map_err(simple_error)?;
-        let db = DeviceSqliteDatabase::new(&ctx).map_err(simple_error)?;
+        let db = DeviceDatabase::new(&ctx).map_err(simple_error)?;
         Ok(db.get_apk_by_apk_name(&val).map_err(simple_error)?)
     }
 }

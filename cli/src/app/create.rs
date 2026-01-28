@@ -15,7 +15,7 @@ use dtu::db;
 use dtu::db::device::models::{SystemService, SystemServiceMethod};
 use dtu::db::meta::db::APP_PKG_KEY;
 use dtu::db::meta::models::InsertAppActivity;
-use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase};
+use dtu::db::{DeviceDatabase, MetaDatabase};
 use dtu::utils::ClassName;
 use dtu::Context;
 
@@ -165,7 +165,7 @@ impl ProviderFile {
         let class_name = format!("Test{}", ensure_valid_name(&self.name));
         ensure_class_available(meta, &class_name)?;
 
-        let db = DeviceSqliteDatabase::new(ctx)?;
+        let db = DeviceDatabase::new(ctx)?;
         match db.get_provider_containing_authority(&self.authority) {
             Err(db::Error::NotFound) => bail!("invalid authority {}", self.authority),
             Err(e) => return Err(e.into()),
@@ -229,7 +229,7 @@ pub struct SystemServiceFile {
 
 impl SystemServiceFile {
     pub fn run(&self, ctx: &dyn Context, meta: &impl MetaDatabase) -> anyhow::Result<()> {
-        let db = DeviceSqliteDatabase::new(ctx)?;
+        let db = DeviceDatabase::new(ctx)?;
 
         let service = match db.get_system_service_by_name(&self.service) {
             Ok(v) => Some(v),
@@ -250,7 +250,7 @@ impl SystemServiceFile {
 
         let class_name = self.get_class_name();
         ensure_class_available(meta, class_name.as_ref())?;
-        let db = DeviceSqliteDatabase::new(ctx)?;
+        let db = DeviceDatabase::new(ctx)?;
 
         let iface = match &self.interface {
             Some(v) => v,
@@ -300,7 +300,7 @@ impl SystemServiceFile {
 
     fn get_transaction_id(
         &self,
-        db: &DeviceSqliteDatabase,
+        db: &DeviceDatabase,
         service: &Option<SystemService>,
     ) -> anyhow::Result<i32> {
         if let Some(id) = self.txn_id {

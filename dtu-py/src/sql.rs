@@ -3,12 +3,10 @@ use std::collections::HashMap;
 use crate::{
     context::PyContext,
     exception::DtuError,
-    types::{PyClassName, PyDevicePath, PyUnknownBool}, utils::{reduce, unpickle},
+    types::{PyClassName, PyDevicePath, PyUnknownBool},
+    utils::{reduce, unpickle},
 };
-use dtu::db::{
-    device::{get_default_devicedb, models::*},
-    DefaultDeviceDatabase, DeviceDatabase,
-};
+use dtu::db::{device::models::*, DeviceDatabase};
 use pyo3::{prelude::*, types::PyTuple};
 
 struct DBError(dtu::db::Error);
@@ -28,7 +26,7 @@ impl From<DBError> for PyErr {
 type Result<T> = std::result::Result<T, DBError>;
 
 #[pyclass(module = "dtu")]
-pub struct DeviceDB(DefaultDeviceDatabase);
+pub struct DeviceDB(DeviceDatabase);
 
 /// Provide read only access to the Device database
 #[pymethods]
@@ -37,8 +35,8 @@ impl DeviceDB {
     #[pyo3(signature = (ctx = None))]
     fn new(ctx: Option<&PyContext>) -> Result<Self> {
         Ok(Self(match ctx {
-            Some(v) => get_default_devicedb(v),
-            None => get_default_devicedb(&dtu::DefaultContext::new()),
+            Some(v) => DeviceDatabase::new(v),
+            None => DeviceDatabase::new(&dtu::DefaultContext::new()),
         }?))
     }
     fn get_all_system_service_impls(&self) -> Result<HashMap<String, Vec<PySystemServiceImpl>>> {

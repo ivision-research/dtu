@@ -12,7 +12,7 @@ use dtu::db::device::models::{
     Apk, DiffSource, DiffedActivity, DiffedApk, DiffedProvider, DiffedReceiver, DiffedService,
     DiffedSystemService, DiffedSystemServiceMethod, SystemService,
 };
-use dtu::db::{ApkIPC, DeviceDatabase, DeviceSqliteDatabase, Idable};
+use dtu::db::{ApkIPC, DeviceDatabase, Idable};
 use dtu::Context;
 
 use crate::diff::ui::customizer::{
@@ -28,7 +28,7 @@ use super::state::State;
 pub struct Applet<'a> {
     active_tab: Box<dyn Tab>,
     ctx: &'a dyn Context,
-    db: DeviceSqliteDatabase,
+    db: DeviceDatabase,
     active_section: ActiveSection,
     diff_source: DiffSource,
     state: State,
@@ -42,7 +42,7 @@ pub struct Applet<'a> {
 
 impl<'a> Applet<'a> {
     pub fn new(ctx: &'a dyn Context, diff_source: DiffSource) -> anyhow::Result<Self> {
-        let db = DeviceSqliteDatabase::new(ctx)?;
+        let db = DeviceDatabase::new(ctx)?;
         let state = State::load(ctx)?;
         let active_tab =
             system_services_tab(&db, diff_source.id, &state.hidden_system_services, true)?;
@@ -588,7 +588,7 @@ pub trait FilterBox<E> {
 }
 
 fn system_services_tab(
-    db: &dyn DeviceDatabase,
+    db: &DeviceDatabase,
     diff_id: i32,
     hidden_list: &HashSet<i32>,
     show_hidden: bool,

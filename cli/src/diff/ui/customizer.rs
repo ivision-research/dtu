@@ -7,7 +7,7 @@ use ratatui::style::Style;
 use ratatui::widgets::{Paragraph, Widget};
 
 use dtu::db::device::models::{DiffedProvider, DiffedSystemServiceMethod};
-use dtu::db::{ApkIPC, ApkIPCKind, DeviceDatabase, DeviceSqliteDatabase};
+use dtu::db::{ApkIPC, ApkIPCKind, DeviceDatabase};
 
 use crate::diff::{smali_sig_contains_class, smali_sig_looks_like_binder};
 use crate::ui::widgets::{
@@ -49,12 +49,12 @@ pub trait Customizer<E> {
 }
 
 pub struct SystemServiceMethodCustomizer {
-    db: DeviceSqliteDatabase,
+    db: DeviceDatabase,
     hidden_services: HashSet<i32>,
 }
 
 impl SystemServiceMethodCustomizer {
-    pub fn new(db: DeviceSqliteDatabase, hidden_services: HashSet<i32>) -> Self {
+    pub fn new(db: DeviceDatabase, hidden_services: HashSet<i32>) -> Self {
         Self {
             db,
             hidden_services,
@@ -88,7 +88,7 @@ impl Customizer<DiffedSystemServiceMethod> for SystemServiceMethodCustomizer {
         ctx: &dyn Context,
         item: &DiffedSystemServiceMethod,
     ) -> anyhow::Result<()> {
-        let db = DeviceSqliteDatabase::new(ctx)?;
+        let db = DeviceDatabase::new(ctx)?;
         let service = db.get_system_service_by_id(item.method.system_service_id)?;
 
         let cmd = format!(
@@ -150,7 +150,7 @@ impl Customizer<DiffedSystemServiceMethod> for SystemServiceMethodCustomizer {
 }
 
 pub struct ApkIPCCustomizer<U> {
-    db: DeviceSqliteDatabase,
+    db: DeviceDatabase,
     hidden_apks: HashSet<i32>,
 
     marker: PhantomData<U>,
@@ -163,7 +163,7 @@ where
     T: ApkIPC + Display,
     U: Deref<Target = T>,
 {
-    pub fn new(db: DeviceSqliteDatabase, hidden_apks: HashSet<i32>) -> Self {
+    pub fn new(db: DeviceDatabase, hidden_apks: HashSet<i32>) -> Self {
         Self {
             db,
             hidden_apks,
@@ -178,7 +178,7 @@ fn open_for_apk_and_class(
     class_name: &ClassName,
     search: &str,
 ) -> anyhow::Result<()> {
-    let db = DeviceSqliteDatabase::new(ctx)?;
+    let db = DeviceDatabase::new(ctx)?;
     let apk = db.get_apk_by_id(apk_id)?;
 
     let apk_paths = find_fully_qualified_apk(ctx, &apk.name)?;
@@ -290,12 +290,12 @@ where
 }
 
 pub struct ProviderCustomizer {
-    db: DeviceSqliteDatabase,
+    db: DeviceDatabase,
     hidden_apks: HashSet<i32>,
 }
 
 impl ProviderCustomizer {
-    pub fn new(db: DeviceSqliteDatabase, hidden_apks: HashSet<i32>) -> Self {
+    pub fn new(db: DeviceDatabase, hidden_apks: HashSet<i32>) -> Self {
         Self { db, hidden_apks }
     }
 }

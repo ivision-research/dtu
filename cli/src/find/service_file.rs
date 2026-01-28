@@ -1,7 +1,7 @@
 use anyhow::bail;
 use clap::{self, Args, Subcommand};
 use dtu::db::device::models::SystemService;
-use dtu::db::{DeviceDatabase, DeviceSqliteDatabase};
+use dtu::db::DeviceDatabase;
 use dtu::utils::{
     find_files_for_class, find_smali_file_for_class, try_proj_home_relative, ClassName,
 };
@@ -77,7 +77,7 @@ impl ServiceFile {
     }
 
     fn find_impl(&self, ctx: &dyn Context) -> anyhow::Result<PathBuf> {
-        let db = DeviceSqliteDatabase::new(ctx)?;
+        let db = DeviceDatabase::new(ctx)?;
         let impls = db.get_system_service_impls(self.service.id)?;
 
         let imp = if impls.len() == 0 {

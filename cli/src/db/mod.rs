@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use anyhow::bail;
 use clap::{self, Args, Subcommand};
 
-use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
+use dtu::db::{DeviceDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::filestore::get_filestore;
 use dtu::prereqs::Prereq;
 use dtu::utils::ensure_dir_exists;
@@ -72,7 +72,7 @@ impl DB {
     fn wipe_database(&self) -> anyhow::Result<()> {
         let ctx = DefaultContext::new();
         let meta = MetaSqliteDatabase::new(&ctx)?;
-        let db = DeviceSqliteDatabase::new(&ctx)?;
+        let db = DeviceDatabase::new(&ctx)?;
         db.wipe()?;
         meta.update_prereq(Prereq::EmulatorDiff, false)?;
         meta.update_prereq(Prereq::SQLDatabaseSetup, false)?;
@@ -91,12 +91,12 @@ pub(crate) fn get_aosp_database_path(ctx: &dyn Context, api_level: u32) -> anyho
 pub(crate) fn get_aosp_database(
     ctx: &dyn Context,
     api_level: u32,
-) -> anyhow::Result<DeviceSqliteDatabase> {
+) -> anyhow::Result<DeviceDatabase> {
     let path = get_aosp_database_path(ctx, api_level)?;
     let path_as_str = path.to_str().expect("valid paths");
 
     if path.exists() {
-        return Ok(DeviceSqliteDatabase::new_from_path(path_as_str)?);
+        return Ok(DeviceDatabase::new_from_path(path_as_str)?);
     }
 
     let remote_path = format!("aosp/{}/device.db", api_level);
@@ -113,7 +113,7 @@ pub(crate) fn get_aosp_database(
             store.name(),
         );
     }
-    Ok(DeviceSqliteDatabase::new_from_path(path_as_str)?)
+    Ok(DeviceDatabase::new_from_path(path_as_str)?)
 }
 
 pub(crate) fn get_path_for_diff_source(ctx: &dyn Context, source: &str) -> anyhow::Result<PathBuf> {

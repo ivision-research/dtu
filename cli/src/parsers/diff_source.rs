@@ -1,7 +1,7 @@
 use crate::parsers::simple_error;
 use clap::builder::{NonEmptyStringValueParser, TypedValueParser};
 use dtu::db::device::models::DiffSource;
-use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
+use dtu::db::{DeviceDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::DefaultContext;
 
@@ -24,7 +24,7 @@ impl TypedValueParser for DiffSourceValueParser {
         let meta = MetaSqliteDatabase::new(&ctx).map_err(simple_error)?;
         meta.ensure_prereq(Prereq::SQLDatabaseSetup)
             .map_err(simple_error)?;
-        let db = DeviceSqliteDatabase::new(&ctx).map_err(simple_error)?;
+        let db = DeviceDatabase::new(&ctx).map_err(simple_error)?;
         Ok(db.get_diff_source_by_name(&val).map_err(simple_error)?)
     }
 }

@@ -21,7 +21,7 @@ use signal_hook::iterator::Signals;
 
 use dtu::adb::{Adb, ExecAdb};
 use dtu::app::server::{ConnectError, TcpAppServer};
-use dtu::db::{DeviceDatabase, DeviceSqliteDatabase};
+use dtu::db::DeviceDatabase;
 use dtu::tasks::{TaskCancelCheck, TaskCanceller};
 use dtu::utils::{find_file_for_class, find_smali_file_for_class, ClassName, DevicePath};
 use dtu::{run_cmd, Context};
@@ -275,7 +275,7 @@ fn try_get_apk_smali_no_pkg(
     apk: &Option<DevicePath>,
 ) -> Option<PathBuf> {
     let apk = apk.as_ref()?;
-    let db = DeviceSqliteDatabase::new(ctx).ok()?;
+    let db = DeviceDatabase::new(ctx).ok()?;
     let apk_name = apk.device_file_name();
     let db_apk = db.get_apk_by_apk_name(apk_name).ok()?;
     let new_class = class.with_new_package(&db_apk.app_name);

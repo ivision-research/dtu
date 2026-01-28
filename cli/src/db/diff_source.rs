@@ -4,8 +4,11 @@ use std::path::PathBuf;
 use anyhow::bail;
 use clap::{self, Args, Subcommand};
 
+use dtu::db::device::schema::diff_sources;
 use dtu::db::device::{models, DiffOptions, DiffTask};
-use dtu::db::{DeviceDatabase, DeviceSqliteDatabase};
+use dtu::db::DeviceDatabase;
+use dtu::diesel::insert_into;
+use dtu::diesel::prelude::*;
 use dtu::prereqs::Prereq;
 use dtu::utils::{ensure_prereq, path_must_str};
 use dtu::DefaultContext;
@@ -55,12 +58,19 @@ struct Add {
 }
 
 impl Add {
-    fn run(&self, db: DeviceSqliteDatabase) -> anyhow::Result<()> {
+    fn run(&self, db: DeviceDatabase) -> anyhow::Result<()> {
         let other_db_path = path_must_str(&self.path);
-        let other_db = DeviceSqliteDatabase::new_from_path(other_db_path)?;
+        let other_db = DeviceDatabase::new_from_path(other_db_path)?;
         let name = self.name.clone();
         let ins = models::InsertDiffSource { name: &name };
-        let id = db.add_diff_source(&ins)?;
+
+        let id = db.with_connection(|c| {
+            insert_into(diff_sources::table)
+                .values(&ins)
+                .returning(diff_sources::id)
+                .get_result(c)
+        })?;
+
         let new_source = models::DiffSource { id, name };
         let res = self.add_source(new_source, &db, &other_db);
 
@@ -89,8 +99,8 @@ impl Add {
     fn add_source(
         &self,
         new_source: models::DiffSource,
-        db: &DeviceSqliteDatabase,
-        other_db: &DeviceSqliteDatabase,
+        db: &DeviceDatabase,
+        other_db: &DeviceDatabase,
     ) -> anyhow::Result<()> {
         let (_cancel, check) = task_canceller()?;
         let (mon, _handle) = PrintMonitor::start()?;
@@ -110,7 +120,7 @@ struct Remove {
 }
 
 impl Remove {
-    fn run(&self, db: DeviceSqliteDatabase) -> anyhow::Result<()> {
+    fn run(&self, db: DeviceDatabase) -> anyhow::Result<()> {
         db.delete_diff_source_by_id(self.source.id)?;
         let ctx = DefaultContext::new();
         let db_path = get_path_for_diff_source(&ctx, &self.source.name)?;
@@ -125,7 +135,7 @@ impl Remove {
 struct List {}
 
 impl List {
-    fn run(&self, db: DeviceSqliteDatabase) -> anyhow::Result<()> {
+    fn run(&self, db: DeviceDatabase) -> anyhow::Result<()> {
         let sources = db.get_diff_sources()?;
         for s in &sources {
             println!("{}", s.name);
@@ -138,7 +148,7 @@ impl DiffSource {
     pub fn run(&self) -> anyhow::Result<()> {
         let ctx = DefaultContext::new();
         ensure_prereq(&ctx, Prereq::SQLDatabaseSetup)?;
-        let db = DeviceSqliteDatabase::new(&ctx)?;
+        let db = DeviceDatabase::new(&ctx)?;
         match &self.command {
             Commands::Add(c) => c.run(db),
             Commands::Remove(c) => c.run(db),

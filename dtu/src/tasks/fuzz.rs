@@ -2,11 +2,13 @@ use std::io::Read;
 
 use csv::{ReaderBuilder, StringRecord};
 
+use diesel::insert_into;
+use diesel::prelude::*;
 use dtu_proc_macro::{wraps_base_error, wraps_decompile_error};
 
-use crate::db::device::db::Database;
 use crate::db::device::models::{FuzzResult, InsertFuzzResult};
-use crate::db::{self, DeviceSqliteDatabase};
+use crate::db::device::schema::fuzz_results;
+use crate::db::{self, DeviceDatabase};
 use crate::Context;
 
 #[wraps_base_error]
@@ -18,6 +20,12 @@ pub enum Error {
 
     #[error("{0}")]
     DBError(db::Error),
+}
+
+impl From<diesel::result::Error> for Error {
+    fn from(value: diesel::result::Error) -> Self {
+        Self::DBError(value.into())
+    }
 }
 
 impl From<db::Error> for Error {
@@ -93,25 +101,32 @@ where
 {
     let info = extract_csv_info(csv)?;
 
-    let dev_db = DeviceSqliteDatabase::new(ctx)?;
+    let dev_db = DeviceDatabase::new(ctx)?;
 
-    for res in info {
-        let ins = InsertFuzzResult::new(
-            &res.service,
-            &res.method,
-            res.threw_exception,
-            res.threw_security_exception,
-        );
+    let fuzz_results = info
+        .iter()
+        .map(|it| {
+            InsertFuzzResult::new(
+                &it.service,
+                &it.method,
+                it.threw_exception,
+                it.threw_security_exception,
+            )
+        })
+        .collect::<Vec<InsertFuzzResult>>();
 
-        dev_db.add_fuzz_result(&ins)?;
-    }
+    dev_db.with_connection(|c| {
+        insert_into(fuzz_results::table)
+            .values(fuzz_results.as_slice())
+            .execute(c)
+    })?;
 
     Ok(())
 }
 
 /// Search the SQL database for endpoints that did not throw a security exception
 pub fn get_no_security(ctx: &dyn Context) -> Result<Vec<FuzzResult>> {
-    let dev_db = DeviceSqliteDatabase::new(ctx)?;
+    let dev_db = DeviceDatabase::new(ctx)?;
 
     Ok(dev_db.get_endpoints_by_security(false)?)
 }

@@ -1,7 +1,7 @@
 use clap::Args;
 use dtu::db::device::models::DiffedSystemService;
 use dtu::db::device::EMULATOR_DIFF_SOURCE;
-use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
+use dtu::db::{DeviceDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::DefaultContext;
 
@@ -54,7 +54,7 @@ pub struct SystemServices {
 impl SystemServices {
     pub fn run(&self) -> anyhow::Result<()> {
         let ctx = DefaultContext::new();
-        let db = DeviceSqliteDatabase::new(&ctx)?;
+        let db = DeviceDatabase::new(&ctx)?;
         let services = if self.only_non_aosp {
             let meta = MetaSqliteDatabase::new(&ctx)?;
             meta.ensure_prereq(Prereq::EmulatorDiff)?;
@@ -79,7 +79,7 @@ impl SystemServices {
         Ok(())
     }
 
-    fn include_service(&self, s: &DiffedSystemService, db: &DeviceSqliteDatabase) -> bool {
+    fn include_service(&self, s: &DiffedSystemService, db: &DeviceDatabase) -> bool {
         if self.only_non_aosp && s.exists_in_diff {
             return false;
         }

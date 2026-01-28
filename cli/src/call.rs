@@ -3,7 +3,7 @@ use clap::{self, Args, Subcommand};
 use dtu::app::server::AppServer;
 use dtu::db;
 use dtu::db::device::models::{self, Apk, SystemServiceMethod};
-use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
+use dtu::db::{DeviceDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::utils::ClassName;
 use dtu::DefaultContext;
@@ -112,7 +112,7 @@ pub struct SystemService {
 impl SystemService {
     pub fn run(&self) -> anyhow::Result<()> {
         let ctx = DefaultContext::new();
-        let db = DeviceSqliteDatabase::new(&ctx)?;
+        let db = DeviceDatabase::new(&ctx)?;
 
         let service = match db.get_system_service_by_name(&self.service) {
             Ok(v) => Some(v),
@@ -161,7 +161,7 @@ impl SystemService {
     }
     fn get_transaction_id(
         &self,
-        db: &DeviceSqliteDatabase,
+        db: &DeviceDatabase,
         service: &Option<models::SystemService>,
     ) -> anyhow::Result<u32> {
         if let Some(id) = self.txn {

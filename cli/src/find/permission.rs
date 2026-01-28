@@ -1,5 +1,5 @@
 use clap::{self, Args};
-use dtu::db::{DeviceDatabase, DeviceSqliteDatabase};
+use dtu::db::DeviceDatabase;
 use dtu::prereqs::Prereq;
 use dtu::utils::ensure_prereq;
 use dtu::Context;
@@ -17,7 +17,7 @@ impl Permission {
 
         let like = format!("%{}%", self.containing);
 
-        let db = DeviceSqliteDatabase::new(ctx)?;
+        let db = DeviceDatabase::new(ctx)?;
         let perms = db.get_permissions_by_name_like(&like)?;
         for p in perms {
             println!("{}", p);

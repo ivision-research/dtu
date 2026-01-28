@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use dtu_proc_macro::wraps_base_error;
 
-use crate::db::device::db::Database;
+use crate::db::device::db::DeviceDatabase;
 use crate::db::device::models::*;
 use crate::db::device::models::{Apk, DiffSource, SystemService, SystemServiceMethod};
 use crate::db::{self, ApkIPC, Error, Idable, PermissionMode};
@@ -115,8 +115,8 @@ pub type DiffResult<T> = Result<T, DiffError>;
 
 // Task to just diff a single system service
 pub struct SystemServiceDiffTask<'a> {
-    db: &'a dyn Database,
-    diff_db: &'a dyn Database,
+    db: &'a DeviceDatabase,
+    diff_db: &'a DeviceDatabase,
     source: &'a DiffSource,
     system_service: &'a SystemService,
     monitor: &'a dyn EventMonitor<DiffEvent>,
@@ -125,8 +125,8 @@ pub struct SystemServiceDiffTask<'a> {
 impl<'a> SystemServiceDiffTask<'a> {
     pub fn new(
         source: &'a DiffSource,
-        db: &'a dyn Database,
-        diff_db: &'a dyn Database,
+        db: &'a DeviceDatabase,
+        diff_db: &'a DeviceDatabase,
         system_service: &'a SystemService,
         monitor: &'a dyn EventMonitor<DiffEvent>,
     ) -> Self {
@@ -272,8 +272,8 @@ impl<'a> SystemServiceDiffTask<'a> {
 
 // Task to run a full device database diff
 pub struct DiffTask<'a> {
-    db: &'a dyn Database,
-    diff_db: &'a dyn Database,
+    db: &'a DeviceDatabase,
+    diff_db: &'a DeviceDatabase,
     monitor: &'a dyn EventMonitor<DiffEvent>,
     cancel: TaskCancelCheck,
     source: DiffSource,
@@ -284,8 +284,8 @@ pub struct DiffTask<'a> {
 impl<'a> DiffTask<'a> {
     pub fn new(
         opts: DiffOptions,
-        db: &'a dyn Database,
-        diff_db: &'a dyn Database,
+        db: &'a DeviceDatabase,
+        diff_db: &'a DeviceDatabase,
         cancel: TaskCancelCheck,
         monitor: &'a dyn EventMonitor<DiffEvent>,
     ) -> Self {
@@ -366,8 +366,8 @@ impl<'a> DiffTask<'a> {
     where
         T: Idable,
         D: Idable,
-        GetAll: Fn(&dyn Database) -> db::Result<Vec<T>>,
-        GetDone: Fn(&dyn Database, i32) -> db::Result<Vec<D>>,
+        GetAll: Fn(&DeviceDatabase) -> db::Result<Vec<T>>,
+        GetDone: Fn(&DeviceDatabase, i32) -> db::Result<Vec<D>>,
     {
         let all = get_all(self.db)?;
         let done = get_done(self.db, self.source.id)?
@@ -525,7 +525,7 @@ impl<'a> DiffTask<'a> {
     fn diff_apk_ipc<T, F>(&self, device: Vec<T>, diff: Vec<T>, insert: F) -> DiffResult<()>
     where
         T: ApkIPC,
-        F: Fn(&T, &dyn Database, i32, bool, bool, bool) -> DiffResult<()>,
+        F: Fn(&T, &DeviceDatabase, i32, bool, bool, bool) -> DiffResult<()>,
     {
         let mut diff_map: HashMap<ClassName, T> = HashMap::new();
         diff_map.extend(diff.into_iter().map(|it| (it.get_class_name().clone(), it)));
@@ -539,7 +539,7 @@ impl<'a> DiffTask<'a> {
     fn do_apk_ipc_diff<T, F>(&self, device: &T, diff: Option<&T>, insert: &F) -> DiffResult<()>
     where
         T: ApkIPC,
-        F: Fn(&T, &dyn Database, i32, bool, bool, bool) -> DiffResult<()>,
+        F: Fn(&T, &DeviceDatabase, i32, bool, bool, bool) -> DiffResult<()>,
     {
         let id = device.get_id();
         let diff = match diff {

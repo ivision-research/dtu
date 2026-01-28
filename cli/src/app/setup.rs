@@ -8,7 +8,7 @@ use dtu::adb::Adb;
 use dtu::app::{SetupParams, TemplateRenderer, DEFAULT_APP_ID, DEFAULT_PKG_NAME};
 use dtu::db::meta::db::{APP_ID_KEY, APP_PKG_KEY};
 use dtu::db::meta::models::InsertAppPermission;
-use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
+use dtu::db::{DeviceDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::utils::ensure_dir_exists;
 use dtu::{run_cmd, Context, DefaultContext};
@@ -70,7 +70,7 @@ impl Setup {
         self.init_gradle(&ctx, &self.gradle_version, &project_name)?;
 
         log::trace!("setting up meta database");
-        let device_db = DeviceSqliteDatabase::new(&ctx)?;
+        let device_db = DeviceDatabase::new(&ctx)?;
         let perms = device_db.get_normal_permissions()?;
         let app_perms = perms
             .iter()

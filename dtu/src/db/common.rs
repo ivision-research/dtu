@@ -451,8 +451,8 @@ macro_rules! query {
 
 #[macro_export]
 macro_rules! impl_delete_by {
-     ($name:ident, $sel:ty, $table:ident, $($filter:tt)+) => {
-        fn $name(&self, sel: $sel) -> Result<()> {
+     ($vis:vis $name:ident, $sel:ty, $table:ident, $($filter:tt)+) => {
+        $vis fn $name(&self, sel: $sel) -> Result<()> {
             self.with_connection(|conn| {
                 let __query = ::diesel::delete(
                      super::schema::$table::dsl::$table.filter(
@@ -469,8 +469,8 @@ macro_rules! impl_delete_by {
 
 #[macro_export]
 macro_rules! impl_get_by {
-    ($retrieve:ident, $name:ident, $sel:ty, $ret:ty, $ty:ident, $($filter:tt)+) => {
-        fn $name(&self, sel: $sel) -> Result<$ret> {
+    ($vis:vis $retrieve:ident, $name:ident, $sel:ty, $ret:ty, $ty:ident, $($filter:tt)+) => {
+        $vis fn $name(&self, sel: $sel) -> Result<$ret> {
             self.with_connection(|conn| {
                 let __query = super::schema::$ty::dsl::$ty.filter(
                     super::schema::$ty::dsl::$($filter)+(sel)
@@ -485,8 +485,8 @@ macro_rules! impl_get_by {
 
 #[macro_export]
 macro_rules! impl_get {
-        ($retrieve:ident, $name:ident, $ret:ty, $ty:ident, $($filter:tt)+) => {
-        fn $name(&self) -> Result<$ret> {
+        ($vis:vis $retrieve:ident, $name:ident, $ret:ty, $ty:ident, $($filter:tt)+) => {
+        $vis fn $name(&self) -> Result<$ret> {
             self.with_connection(|conn| {
                 Ok(
                     super::schema::$ty::dsl::$ty.filter(
@@ -500,37 +500,37 @@ macro_rules! impl_get {
 
 #[macro_export]
 macro_rules! impl_get_one {
-    ($name:ident, $ret:ty, $ty:ident, $($filter:tt)+) => {
-        impl_get!(get_result, $name, $ret, $ty, $($filter)+);
+    ($vis:vis $name:ident, $ret:ty, $ty:ident, $($filter:tt)+) => {
+        impl_get!($vis get_result, $name, $ret, $ty, $($filter)+);
     }
 }
 
 #[macro_export]
 macro_rules! impl_get_multi {
-    ($name:ident, $ret:ty, $ty:ident, $($filter:tt)+) => {
-        impl_get!(get_results, $name, Vec<$ret>, $ty, $($filter)+);
+    ($vis:vis $name:ident, $ret:ty, $ty:ident, $($filter:tt)+) => {
+        impl_get!($vis get_results, $name, Vec<$ret>, $ty, $($filter)+);
     }
 }
 
 #[macro_export]
 macro_rules! impl_get_one_by {
-    ($name:ident, $sel:ty, $ret:ty, $ty:ident, $($filter:tt)+) => {
-        impl_get_by!(get_result, $name, $sel, $ret, $ty, $($filter)+);
+    ($vis:vis $name:ident, $sel:ty, $ret:ty, $ty:ident, $($filter:tt)+) => {
+        impl_get_by!($vis get_result, $name, $sel, $ret, $ty, $($filter)+);
     }
 
 }
 
 #[macro_export]
 macro_rules! impl_get_multi_by {
-    ($name:ident, $sel:ty, $ret:ty, $ty:ident, $($filter:tt)+) => {
-        impl_get_by!(get_results, $name, $sel, Vec<$ret>, $ty, $($filter)+);
+    ($vis:vis $name:ident, $sel:ty, $ret:ty, $ty:ident, $($filter:tt)+) => {
+        impl_get_by!($vis get_results, $name, $sel, Vec<$ret>, $ty, $($filter)+);
     }
 }
 
 #[macro_export]
 macro_rules! impl_get_all {
-    ($name:ident, $ret:ty, $ty:ident) => {
-        fn $name(&self) -> Result<Vec<$ret>> {
+    ($vis:vis $name:ident, $ret:ty, $ty:ident) => {
+        $vis fn $name(&self) -> Result<Vec<$ret>> {
             self.with_connection(|conn| Ok(super::schema::$ty::dsl::$ty.load(conn)?))
         }
     };
@@ -538,8 +538,8 @@ macro_rules! impl_get_all {
 
 #[macro_export]
 macro_rules! impl_update_one {
-    ($name:ident, $ty:ty, $dsl:ident) => {
-        fn $name(&self, value: &$ty) -> Result<()> {
+    ($vis:vis $name:ident, $ty:ty, $dsl:ident) => {
+        $vis fn $name(&self, value: &$ty) -> Result<()> {
             self.with_connection(|conn| {
                 let __query = ::diesel::update(value).set(value);
                 #[cfg(feature = "trace_db")]
@@ -556,8 +556,8 @@ macro_rules! impl_update_one {
 
 #[macro_export]
 macro_rules! impl_insert_one {
-    ($name:ident, $ty:ty, $dsl:ident) => {
-        fn $name(&self, values: &$ty) -> Result<i32> {
+    ($vis:vis $name:ident, $ty:ty, $dsl:ident) => {
+        $vis fn $name(&self, values: &$ty) -> Result<i32> {
             self.with_connection(|conn| {
                 let __query = ::diesel::insert_into(super::schema::$dsl::dsl::$dsl)
                     .values(values)
@@ -575,8 +575,8 @@ macro_rules! impl_insert_one {
 
 #[macro_export]
 macro_rules! impl_insert_multi {
-    ($name:ident, $ty:ty, $dsl:ident) => {
-        fn $name(&self, values: &[$ty]) -> Result<()> {
+    ($vis:vis $name:ident, $ty:ty, $dsl:ident) => {
+        $vis fn $name(&self, values: &[$ty]) -> Result<()> {
             self.with_connection(|conn| {
                 let __query = ::diesel::insert_into(super::schema::$dsl::dsl::$dsl).values(values);
                 __query.execute(conn)?;
@@ -587,13 +587,21 @@ macro_rules! impl_insert_multi {
 }
 
 #[macro_export]
+macro_rules! impl_simple_gets {
+    ($vis:vis $table:ident, $ty:ty, $get_all:ident, $get_by_id:ident) => {
+        impl_get_all!($vis $get_all, $ty, $table);
+        impl_get_one_by!($vis $get_by_id, i32, $ty, $table, id.eq);
+    };
+}
+
+#[macro_export]
 macro_rules! impl_standard_crud {
-    ($table:ident, $ins_one:ident, $ins_multi:ident, $ins_type:ty, $get_all:ident, $get_by_id:ident, $update_one:ident, $read_update_type:ty, $delete_by_id:ident) => {
-        impl_insert_one!($ins_one, $ins_type, $table);
-        impl_insert_multi!($ins_multi, $ins_type, $table);
-        impl_get_all!($get_all, $read_update_type, $table);
-        impl_update_one!($update_one, $read_update_type, $table);
-        impl_get_one_by!($get_by_id, i32, $read_update_type, $table, id.eq);
-        impl_delete_by!($delete_by_id, i32, $table, id.eq);
+    ($vis:vis $table:ident, $ins_one:ident, $ins_multi:ident, $ins_type:ty, $get_all:ident, $get_by_id:ident, $update_one:ident, $read_update_type:ty, $delete_by_id:ident) => {
+        impl_insert_one!($vis $ins_one, $ins_type, $table);
+        impl_insert_multi!($vis $ins_multi, $ins_type, $table);
+        impl_get_all!($vis $get_all, $read_update_type, $table);
+        impl_update_one!($vis $update_one, $read_update_type, $table);
+        impl_get_one_by!($vis $get_by_id, i32, $read_update_type, $table, id.eq);
+        impl_delete_by!($vis $delete_by_id, i32, $table, id.eq);
     };
 }

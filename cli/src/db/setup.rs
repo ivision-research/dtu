@@ -13,7 +13,7 @@ use dtu::db::device::{
     get_project_dbsetup_helper, ApkIdentifier, DiffOptions, DiffTask, SetupEvent, SetupOptions,
     EMULATOR_DIFF_SOURCE,
 };
-use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
+use dtu::db::{DeviceDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::tasks::ChannelEventMonitor;
 use dtu::utils::{path_must_str, DevicePath};
@@ -216,7 +216,7 @@ impl Setup {
 
         let helper = get_project_dbsetup_helper(&ctx)?;
 
-        let db = DeviceSqliteDatabase::new(&ctx)?;
+        let db = DeviceDatabase::new(&ctx)?;
         let graph = get_default_graphdb(&ctx)?;
 
         let (mon, chan) = ChannelEventMonitor::create();

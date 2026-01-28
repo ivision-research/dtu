@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::io::stdout;
 
 use clap::{self, Args};
-use dtu::db::device::get_default_devicedb;
 use dtu::db::device::models::{Activity, Provider, Receiver, Service};
 use sha2::{Digest, Sha256};
 
@@ -83,7 +82,7 @@ impl ApkIPCCallsGeneric {
         ctx: &dyn Context,
         graphdb: &dyn GraphDatabase,
     ) -> anyhow::Result<ApkCallsResult> {
-        let db = get_default_devicedb(ctx)?;
+        let db = DeviceDatabase::new(ctx)?;
         let source = self.apk.as_ref().map(|it| it.as_squashed_str());
         let mut apk_map = HashMap::new();
         for apk in db.get_apks()?.into_iter() {
@@ -273,7 +272,7 @@ impl FindIntentActivities {
         ctx: &dyn Context,
         graphdb: &dyn GraphDatabase,
     ) -> anyhow::Result<ApkCallsResult> {
-        let db = get_default_devicedb(ctx)?;
+        let db = DeviceDatabase::new(ctx)?;
         let source = self.apk.as_ref().map(|it| it.as_squashed_str());
         let activity_class = ClassName::new("Landroid/app/Activity;".into());
         let mut results = ApkCallsResult::new();

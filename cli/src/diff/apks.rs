@@ -5,7 +5,7 @@ use crate::diff::get_diff_source;
 use dtu::db::device::models::{
     Apk, DiffSource, DiffedActivity, DiffedProvider, DiffedReceiver, DiffedService, Permission,
 };
-use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase};
+use dtu::db::{DeviceDatabase, MetaDatabase};
 use dtu::Context;
 
 use crate::parsers::{ApkValueParser, DiffSourceValueParser};
@@ -66,7 +66,7 @@ macro_rules! simple_ipc {
                 &self,
                 ctx: &dyn Context,
                 meta: &dyn MetaDatabase,
-                db: &dyn DeviceDatabase,
+                db: &DeviceDatabase,
             ) -> anyhow::Result<()> {
                 let diff_source = get_diff_source(ctx, meta, &self.diff_source)?.id;
 
@@ -178,7 +178,7 @@ impl Providers {
         &self,
         ctx: &dyn Context,
         meta: &dyn MetaDatabase,
-        db: &dyn DeviceDatabase,
+        db: &DeviceDatabase,
     ) -> anyhow::Result<()> {
         let diff_source = get_diff_source(ctx, meta, &self.diff_source)?.id;
 
@@ -264,7 +264,7 @@ impl Providers {
 
 impl Apks {
     pub fn run(&self, ctx: &dyn Context, meta: &dyn MetaDatabase) -> anyhow::Result<()> {
-        let db = DeviceSqliteDatabase::new(ctx)?;
+        let db = DeviceDatabase::new(ctx)?;
         let ran_cmd = self.run_command(&ctx, meta, &db)?;
         if ran_cmd {
             return Ok(());
@@ -276,7 +276,7 @@ impl Apks {
         &self,
         ctx: &dyn Context,
         meta: &dyn MetaDatabase,
-        db: &dyn DeviceDatabase,
+        db: &DeviceDatabase,
     ) -> anyhow::Result<bool> {
         let cmd = match self.command.as_ref() {
             None => return Ok(false),
@@ -295,7 +295,7 @@ impl Apks {
         &self,
         ctx: &dyn Context,
         meta: &dyn MetaDatabase,
-        db: &dyn DeviceDatabase,
+        db: &DeviceDatabase,
     ) -> anyhow::Result<()> {
         let printer = Printer::new();
         let diff_id = get_diff_source(ctx, meta, &self.diff_source)?.id;

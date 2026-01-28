@@ -3,12 +3,12 @@ use std::path::PathBuf;
 use anyhow::bail;
 use clap::{self, Args};
 
-use dtu::db::graph::{GraphDatabase, FRAMEWORK_SOURCE};
 use dtu::db::device::diff::SystemServiceDiffTask;
 use dtu::db::device::models::SystemService;
 use dtu::db::device::setup::{AddSystemServiceTask, ServiceMeta};
 use dtu::db::device::SetupEvent;
-use dtu::db::{DeviceDatabase, DeviceSqliteDatabase};
+use dtu::db::graph::{GraphDatabase, FRAMEWORK_SOURCE};
+use dtu::db::DeviceDatabase;
 use dtu::prereqs::Prereq;
 use dtu::tasks::{EventMonitor, NoopMonitor, TaskCanceller};
 use dtu::utils::{ensure_prereq, find_smali_file_for_class, path_must_str, ClassName, DevicePath};
@@ -50,7 +50,7 @@ impl AddServiceImpl {
     pub fn run(&self) -> anyhow::Result<()> {
         let ctx = DefaultContext::new();
         ensure_prereq(&ctx, Prereq::PullAndDecompile)?;
-        let db = DeviceSqliteDatabase::new(&ctx)?;
+        let db = DeviceDatabase::new(&ctx)?;
 
         let impl_path = match find_smali_file_for_class(&ctx, &self.impl_class, self.apk.as_ref()) {
             Some(v) => v,
@@ -108,7 +108,7 @@ impl AddServiceImpl {
         let diff_sources = db.get_diff_sources()?;
         for s in &diff_sources {
             let path = get_path_for_diff_source(&ctx, &s.name)?;
-            let diff_db = DeviceSqliteDatabase::new_from_path(path_must_str(&path))?;
+            let diff_db = DeviceDatabase::new_from_path(path_must_str(&path))?;
             let task = SystemServiceDiffTask::new(s, &db, &diff_db, &self.service, &mon);
             task.run()?;
         }

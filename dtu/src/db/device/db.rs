@@ -14,273 +14,12 @@ use super::common::*;
 use super::models::*;
 use super::schema;
 
-macro_rules! def_diff_item {
-    (
-        $ins_one:ident,
-        $ins_type:ty,
-        $get_all_by_diff_name:ident,
-        $get_all_by_diff_id:ident,
-        $get_type:ty
-    ) => {
-        def_insert_one!($ins_one, $ins_type);
-        def_get_multi_by!($get_all_by_diff_id, i32, $get_type);
-        def_get_multi_by!($get_all_by_diff_name, &str, $get_type);
-    };
-
-    (
-        $ins_one:ident,
-        $ins_type:ty,
-        $get_all_by_diff_name:ident,
-        $get_all_by_diff_id:ident,
-        $get_type:ty,
-        $get_by_two_ids:ident
-    ) => {
-        def_diff_item!(
-            $ins_one,
-            $ins_type,
-            $get_all_by_diff_name,
-            $get_all_by_diff_id,
-            $get_type
-        );
-        fn $get_by_two_ids(&self, owner_id: i32, diff_id: i32) -> Result<Vec<$get_type>>;
-    };
-}
-
-pub trait Database: Sync + Send {
-    fn wipe(&self) -> Result<()>;
-
-    fn get_all_system_service_impls(&self) -> Result<HashMap<String, Vec<SystemServiceImpl>>>;
-
-    def_standard_crud!(
-        add_protected_broadcast,
-        add_protected_broadcasts,
-        InsertProtectedBroadcast,
-        get_protected_broadcasts,
-        get_protected_broadcast_by_id,
-        update_protected_broadcast,
-        ProtectedBroadcast,
-        delete_protected_broadcast_by_id
-    );
-
-    def_standard_crud!(
-        add_permission,
-        add_permissions,
-        InsertPermission,
-        get_permissions,
-        get_permission_by_id,
-        update_permission,
-        Permission,
-        delete_permission_by_id
-    );
-
-    def_standard_crud!(
-        add_provider,
-        add_providers,
-        InsertProvider,
-        get_providers,
-        get_provider_by_id,
-        update_provider,
-        Provider,
-        delete_provider_by_id
-    );
-
-    def_standard_crud!(
-        add_service,
-        add_services,
-        InsertService,
-        get_services,
-        get_service_by_id,
-        update_service,
-        Service,
-        delete_service_by_id
-    );
-
-    def_standard_crud!(
-        add_receiver,
-        add_receivers,
-        InsertReceiver,
-        get_receivers,
-        get_receiver_by_id,
-        update_receiver,
-        Receiver,
-        delete_receiver_by_id
-    );
-
-    def_standard_crud!(
-        add_activity,
-        add_activities,
-        InsertActivity,
-        get_activities,
-        get_activity_by_id,
-        update_activity,
-        Activity,
-        delete_activity_by_id
-    );
-
-    def_standard_crud!(
-        add_system_service,
-        add_system_services,
-        InsertSystemService,
-        get_system_services,
-        get_system_service_by_id,
-        update_system_service,
-        SystemService,
-        delete_system_service_by_id
-    );
-
-    def_delete_by!(delete_system_service_methods_by_service_id, i32);
-    def_get_multi_by!(get_system_services_name_like, &str, SystemService);
-    def_get_one_by!(get_system_service_by_name, &str, SystemService);
-    def_get_multi!(get_system_service_methods, SystemServiceMethod);
-
-    def_standard_crud!(
-        add_device_property,
-        add_device_properties,
-        InsertDeviceProperty,
-        get_device_properties,
-        get_device_property_by_id,
-        update_device_property,
-        DeviceProperty,
-        delete_device_property_by_id
-    );
-
-    def_get_one_by!(get_device_property_by_name, &str, DeviceProperty);
-    def_get_multi_by!(get_device_properties_like, &str, DeviceProperty);
-
-    def_insert_one!(add_apk_permission, InsertApkPermission);
-    def_insert_multi!(add_apk_permissions, InsertApkPermission);
-    fn get_permissions_for_apk(&self, apk: &Apk) -> Result<Vec<ApkPermission>>;
-    fn get_all_apks_with_permsissions(&self) -> Result<Vec<ApkWithPermissions>>;
-
-    def_standard_crud!(
-        add_apk,
-        add_apks,
-        InsertApk,
-        get_apks,
-        get_apk_by_id,
-        update_apk,
-        Apk,
-        delete_apk_by_id
-    );
-
-    def_get_multi!(get_debuggable_apks, Apk);
-    def_get_one_by!(get_apk_by_app_name, &str, Apk);
-    def_get_one_by!(get_apk_by_apk_name, &str, Apk);
-    def_get_one_by!(get_apk_by_device_path, &str, Apk);
-    def_get_multi!(get_normal_permissions, Permission);
-    def_get_one_by!(get_permission_by_apk, i32, Permission);
-    def_get_one_by!(get_permission_by_name, &str, Permission);
-    def_get_multi_by!(get_permissions_by_name_like, &str, Permission);
-    def_insert_one!(add_system_service_impl, InsertSystemServiceImpl);
-    def_get_multi_by!(get_system_service_impls, i32, SystemServiceImpl);
-    def_delete_by!(delete_system_service_impl_by_service_id, i32);
-    def_insert_one!(add_system_service_method, InsertSystemServiceMethod);
-    def_update_one!(update_system_service_method, SystemServiceMethod);
-
-    def_get_multi_by!(
-        get_system_service_methods_by_service_id,
-        i32,
-        SystemServiceMethod
-    );
-
-    def_get_one_by!(get_provider_containing_authority, &str, Provider);
-    def_get_multi_by!(get_receivers_by_apk_id, i32, Receiver);
-    def_get_multi_by!(get_services_by_apk_id, i32, Service);
-    def_get_multi_by!(get_activities_by_apk_id, i32, Activity);
-    def_get_multi_by!(get_providers_by_apk_id, i32, Provider);
-
-    def_insert_one!(add_diff_source, InsertDiffSource);
-    def_get_multi!(get_diff_sources, DiffSource);
-    def_get_one_by!(get_diff_source_by_name, &str, DiffSource);
-    def_delete_by!(delete_diff_source_by_id, i32);
-    def_delete_by!(delete_diff_source_by_name, &str);
-
-    def_diff_item!(
-        add_permission_diff,
-        InsertPermissionDiff,
-        get_permission_diffs_by_diff_name,
-        get_permission_diffs_by_diff_id,
-        DiffedPermission
-    );
-
-    def_diff_item!(
-        add_apk_diff,
-        InsertApkDiff,
-        get_apk_diffs_by_diff_name,
-        get_apk_diffs_by_diff_id,
-        DiffedApk
-    );
-
-    def_diff_item!(
-        add_system_service_diff,
-        InsertSystemServiceDiff,
-        get_system_service_diffs_by_diff_name,
-        get_system_service_diffs_by_diff_id,
-        DiffedSystemService
-    );
-    def_delete_by!(delete_system_service_diff_by_service_id, i32);
-
-    def_diff_item!(
-        add_system_service_method_diff,
-        InsertSystemServiceMethodDiff,
-        get_system_service_method_diffs_by_diff_name,
-        get_system_service_method_diffs_by_diff_id,
-        DiffedSystemServiceMethod,
-        get_system_service_method_diffs_for_service
-    );
-
-    def_diff_item!(
-        add_service_diff,
-        InsertServiceDiff,
-        get_service_diffs_by_diff_name,
-        get_service_diffs_by_diff_id,
-        DiffedService,
-        get_service_diffs_for_apk
-    );
-
-    def_diff_item!(
-        add_provider_diff,
-        InsertProviderDiff,
-        get_provider_diffs_by_diff_name,
-        get_provider_diffs_by_diff_id,
-        DiffedProvider,
-        get_provider_diffs_for_apk
-    );
-
-    def_diff_item!(
-        add_activity_diff,
-        InsertActivityDiff,
-        get_activity_diffs_by_diff_name,
-        get_activity_diffs_by_diff_id,
-        DiffedActivity,
-        get_activity_diffs_for_apk
-    );
-
-    def_diff_item!(
-        add_receiver_diff,
-        InsertReceiverDiff,
-        get_receiver_diffs_by_diff_name,
-        get_receiver_diffs_by_diff_id,
-        DiffedReceiver,
-        get_receiver_diffs_for_apk
-    );
-    def_standard_crud!(
-        add_fuzz_result,
-        add_fuzz_results,
-        InsertFuzzResult,
-        get_fuzz_results,
-        get_fuzz_result_by_id,
-        update_fuzz_result,
-        FuzzResult,
-        delete_fuzz_result_by_id
-    );
-    def_get_multi_by!(get_endpoints_by_security, bool, FuzzResult);
-}
-
 #[derive(Clone)]
-pub struct DeviceSqliteDatabase {
+pub struct DeviceDatabase {
     db_thread: DBThread,
 }
+
+pub type SqlConnection = SqliteConnection;
 
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations/device_migrations/");
 
@@ -289,7 +28,7 @@ const TEST_MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations/test_d
 
 pub static DEVICE_DATABASE_FILE_NAME: &'static str = "device.db";
 
-impl DeviceSqliteDatabase {
+impl DeviceDatabase {
     pub fn new(ctx: &dyn Context) -> Result<Self> {
         Ok(Self {
             db_thread: DBThread::new(
@@ -329,7 +68,7 @@ impl DeviceSqliteDatabase {
     pub fn with_connection<F, R>(&self, f: F) -> R
     where
         R: Send,
-        F: FnOnce(&mut SqliteConnection) -> R + Send,
+        F: FnOnce(&mut SqlConnection) -> R + Send,
     {
         self.db_thread.with_connection(f)
     }
@@ -339,7 +78,7 @@ impl DeviceSqliteDatabase {
     where
         T: Send,
         E: From<diesel::result::Error> + Send,
-        F: FnOnce(&mut SqliteConnection) -> std::result::Result<T, E> + Send,
+        F: FnOnce(&mut SqlConnection) -> std::result::Result<T, E> + Send,
     {
         self.db_thread.transaction(f)
     }
@@ -347,6 +86,7 @@ impl DeviceSqliteDatabase {
 
 macro_rules! impl_diff_item {
     (
+        $vis:vis
         $ins_one:ident,
         $ins_type:ty,
         $get_all_by_diff_name:ident,
@@ -357,14 +97,14 @@ macro_rules! impl_diff_item {
         $table:ident,
         $diff_table:ident
     ) => {
-        impl_insert_one!($ins_one, $ins_type, $diff_table);
+        impl_insert_one!($vis $ins_one, $ins_type, $diff_table);
 
-        fn $get_all_by_diff_name(&self, name: &str) -> Result<Vec<$get_type>> {
+        $vis fn $get_all_by_diff_name(&self, name: &str) -> Result<Vec<$get_type>> {
             let ds = self.get_diff_source_by_name(name)?;
             self.$get_all_by_diff_id(ds.id)
         }
 
-        fn $get_all_by_diff_id(&self, id: i32) -> Result<Vec<$get_type>> {
+        $vis fn $get_all_by_diff_id(&self, id: i32) -> Result<Vec<$get_type>> {
             self.with_connection(|conn| {
                 let __query = super::schema::$table::table
                     .inner_join(super::schema::$diff_table::table)
@@ -384,6 +124,7 @@ macro_rules! impl_diff_item {
     };
 
     (
+        $vis:vis
         $ins_one:ident,
         $ins_type:ty,
         $get_all_by_diff_name:ident,
@@ -397,6 +138,7 @@ macro_rules! impl_diff_item {
         $($other_filter:tt)+
     ) => {
         impl_diff_item!(
+            $vis
             $ins_one,
             $ins_type,
             $get_all_by_diff_name,
@@ -408,7 +150,7 @@ macro_rules! impl_diff_item {
             $diff_table
         );
 
-        fn $get_all_by_two_ids(&self, owner_id: i32, diff_id: i32) -> Result<Vec<$get_type>> {
+        $vis fn $get_all_by_two_ids(&self, owner_id: i32, diff_id: i32) -> Result<Vec<$get_type>> {
                         self.with_connection(|conn| {
                 let __query = super::schema::$table::table
                     .inner_join(super::schema::$diff_table::table)
@@ -429,8 +171,12 @@ macro_rules! impl_diff_item {
     };
 }
 
-impl Database for DeviceSqliteDatabase {
-    fn wipe(&self) -> Result<()> {
+// A lot of the methods exposed here are historical or are currently being used by the Python API
+// and I just haven't had time to rework things. Removing them would be a breaking change, and
+// they're not bothering anyone.
+
+impl DeviceDatabase {
+    pub fn wipe(&self) -> Result<()> {
         log::debug!("wiping the database");
         self.with_connection(|conn| {
             conn.transaction(|txn| {
@@ -450,6 +196,7 @@ impl Database for DeviceSqliteDatabase {
     }
 
     impl_get_multi_by!(
+        pub
         get_system_services_name_like,
         &str,
         SystemService,
@@ -457,31 +204,22 @@ impl Database for DeviceSqliteDatabase {
         name.like
     );
 
-    impl_standard_crud!(
+    impl_simple_gets!(pub
         protected_broadcasts,
-        add_protected_broadcast,
-        add_protected_broadcasts,
-        InsertProtectedBroadcast,
-        get_protected_broadcasts,
-        get_protected_broadcast_by_id,
-        update_protected_broadcast,
         ProtectedBroadcast,
-        delete_protected_broadcast_by_id
+        get_protected_broadcasts,
+        get_protected_broadcast_by_id
     );
 
-    impl_standard_crud!(
+    impl_simple_gets!(pub
         device_properties,
-        add_device_property,
-        add_device_properties,
-        InsertDeviceProperty,
-        get_device_properties,
-        get_device_property_by_id,
-        update_device_property,
         DeviceProperty,
-        delete_device_property_by_id
+        get_device_properties,
+        get_device_property_by_id
     );
 
     impl_get_one_by!(
+        pub
         get_device_property_by_name,
         &str,
         DeviceProperty,
@@ -490,6 +228,7 @@ impl Database for DeviceSqliteDatabase {
     );
 
     impl_get_multi_by!(
+        pub
         get_device_properties_like,
         &str,
         DeviceProperty,
@@ -497,10 +236,7 @@ impl Database for DeviceSqliteDatabase {
         name.like
     );
 
-    impl_insert_one!(add_apk_permission, InsertApkPermission, apk_permissions);
-    impl_insert_multi!(add_apk_permissions, InsertApkPermission, apk_permissions);
-
-    fn get_permissions_for_apk(&self, apk: &Apk) -> Result<Vec<ApkPermission>> {
+    pub fn get_permissions_for_apk(&self, apk: &Apk) -> Result<Vec<ApkPermission>> {
         self.with_connection(|conn| {
             let perms = ApkPermission::belonging_to(apk)
                 .select(ApkPermission::as_select())
@@ -508,7 +244,7 @@ impl Database for DeviceSqliteDatabase {
             Ok(perms)
         })
     }
-    fn get_all_apks_with_permsissions(&self) -> Result<Vec<ApkWithPermissions>> {
+    pub fn get_all_apks_with_permsissions(&self) -> Result<Vec<ApkWithPermissions>> {
         let apks = self.get_apks()?;
         self.with_connection(|conn| {
             let perms = ApkPermission::belonging_to(&apks)
@@ -527,7 +263,7 @@ impl Database for DeviceSqliteDatabase {
         })
     }
 
-    fn get_all_system_service_impls(&self) -> Result<HashMap<String, Vec<SystemServiceImpl>>> {
+    pub fn get_all_system_service_impls(&self) -> Result<HashMap<String, Vec<SystemServiceImpl>>> {
         self.with_connection(|c| {
             let mut result: HashMap<String, Vec<SystemServiceImpl>> = HashMap::new();
 
@@ -561,96 +297,42 @@ impl Database for DeviceSqliteDatabase {
         })
     }
 
-    impl_standard_crud!(
-        activities,
-        add_activity,
-        add_activities,
-        InsertActivity,
-        get_activities,
-        get_activity_by_id,
-        update_activity,
-        Activity,
-        delete_activity_by_id
-    );
+    impl_simple_gets!(pub activities, Activity, get_activities, get_activity_by_id);
 
-    impl_standard_crud!(
-        receivers,
-        add_receiver,
-        add_receivers,
-        InsertReceiver,
-        get_receivers,
-        get_receiver_by_id,
-        update_receiver,
-        Receiver,
-        delete_receiver_by_id
-    );
+    impl_simple_gets!(pub receivers, Receiver, get_receivers, get_receiver_by_id);
 
-    impl_standard_crud!(
-        services,
-        add_service,
-        add_services,
-        InsertService,
-        get_services,
-        get_service_by_id,
-        update_service,
-        Service,
-        delete_service_by_id
-    );
+    impl_simple_gets!(pub services, Service, get_services, get_service_by_id);
 
-    impl_standard_crud!(
+    impl_simple_gets!(
+        pub
         permissions,
-        add_permission,
-        add_permissions,
-        InsertPermission,
-        get_permissions,
-        get_permission_by_id,
-        update_permission,
         Permission,
-        delete_permission_by_id
+        get_permissions,
+        get_permission_by_id
     );
 
-    impl_standard_crud!(
-        providers,
-        add_provider,
-        add_providers,
-        InsertProvider,
-        get_providers,
-        get_provider_by_id,
-        update_provider,
-        Provider,
-        delete_provider_by_id
-    );
+    impl_simple_gets!(pub providers, Provider, get_providers, get_provider_by_id);
 
-    impl_standard_crud!(
-        apks,
-        add_apk,
-        add_apks,
-        InsertApk,
-        get_apks,
-        get_apk_by_id,
-        update_apk,
-        Apk,
-        delete_apk_by_id
-    );
-    impl_get_multi!(get_debuggable_apks, Apk, apks, is_debuggable.eq(true));
-    impl_get_one_by!(get_apk_by_app_name, &str, Apk, apks, app_name.eq);
-    impl_get_one_by!(get_apk_by_apk_name, &str, Apk, apks, name.eq);
-    impl_get_one_by!(get_apk_by_device_path, &str, Apk, apks, device_path.eq);
+    impl_simple_gets!(pub apks, Apk, get_apks, get_apk_by_id);
+    impl_get_multi!(pub get_debuggable_apks, Apk, apks, is_debuggable.eq(true));
+    impl_get_one_by!(pub get_apk_by_app_name, &str, Apk, apks, app_name.eq);
+    impl_get_one_by!(pub get_apk_by_apk_name, &str, Apk, apks, name.eq);
+    impl_get_one_by!(pub get_apk_by_device_path, &str, Apk, apks, device_path.eq);
 
-    impl_get_all!(
+    impl_get_all!(pub
         get_system_service_methods,
         SystemServiceMethod,
         system_service_methods
     );
 
-    impl_get_multi!(
+    impl_get_multi!(pub
         get_normal_permissions,
         Permission,
         permissions,
         protection_level.like("%normal%")
     );
 
-    impl_get_one_by!(
+    impl_get_one_by!(pub
         get_permission_by_apk,
         i32,
         Permission,
@@ -658,7 +340,7 @@ impl Database for DeviceSqliteDatabase {
         source_apk_id.eq
     );
 
-    impl_get_multi_by!(
+    impl_get_multi_by!(pub
         get_permissions_by_name_like,
         &str,
         Permission,
@@ -666,7 +348,7 @@ impl Database for DeviceSqliteDatabase {
         name.like
     );
 
-    impl_get_one_by!(
+    impl_get_one_by!(pub
         get_permission_by_name,
         &str,
         Permission,
@@ -674,19 +356,14 @@ impl Database for DeviceSqliteDatabase {
         name.eq
     );
 
-    impl_standard_crud!(
+    impl_simple_gets!(pub
         system_services,
-        add_system_service,
-        add_system_services,
-        InsertSystemService,
-        get_system_services,
-        get_system_service_by_id,
-        update_system_service,
         SystemService,
-        delete_system_service_by_id
+        get_system_services,
+        get_system_service_by_id
     );
 
-    impl_get_one_by!(
+    impl_get_one_by!(pub
         get_system_service_by_name,
         &str,
         SystemService,
@@ -694,21 +371,7 @@ impl Database for DeviceSqliteDatabase {
         name.eq
     );
 
-    impl_insert_one!(add_diff_source, InsertDiffSource, diff_sources);
-
-    impl_insert_one!(
-        add_system_service_impl,
-        InsertSystemServiceImpl,
-        system_service_impls
-    );
-
-    impl_insert_one!(
-        add_system_service_method,
-        InsertSystemServiceMethod,
-        system_service_methods
-    );
-
-    impl_get_multi_by!(
+    impl_get_multi_by!(pub
         get_system_service_impls,
         i32,
         SystemServiceImpl,
@@ -716,20 +379,15 @@ impl Database for DeviceSqliteDatabase {
         system_service_id.eq
     );
 
-    impl_get_multi_by!(
+    impl_get_multi_by!(pub
         get_system_service_methods_by_service_id,
         i32,
         SystemServiceMethod,
         system_service_methods,
         system_service_id.eq
     );
-    impl_update_one!(
-        update_system_service_method,
-        SystemServiceMethod,
-        system_service_methods
-    );
 
-    fn get_provider_containing_authority(&self, sel: &str) -> Result<Provider> {
+    pub fn get_provider_containing_authority(&self, sel: &str) -> Result<Provider> {
         use super::schema::providers::dsl::*;
         let like_middle = format!("%:{}:%", sel);
         let like_left = format!("{}:%", sel);
@@ -747,49 +405,49 @@ impl Database for DeviceSqliteDatabase {
         })
     }
 
-    impl_get_multi_by!(get_receivers_by_apk_id, i32, Receiver, receivers, apk_id.eq);
-    impl_get_multi_by!(get_services_by_apk_id, i32, Service, services, apk_id.eq);
-    impl_get_multi_by!(
+    impl_get_multi_by!(pub get_receivers_by_apk_id, i32, Receiver, receivers, apk_id.eq);
+    impl_get_multi_by!(pub get_services_by_apk_id, i32, Service, services, apk_id.eq);
+    impl_get_multi_by!(pub
         get_activities_by_apk_id,
         i32,
         Activity,
         activities,
         apk_id.eq
     );
-    impl_get_multi_by!(get_providers_by_apk_id, i32, Provider, providers, apk_id.eq);
+    impl_get_multi_by!(pub get_providers_by_apk_id, i32, Provider, providers, apk_id.eq);
 
-    impl_get_all!(get_diff_sources, DiffSource, diff_sources);
-    impl_get_one_by!(
+    impl_get_all!(pub get_diff_sources, DiffSource, diff_sources);
+    impl_get_one_by!(pub
         get_diff_source_by_name,
         &str,
         DiffSource,
         diff_sources,
         name.eq
     );
-    impl_delete_by!(
+    impl_delete_by!(pub
         delete_system_service_diff_by_service_id,
         i32,
         system_service_diffs,
         system_service.eq
     );
 
-    impl_delete_by!(
+    impl_delete_by!(pub
         delete_system_service_methods_by_service_id,
         i32,
         system_service_methods,
         system_service_id.eq
     );
 
-    impl_delete_by!(
+    impl_delete_by!(pub
         delete_system_service_impl_by_service_id,
         i32,
         system_service_impls,
         system_service_id.eq
     );
-    impl_delete_by!(delete_diff_source_by_id, i32, diff_sources, id.eq);
-    impl_delete_by!(delete_diff_source_by_name, &str, diff_sources, name.eq);
+    impl_delete_by!(pub delete_diff_source_by_id, i32, diff_sources, id.eq);
+    impl_delete_by!(pub delete_diff_source_by_name, &str, diff_sources, name.eq);
 
-    impl_diff_item!(
+    impl_diff_item!(pub
         add_permission_diff,
         InsertPermissionDiff,
         get_permission_diffs_by_diff_name,
@@ -801,7 +459,7 @@ impl Database for DeviceSqliteDatabase {
         permission_diffs
     );
 
-    impl_diff_item!(
+    impl_diff_item!(pub
         add_apk_diff,
         InsertApkDiff,
         get_apk_diffs_by_diff_name,
@@ -813,7 +471,7 @@ impl Database for DeviceSqliteDatabase {
         apk_diffs
     );
 
-    impl_diff_item!(
+    impl_diff_item!(pub
         add_system_service_diff,
         InsertSystemServiceDiff,
         get_system_service_diffs_by_diff_name,
@@ -825,7 +483,7 @@ impl Database for DeviceSqliteDatabase {
         system_service_diffs
     );
 
-    impl_diff_item!(
+    impl_diff_item!(pub
         add_system_service_method_diff,
         InsertSystemServiceMethodDiff,
         get_system_service_method_diffs_by_diff_name,
@@ -839,7 +497,7 @@ impl Database for DeviceSqliteDatabase {
         system_service_id.eq
     );
 
-    impl_diff_item!(
+    impl_diff_item!(pub
         add_service_diff,
         InsertServiceDiff,
         get_service_diffs_by_diff_name,
@@ -853,7 +511,7 @@ impl Database for DeviceSqliteDatabase {
         apk_id.eq
     );
 
-    impl_diff_item!(
+    impl_diff_item!(pub
         add_provider_diff,
         InsertProviderDiff,
         get_provider_diffs_by_diff_name,
@@ -867,7 +525,7 @@ impl Database for DeviceSqliteDatabase {
         apk_id.eq
     );
 
-    impl_diff_item!(
+    impl_diff_item!(pub
         add_activity_diff,
         InsertActivityDiff,
         get_activity_diffs_by_diff_name,
@@ -881,7 +539,7 @@ impl Database for DeviceSqliteDatabase {
         apk_id.eq
     );
 
-    impl_diff_item!(
+    impl_diff_item!(pub
         add_receiver_diff,
         InsertReceiverDiff,
         get_receiver_diffs_by_diff_name,
@@ -894,18 +552,13 @@ impl Database for DeviceSqliteDatabase {
         get_receiver_diffs_for_apk,
         apk_id.eq
     );
-    impl_standard_crud!(
+    impl_simple_gets!(pub
         fuzz_results,
-        add_fuzz_result,
-        add_fuzz_results,
-        InsertFuzzResult,
-        get_fuzz_results,
-        get_fuzz_result_by_id,
-        update_fuzz_result,
         FuzzResult,
-        delete_fuzz_result_by_id
+        get_fuzz_results,
+        get_fuzz_result_by_id
     );
-    impl_get_multi_by!(
+    impl_get_multi_by!(pub
         get_endpoints_by_security,
         bool,
         FuzzResult,
@@ -929,8 +582,7 @@ mod test {
 
     use super::super::common::cleanup_database;
     use crate::testing::{tmp_context, TestContext};
-    use crate::utils::{ensure_dir_exists, DevicePath};
-    use crate::UnknownBool;
+    use crate::utils::ensure_dir_exists;
 
     fn get_db_url(context: &dyn Context) -> String {
         let dir = context.get_sqlite_dir().expect("failed to get sqlite dir");
@@ -955,42 +607,15 @@ mod test {
         }};
     }
 
-    fn db_test(context: &dyn Context, func: impl FnOnce(DeviceSqliteDatabase)) {
+    fn db_test(context: &dyn Context, func: impl FnOnce(DeviceDatabase)) {
         let url = get_db_url(&context);
-        let db = DeviceSqliteDatabase::new_from_url(&url).expect("failed to get database");
+        let db = DeviceDatabase::new_from_url(&url).expect("failed to get database");
         let res = panic::catch_unwind(AssertUnwindSafe(|| func(db)));
         cleanup_database(&url);
         match res {
             Err(e) => panic::resume_unwind(e),
             _ => {}
         }
-    }
-
-    #[rstest]
-    fn test_system_service_crud(tmp_context: TestContext) {
-        db_test(&tmp_context, |db| {
-            let name = "insertable";
-            let ins = InsertSystemService::new(name, UnknownBool::False);
-            let id = db.add_system_service(&ins).expect("failed to add service");
-            let mut ent = db
-                .get_system_service_by_id(id)
-                .expect("failed to get service");
-
-            ent.name = String::from("updated");
-            ent.can_get_binder = UnknownBool::True;
-
-            db.update_system_service(&ent)
-                .expect("failed to update system service");
-
-            let updated = db
-                .get_system_service_by_id(ent.id)
-                .expect("failed to get by id");
-
-            assert_eq!(updated, ent, "update failed");
-
-            db.delete_system_service_by_id(ent.id)
-                .expect("failed to delete service by id");
-        })
     }
 
     #[rstest]
@@ -1046,33 +671,6 @@ mod test {
                 "should have retrieved a valid system service entry"
             );
         });
-    }
-
-    #[rstest]
-    fn test_apk_crud(tmp_context: TestContext) {
-        db_test(&tmp_context, |db| {
-            let ins = InsertApk::new(
-                "new.apk",
-                "NewApk.apk",
-                false,
-                true,
-                DevicePath::new("/system/priv-app/NewApk.apk"),
-            );
-            let id = db.add_apk(&ins).expect("failed to add apk");
-            let mut ent = db.get_apk_by_id(id).expect("failed to get apk");
-
-            ent.name = String::from("updated");
-            ent.is_debuggable = true;
-
-            db.update_apk(&ent).expect("failed to update apk");
-
-            let updated = db.get_apk_by_id(ent.id).expect("failed to get by id");
-
-            assert_eq!(updated, ent, "update failed");
-
-            db.delete_apk_by_id(ent.id)
-                .expect("failed to delete apk by id");
-        })
     }
 
     #[rstest]

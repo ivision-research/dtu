@@ -3,7 +3,7 @@ use std::fmt::Display;
 use clap::{self, Args, Subcommand};
 
 use dtu::db::device::models;
-use dtu::db::{ApkIPC, DeviceDatabase, DeviceSqliteDatabase};
+use dtu::db::{ApkIPC, DeviceDatabase};
 use dtu::prereqs::Prereq;
 use dtu::utils::ensure_prereq;
 use dtu::DefaultContext;
@@ -117,7 +117,7 @@ impl List {
     fn list_permissions(&self) -> anyhow::Result<()> {
         let ctx = DefaultContext::new();
         ensure_prereq(&ctx, Prereq::SQLDatabaseSetup)?;
-        let db = DeviceSqliteDatabase::new(&ctx)?;
+        let db = DeviceDatabase::new(&ctx)?;
         let perms = db.get_permissions()?;
         for p in &perms {
             println!("{}", p);
@@ -128,11 +128,11 @@ impl List {
     fn do_list<F, R>(&self, p: &CommonParams, func: F) -> anyhow::Result<()>
     where
         R: ApkIPC + Display,
-        F: FnOnce(&dyn DeviceDatabase) -> anyhow::Result<Vec<R>>,
+        F: FnOnce(&DeviceDatabase) -> anyhow::Result<Vec<R>>,
     {
         let ctx = DefaultContext::new();
         ensure_prereq(&ctx, Prereq::SQLDatabaseSetup)?;
-        let db = DeviceSqliteDatabase::new(&ctx)?;
+        let db = DeviceDatabase::new(&ctx)?;
         let unfiltered = func(&db)?;
         let items = unfiltered.iter().filter(|it| {
             if p.only_public && !it.is_exported() {

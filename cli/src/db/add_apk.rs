@@ -9,13 +9,13 @@ use dtu::{
     db::{
         self,
         device::{
-            get_default_devicedb, models::DiffSource, AddApkTask, ApkIdentifier, DiffOptions,
-            DiffTask,
+            models::DiffSource, schema::apks, AddApkTask, ApkIdentifier, DiffOptions, DiffTask,
         },
-        DeviceDatabase, DeviceSqliteDatabase,
+        DeviceDatabase,
     },
     decompile::{ApkFile, Decompile},
     devicefs::{get_project_devicefs_helper, DeviceFSHelper},
+    diesel::{delete, prelude::*},
     prereqs::Prereq,
     tasks::{pull::move_apk_smali, ChannelEventMonitor, TaskCanceller},
     utils::{ensure_prereq, path_must_str, DevicePath},
@@ -59,7 +59,7 @@ impl AddApk {
         let ctx = DefaultContext::new();
         ensure_prereq(&ctx, Prereq::SQLDatabaseSetup)?;
 
-        let db = get_default_devicedb(&ctx)?;
+        let db = DeviceDatabase::new(&ctx)?;
         let dfs = get_project_devicefs_helper(&ctx)?;
         let device_path = DevicePath::new(&self.device_path);
         let apks_dir = ctx.get_apks_dir()?;
@@ -89,7 +89,7 @@ impl AddApk {
             }
 
             // This should delete everything due to foreign keys and cascades
-            db.delete_apk_by_id(id)?;
+            db.with_connection(|c| delete(apks::table.filter(apks::id.eq(id))).execute(c))?;
         }
 
         let (cancel, check) = TaskCanceller::new();
@@ -97,17 +97,19 @@ impl AddApk {
         let (mon, chan) = ChannelEventMonitor::create();
 
         let thread_handle = start_monitor_thread(self.quiet, chan);
-        let task = AddApkTask::new(
-            &ctx,
-            &db,
-            Some(&mon),
-            &apktool_out_dir,
-            &device_path,
-            None,
-            ApkIdentifier::new(0, 0),
-            &check,
-        );
-        let res = task.run();
+        let res = db.with_transaction(|c| {
+            let task = AddApkTask::new(
+                &ctx,
+                c,
+                Some(&mon),
+                &apktool_out_dir,
+                &device_path,
+                None,
+                ApkIdentifier::new(0, 0),
+                &check,
+            );
+            task.run()
+        });
         drop(mon);
         let err_reporter = thread_handle
             .join()
@@ -132,10 +134,10 @@ impl AddApk {
         &self,
         ctx: &dyn Context,
         source: DiffSource,
-        db: &dyn DeviceDatabase,
+        db: &DeviceDatabase,
     ) -> anyhow::Result<()> {
         let diff_db_path = get_path_for_diff_source(ctx, &source.name)?;
-        let diff_db = DeviceSqliteDatabase::new_from_path(path_must_str(&diff_db_path))?;
+        let diff_db = DeviceDatabase::new_from_path(path_must_str(&diff_db_path))?;
         let (_cancel, check) = task_canceller()?;
         let (mon, _handle) = PrintMonitor::start()?;
         let opts = DiffOptions::new(source);

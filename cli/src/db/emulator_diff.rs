@@ -3,8 +3,11 @@ use std::path::PathBuf;
 use anyhow::bail;
 use clap::{self, Args};
 
+use dtu::db::device::schema::diff_sources;
 use dtu::db::device::{models, DiffOptions, DiffTask, EMULATOR_DIFF_SOURCE};
-use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
+use dtu::db::{DeviceDatabase, MetaDatabase, MetaSqliteDatabase};
+use dtu::diesel::insert_into;
+use dtu::diesel::prelude::*;
 use dtu::prereqs::Prereq;
 use dtu::utils::path_must_str;
 use dtu::{Context, DefaultContext};
@@ -40,7 +43,7 @@ impl EmulatorDiff {
     pub fn run(&self) -> anyhow::Result<()> {
         let ctx = DefaultContext::new();
         let meta = MetaSqliteDatabase::new(&ctx)?;
-        let db = DeviceSqliteDatabase::new(&ctx)?;
+        let db = DeviceDatabase::new(&ctx)?;
 
         let mut prereq = meta.get_progress(Prereq::EmulatorDiff)?;
         if self.force {
@@ -66,29 +69,29 @@ impl EmulatorDiff {
         res
     }
 
-    fn get_diff_db(&self, ctx: &dyn Context) -> anyhow::Result<DeviceSqliteDatabase> {
+    fn get_diff_db(&self, ctx: &dyn Context) -> anyhow::Result<DeviceDatabase> {
         if let Some(p) = &self.path {
             let path_str = path_must_str(p);
-            return Ok(DeviceSqliteDatabase::new_from_path(path_str)?);
+            return Ok(DeviceDatabase::new_from_path(path_str)?);
         }
 
         let api_level = self.api_level.unwrap_or_else(|| ctx.get_target_api_level());
         get_aosp_database(ctx, api_level)
     }
 
-    fn wipe_emulator_diff(&self, db: &dyn DeviceDatabase) -> anyhow::Result<()> {
+    fn wipe_emulator_diff(&self, db: &DeviceDatabase) -> anyhow::Result<()> {
         let ds = db.get_diff_source_by_name(EMULATOR_DIFF_SOURCE)?;
         db.delete_diff_source_by_id(ds.id)?;
         let ins = models::InsertDiffSource { name: &ds.name };
-        db.add_diff_source(&ins)?;
+        db.with_connection(|c| insert_into(diff_sources::table).values(&ins).execute(c))?;
         Ok(())
     }
 
     fn add_source(
         &self,
         new_source: models::DiffSource,
-        db: &DeviceSqliteDatabase,
-        other_db: &DeviceSqliteDatabase,
+        db: &DeviceDatabase,
+        other_db: &DeviceDatabase,
     ) -> anyhow::Result<()> {
         let (_cancel, check) = task_canceller()?;
         let (mon, _join) = PrintMonitor::start()?;

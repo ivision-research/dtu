@@ -1,7 +1,3 @@
-// TODO: The setup here is old and not efficient at all. For one, none of the inserts happen in a
-// transaction. We should be able to easily add an APK in single unified a transaction. The database
-// also has no indices. I'd like to see the device database loading reworked to be more efficient
-// and fault tolerant.
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fs::DirEntry;
@@ -9,6 +5,7 @@ use std::ops::Deref;
 use std::path::PathBuf;
 
 use base64::Engine;
+use diesel::{insert_into, prelude::*, update};
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use smalisa::instructions::{InvArgs, Invocation};
@@ -23,8 +20,9 @@ use crate::adb::{Adb, ExecAdb, ADB_CONFIG_KEY};
 use crate::command::err_on_status;
 use crate::context::Context;
 use crate::db::common::Error;
-use crate::db::device::db::Database;
+use crate::db::device::db::{DeviceDatabase, SqlConnection};
 use crate::db::device::models::*;
+use crate::db::device::schema::*;
 use crate::db::graph::models::{ClassSearch, ClassSpec};
 use crate::db::graph::{GraphDatabase, FRAMEWORK_SOURCE};
 use crate::db::MetaDatabase;
@@ -40,8 +38,6 @@ use crate::utils::fs::{
 };
 use crate::utils::open_file;
 use crate::Manifest;
-
-use super::db::DeviceSqliteDatabase;
 
 #[wraps_base_error]
 #[derive(Debug, thiserror::Error)]
@@ -66,6 +62,12 @@ pub enum SetupError {
     Generic(String),
     #[error("invalid manifest for {0} - {1}")]
     InvalidManifest(String, String),
+}
+
+impl From<diesel::result::Error> for SetupError {
+    fn from(value: diesel::result::Error) -> Self {
+        Self::DB(value.into())
+    }
 }
 
 impl<'a> From<smalisa::ParseError<'a>> for SetupError {
@@ -214,7 +216,6 @@ struct AddManifestTask<'a> {
     ctx: &'a dyn Context,
     pkg: Cow<'a, str>,
     device_path: &'a DevicePath,
-    db: &'a dyn Database,
     cancel: &'a TaskCancelCheck,
     monitor: Option<&'a dyn EventMonitor<SetupEvent>>,
     identifier: ApkIdentifier,
@@ -223,26 +224,27 @@ struct AddManifestTask<'a> {
 }
 
 impl<'a> AddManifestTask<'a> {
-    fn run(&self) -> SetupResult<()> {
+    fn run(self, conn: &mut SqlConnection) -> SetupResult<()> {
         log::trace!("Adding apk receivers");
-        self.add_manifest_receivers(self.manifest.get_receivers())?;
+        self.add_manifest_receivers(conn, self.manifest.get_receivers())?;
 
         self.cancel_check()?;
         log::trace!("Adding apk services");
 
-        self.add_manifest_services(self.manifest.get_services())?;
+        self.add_manifest_services(conn, self.manifest.get_services())?;
 
         self.cancel_check()?;
 
         log::trace!("Adding apk providers");
 
-        self.add_manifest_providers(self.manifest.get_providers())?;
+        self.add_manifest_providers(conn, self.manifest.get_providers())?;
 
         self.cancel_check()?;
 
         log::trace!("Adding apk activities");
 
         self.add_manifest_activities(
+            conn,
             self.manifest.get_activities(),
             self.manifest.get_activity_aliases(),
         )?;
@@ -252,12 +254,13 @@ impl<'a> AddManifestTask<'a> {
         log::trace!("Adding apk permissions");
 
         self.add_manifest_permissions(
+            conn,
             self.manifest.get_permissions(),
             self.manifest.get_uses_permissions(),
         )?;
 
         log::trace!("Adding protected broadcasts");
-        self.add_protected_broadcasts(self.manifest.get_protected_broadcasts())?;
+        self.add_protected_broadcasts(conn, self.manifest.get_protected_broadcasts())?;
 
         Ok(())
     }
@@ -267,29 +270,54 @@ impl<'a> AddManifestTask<'a> {
         self.cancel.check(SetupError::Cancelled)
     }
 
-    fn add_protected_broadcasts(&self, pbs: &[manifest::ProtectedBroadcast]) -> SetupResult<()> {
+    fn add_protected_broadcasts(
+        &self,
+        conn: &mut SqlConnection,
+        pbs: &[manifest::ProtectedBroadcast],
+    ) -> SetupResult<()> {
         for pb in pbs {
-            self.add_protected_broadcast(&pb)?;
+            self.add_protected_broadcast(conn, &pb)?;
         }
         Ok(())
     }
 
-    fn add_protected_broadcast(&self, pb: &manifest::ProtectedBroadcast) -> SetupResult<()> {
+    fn add_protected_broadcast(
+        &self,
+        conn: &mut SqlConnection,
+        pb: &manifest::ProtectedBroadcast,
+    ) -> SetupResult<()> {
         let ins = InsertProtectedBroadcast {
             name: &pb.name(self.resolver),
         };
-        self.db.add_protected_broadcast(&ins)?;
+        if let Err(e) = insert_into(protected_broadcasts::table)
+            .values(&ins)
+            .execute(conn)
+            .map_err(Error::from)
+        {
+            if !matches!(e, Error::UniqueViolation(_)) {
+                return Err(e.into());
+            }
+        }
+
         Ok(())
     }
 
-    fn add_manifest_receivers(&self, rcvers: &[manifest::Receiver]) -> SetupResult<()> {
+    fn add_manifest_receivers(
+        &self,
+        conn: &mut SqlConnection,
+        rcvers: &[manifest::Receiver],
+    ) -> SetupResult<()> {
         for r in rcvers {
-            self.add_manifest_receiver(&r)?;
+            self.add_manifest_receiver(conn, &r)?;
         }
         Ok(())
     }
 
-    fn add_manifest_receiver(&self, rcv: &manifest::Receiver) -> SetupResult<()> {
+    fn add_manifest_receiver(
+        &self,
+        conn: &mut SqlConnection,
+        rcv: &manifest::Receiver,
+    ) -> SetupResult<()> {
         let common = IPCCommon::from_ipc(rcv, self.resolver);
 
         let enabled = common.is_enabled();
@@ -314,12 +342,15 @@ impl<'a> AddManifestTask<'a> {
             enabled,
             pkg: pkg_name,
         };
-        self.db.add_receiver(&ins)?;
-
+        insert_into(receivers::table).values(&ins).execute(conn)?;
         Ok(())
     }
 
-    fn add_manifest_provider(&self, prov: &manifest::Provider) -> SetupResult<()> {
+    fn add_manifest_provider(
+        &self,
+        conn: &mut SqlConnection,
+        prov: &manifest::Provider,
+    ) -> SetupResult<()> {
         let common = IPCCommon::from_ipc(prov, self.resolver);
 
         let (raw_class_name, pkg_name) = common.class_and_package(&self.pkg);
@@ -351,35 +382,44 @@ impl<'a> AddManifestTask<'a> {
             read_permission: read_perm.as_ref().map(|it| it.as_ref()),
             write_permission: write_perm.as_ref().map(|it| it.as_ref()),
         };
-        self.db.add_provider(&ins)?;
+        insert_into(providers::table).values(&ins).execute(conn)?;
 
         Ok(())
     }
 
-    fn add_manifest_providers(&self, providers: &[manifest::Provider]) -> SetupResult<()> {
+    fn add_manifest_providers(
+        &self,
+        conn: &mut SqlConnection,
+        providers: &[manifest::Provider],
+    ) -> SetupResult<()> {
         for p in providers {
-            self.add_manifest_provider(&p)?;
+            self.add_manifest_provider(conn, &p)?;
         }
         Ok(())
     }
 
     fn add_manifest_activities(
         &self,
+        conn: &mut SqlConnection,
         activities: &[manifest::Activity],
         aliases: &[manifest::Activity],
     ) -> SetupResult<()> {
         for act in activities {
-            self.add_manifest_activity(act)?;
+            self.add_manifest_activity(conn, act)?;
         }
 
         for act in aliases {
-            self.add_manifest_activity(act)?;
+            self.add_manifest_activity(conn, act)?;
         }
 
         Ok(())
     }
 
-    fn add_manifest_activity(&self, act: &manifest::Activity) -> SetupResult<()> {
+    fn add_manifest_activity(
+        &self,
+        conn: &mut SqlConnection,
+        act: &manifest::Activity,
+    ) -> SetupResult<()> {
         let common = IPCCommon::from_ipc(act, self.resolver);
         let (raw_class_name, pkg_name) = common.class_and_package(&self.pkg);
         let class_name = ClassName::from_split_manifest(pkg_name, raw_class_name);
@@ -398,18 +438,26 @@ impl<'a> AddManifestTask<'a> {
             apk_id: self.apk_id,
             permission: common.permission(),
         };
-        self.db.add_activity(&ins)?;
+        insert_into(activities::table).values(&ins).execute(conn)?;
         Ok(())
     }
 
-    fn add_manifest_services(&self, services: &[manifest::Service]) -> SetupResult<()> {
+    fn add_manifest_services(
+        &self,
+        conn: &mut SqlConnection,
+        services: &[manifest::Service],
+    ) -> SetupResult<()> {
         for s in services {
-            self.add_manifest_service(&s)?;
+            self.add_manifest_service(conn, &s)?;
         }
         Ok(())
     }
 
-    fn add_manifest_service(&self, svc: &manifest::Service) -> SetupResult<()> {
+    fn add_manifest_service(
+        &self,
+        conn: &mut SqlConnection,
+        svc: &manifest::Service,
+    ) -> SetupResult<()> {
         let common = IPCCommon::from_ipc(svc, self.resolver);
 
         let enabled = common.is_enabled();
@@ -437,18 +485,19 @@ impl<'a> AddManifestTask<'a> {
             permission,
             returns_binder,
         };
-        self.db.add_service(&ins)?;
+        insert_into(services::table).values(&ins).execute(conn)?;
 
         Ok(())
     }
 
     fn add_manifest_permissions(
         &self,
+        conn: &mut SqlConnection,
         permissions: &[manifest::Permission],
         uses_permissions: &[manifest::UsesPermission],
     ) -> SetupResult<()> {
         for p in permissions {
-            self.add_manifest_permission(p)?;
+            self.add_manifest_permission(conn, p)?;
         }
 
         for up in uses_permissions {
@@ -460,7 +509,11 @@ impl<'a> AddManifestTask<'a> {
                 apk_id: self.apk_id,
                 name: &name,
             };
-            match self.db.add_apk_permission(&ins) {
+            match insert_into(apk_permissions::table)
+                .values(&ins)
+                .execute(conn)
+                .map_err(Error::from)
+            {
                 Err(Error::UniqueViolation(_)) => {
                     log::warn!(
                         "unique constraint violation for APK permission {}, source: {}",
@@ -554,7 +607,11 @@ impl<'a> AddManifestTask<'a> {
         }
     }
 
-    fn add_manifest_permission(&self, perm: &manifest::Permission) -> SetupResult<()> {
+    fn add_manifest_permission(
+        &self,
+        conn: &mut SqlConnection,
+        perm: &manifest::Permission,
+    ) -> SetupResult<()> {
         let name = perm.name(self.resolver);
         let protection_level = perm.protection_level(self.resolver);
 
@@ -572,7 +629,11 @@ impl<'a> AddManifestTask<'a> {
             source_apk_id: self.apk_id,
         };
 
-        match self.db.add_permission(&ins) {
+        match insert_into(permissions::table)
+            .values(&ins)
+            .execute(conn)
+            .map_err(Error::from)
+        {
             Err(Error::UniqueViolation(_)) => {
                 log::warn!(
                     "unique constraint violation for permission {}, source: {}",
@@ -589,7 +650,7 @@ impl<'a> AddManifestTask<'a> {
 
 pub struct AddApkTask<'a> {
     ctx: &'a dyn Context,
-    db: &'a dyn Database,
+    conn: &'a mut SqlConnection,
     apktool_out_dir: &'a PathBuf,
     device_path: &'a DevicePath,
     priv_app_paths: Option<&'a HashSet<String>>,
@@ -598,7 +659,7 @@ pub struct AddApkTask<'a> {
     identifier: ApkIdentifier,
 }
 
-impl DeviceSqliteDatabase {
+impl DeviceDatabase {
     pub fn setup(
         &self,
         ctx: &dyn Context,
@@ -643,7 +704,7 @@ pub struct DBSetupTask<'a> {
     ctx: &'a dyn Context,
     helper: &'a dyn DatabaseSetupHelper,
     graph: &'a dyn GraphDatabase,
-    db: &'a dyn Database,
+    db: &'a DeviceDatabase,
     monitor: Option<&'a dyn EventMonitor<SetupEvent>>,
     cancel: TaskCancelCheck,
 }
@@ -657,7 +718,7 @@ pub struct AddSystemServiceTask<'a> {
     task_id: usize,
     service: &'a ServiceMeta,
     graph: Option<&'a dyn GraphDatabase>,
-    db: &'a dyn Database,
+    db: &'a DeviceDatabase,
     monitor: Option<&'a dyn EventMonitor<SetupEvent>>,
     cancel: &'a TaskCancelCheck,
 
@@ -674,7 +735,7 @@ impl<'a> AddSystemServiceTask<'a> {
         task_id: usize,
         service: &'a ServiceMeta,
         graph: Option<&'a dyn GraphDatabase>,
-        db: &'a dyn Database,
+        db: &'a DeviceDatabase,
         monitor: Option<&'a dyn EventMonitor<SetupEvent>>,
         cancel: &'a TaskCancelCheck,
     ) -> Self {
@@ -723,7 +784,7 @@ impl<'a> AddSystemServiceTask<'a> {
             }
         );
 
-        let res = self.add_service();
+        let res = self.db.with_transaction(|c| self.add_service(c));
         on_event!(
             &self.monitor,
             SetupEvent::DoneAddingSystemService {
@@ -733,19 +794,22 @@ impl<'a> AddSystemServiceTask<'a> {
         res
     }
 
-    fn add_service(&self) -> SetupResult<()> {
+    fn add_service(&self, conn: &mut SqlConnection) -> SetupResult<()> {
         let iface = self.service.iface.as_ref();
 
         let ins = InsertSystemService::new(&self.service.service_name, UnknownBool::Unknown)
             .set_iface(iface.cloned());
 
-        let id = match self.db.add_system_service(&ins) {
-            Err(Error::UniqueViolation(_)) if self.allow_exists => {
-                let service = self
-                    .db
-                    .get_system_service_by_name(&self.service.service_name)?;
-                service.id
-            }
+        let id = match insert_into(system_services::table)
+            .values(&ins)
+            .returning(system_services::id)
+            .get_result(conn)
+            .map_err(Error::from)
+        {
+            Err(Error::UniqueViolation(_)) if self.allow_exists => system_services::table
+                .filter(system_services::name.eq(&self.service.service_name))
+                .select(system_services::id)
+                .get_result::<i32>(conn)?,
             Err(e) => return Err(e.into()),
             Ok(v) => v,
         };
@@ -753,7 +817,7 @@ impl<'a> AddSystemServiceTask<'a> {
         if iface.is_none() {
             return Ok(());
         }
-        self.add_service_interface_details(id, iface.unwrap())
+        self.add_service_interface_details(conn, id, iface.unwrap())
     }
 
     #[inline]
@@ -768,12 +832,13 @@ impl<'a> AddSystemServiceTask<'a> {
     /// to attempt to find implementations and their associated smali files
     fn add_service_interface_details(
         &self,
+        conn: &mut SqlConnection,
         service_db_id: i32,
         iface: &ClassName,
     ) -> SetupResult<()> {
         let stub = ClassName::from(format!("{}$Stub", iface.get_java_name()));
 
-        match self.add_methods_from_iface_and_stub(service_db_id, iface, &stub) {
+        match self.add_methods_from_iface_and_stub(conn, service_db_id, iface, &stub) {
             Err(SetupError::Smalisa(err)) => {
                 log::error!("smalisa error {} for stub {}", err, stub)
             }
@@ -783,11 +848,11 @@ impl<'a> AddSystemServiceTask<'a> {
 
         match self.impl_path {
             None => {
-                let imp = match self.find_and_add_impls(service_db_id, &stub)? {
+                let imp = match self.find_and_add_impls(conn, service_db_id, &stub)? {
                     None => return Ok(()),
                     Some(it) => it,
                 };
-                self.update_method_hashes(service_db_id, &imp)?;
+                self.update_method_hashes(conn, service_db_id, &imp)?;
             }
             Some(p) => {
                 let class_name = self.get_class_from_file(p)?;
@@ -798,8 +863,10 @@ impl<'a> AddSystemServiceTask<'a> {
                 };
 
                 let ins = InsertSystemServiceImpl::new(service_db_id, source, class_name);
-                self.db.add_system_service_impl(&ins)?;
-                self.update_method_hashes_from_path(service_db_id, p)?;
+                insert_into(system_service_impls::table)
+                    .values(&ins)
+                    .execute(conn)?;
+                self.update_method_hashes_from_path(conn, service_db_id, p)?;
             }
         }
 
@@ -837,12 +904,13 @@ impl<'a> AddSystemServiceTask<'a> {
     /// implementation.
     fn update_method_hashes_from_path(
         &self,
+        conn: &mut SqlConnection,
         service_db_id: i32,
         path: &PathBuf,
     ) -> SetupResult<()> {
-        let mut methods = match self
-            .db
-            .get_system_service_methods_by_service_id(service_db_id)
+        let methods = match system_service_methods::table
+            .filter(system_service_methods::system_service_id.eq(service_db_id))
+            .get_results::<SystemServiceMethod>(conn)
         {
             Ok(m) => m,
             Err(_e) => {
@@ -861,41 +929,42 @@ impl<'a> AddSystemServiceTask<'a> {
         let class = parse_class(&mut parser).map_err(|e| SetupError::Smalisa(e.to_string()))?;
 
         for m in class.methods {
-            let db_method = methods.iter_mut().find(|it| {
+            let Some(dbm) = methods.iter().find(|it| {
                 it.name == m.name && it.signature.as_ref().map_or(false, |s| s == m.args)
-            });
-
-            match db_method {
-                Some(dbm) => self.update_method_hash(dbm, &m)?,
-                None => continue,
+            }) else {
+                continue;
             };
+            self.update_method_hash(conn, dbm.id, &m)?;
         }
 
         Ok(())
     }
 
-    fn update_method_hashes(&self, service_db_id: i32, imp: &ClassSpec) -> SetupResult<()> {
-        let path = match self.get_class_smali_path(&imp) {
-            None => {
-                log::warn!("failed to find the smali file for {}", imp.name);
-                return Ok(());
-            }
-            Some(v) => v,
+    fn update_method_hashes(
+        &self,
+        conn: &mut SqlConnection,
+        service_db_id: i32,
+        imp: &ClassSpec,
+    ) -> SetupResult<()> {
+        let Some(path) = self.get_class_smali_path(&imp) else {
+            log::warn!("failed to find the smali file for {}", imp.name);
+            return Ok(());
         };
 
-        self.update_method_hashes_from_path(service_db_id, &path)
+        self.update_method_hashes_from_path(conn, service_db_id, &path)
     }
 
     fn update_method_hash(
         &self,
-        dbm: &mut SystemServiceMethod,
+        conn: &mut SqlConnection,
+        id: i32,
         method: &Method,
     ) -> SetupResult<()> {
         let hash = self.get_method_hash(method);
 
-        dbm.smalisa_hash = Some(hash);
-
-        self.db.update_system_service_method(dbm)?;
+        update(system_service_methods::table.filter(system_service_methods::id.eq(id)))
+            .set(system_service_methods::smalisa_hash.eq(&hash))
+            .execute(conn)?;
 
         Ok(())
     }
@@ -960,6 +1029,7 @@ impl<'a> AddSystemServiceTask<'a> {
     /// choosing which one to use and we just default to the first.
     fn find_and_add_impls(
         &self,
+        conn: &mut SqlConnection,
         service_db_id: i32,
         stub: &ClassName,
     ) -> SetupResult<Option<ClassSpec>> {
@@ -996,7 +1066,7 @@ impl<'a> AddSystemServiceTask<'a> {
             );
 
             let smali_name = imp.name.get_smali_name();
-            self.add_system_service_impl(service_db_id, smali_name.as_ref(), &src)?;
+            self.add_system_service_impl(conn, service_db_id, smali_name.as_ref(), &src)?;
         }
 
         if impls.len() > 1 {
@@ -1081,6 +1151,7 @@ impl<'a> AddSystemServiceTask<'a> {
     /// Otherwise we'll try to find the $Stub file from the class name
     fn add_methods_from_iface_and_stub(
         &self,
+        conn: &mut SqlConnection,
         service_db_id: i32,
         iface: &ClassName,
         stub: &ClassName,
@@ -1114,7 +1185,9 @@ impl<'a> AddSystemServiceTask<'a> {
             let ins = InsertSystemServiceMethod::new(service_db_id, m.txn_id, m.name.as_str())
                 .set_signature(signature)
                 .set_return_type(return_type);
-            self.db.add_system_service_method(&ins)?;
+            insert_into(system_service_methods::table)
+                .values(&ins)
+                .execute(conn)?;
         }
 
         Ok(())
@@ -1122,12 +1195,15 @@ impl<'a> AddSystemServiceTask<'a> {
 
     fn add_system_service_impl(
         &self,
+        conn: &mut SqlConnection,
         service_db_id: i32,
         imp: &str,
         source: &str,
     ) -> SetupResult<()> {
         let ins = InsertSystemServiceImpl::new(service_db_id, source, imp.into());
-        self.db.add_system_service_impl(&ins)?;
+        insert_into(system_service_impls::table)
+            .values(&ins)
+            .execute(conn)?;
         Ok(())
     }
 
@@ -1221,7 +1297,7 @@ impl<'a> AddSystemServiceTask<'a> {
 impl<'a> AddApkTask<'a> {
     pub fn new(
         ctx: &'a dyn Context,
-        db: &'a dyn Database,
+        conn: &'a mut SqlConnection,
         monitor: Option<&'a dyn EventMonitor<SetupEvent>>,
         apktool_out_dir: &'a PathBuf,
         device_path: &'a DevicePath,
@@ -1231,7 +1307,7 @@ impl<'a> AddApkTask<'a> {
     ) -> Self {
         Self {
             ctx,
-            db,
+            conn,
             monitor,
             cancel,
             apktool_out_dir,
@@ -1241,7 +1317,7 @@ impl<'a> AddApkTask<'a> {
         }
     }
 
-    pub fn run(&self) -> SetupResult<()> {
+    pub fn run(self) -> SetupResult<()> {
         let manifest_path = self.apktool_out_dir.join("AndroidManifest.xml");
         if !manifest_path.exists() {
             log::warn!("apk {} has no manifest", self.device_path);
@@ -1273,7 +1349,10 @@ impl<'a> AddApkTask<'a> {
             self.device_path.clone(),
         );
 
-        let apk_id = self.db.add_apk(&new_apk)?;
+        let apk_id = insert_into(apks::table)
+            .values(&new_apk)
+            .returning(apks::id)
+            .get_result(self.conn)?;
         self.cancel_check()?;
 
         let manifest_task = AddManifestTask {
@@ -1281,7 +1360,6 @@ impl<'a> AddApkTask<'a> {
             ctx: self.ctx,
             pkg,
             device_path: self.device_path,
-            db: self.db,
             cancel: self.cancel,
             monitor: self.monitor,
             identifier: self.identifier,
@@ -1289,7 +1367,7 @@ impl<'a> AddApkTask<'a> {
             resolver: &resolver,
         };
 
-        manifest_task.run()
+        manifest_task.run(self.conn)
     }
 
     #[inline]
@@ -1424,7 +1502,7 @@ impl<'a> DBSetupTask<'a> {
         ctx: &'a dyn Context,
         helper: &'a dyn DatabaseSetupHelper,
         graph: &'a dyn GraphDatabase,
-        db: &'a dyn Database,
+        db: &'a DeviceDatabase,
         monitor: Option<&'a dyn EventMonitor<SetupEvent>>,
         cancel: TaskCancelCheck,
     ) -> Self {
@@ -1464,7 +1542,16 @@ impl<'a> DBSetupTask<'a> {
             .map(|(name, value)| InsertDeviceProperty { name, value })
             .collect::<Vec<InsertDeviceProperty>>();
 
-        match self.db.add_device_properties(ins.as_slice()) {
+        let res = self
+            .db
+            .with_connection(|c| {
+                insert_into(device_properties::table)
+                    .values(ins.as_slice())
+                    .execute(c)
+            })
+            .map_err(Error::from);
+
+        match res {
             Err(Error::UniqueViolation(_)) => Ok(()),
             Err(e) => Err(e.into()),
             Ok(_) => Ok(()),
@@ -1575,18 +1662,24 @@ impl<'a> DBSetupTask<'a> {
     ) -> SetupResult<()> {
         let apktool_out_dir = decompiled_dir.join(device_path);
 
-        let task = AddApkTask::new(
-            self.ctx,
-            self.db,
-            self.monitor,
-            &apktool_out_dir,
-            device_path,
-            Some(priv_app_names),
-            identifier,
-            &self.cancel,
-        );
+        let ctx = self.ctx;
+        let monitor = self.monitor;
+        let cancel = &self.cancel;
 
-        task.run()
+        self.db.with_transaction(|conn| {
+            let task = AddApkTask::new(
+                ctx,
+                conn,
+                monitor,
+                &apktool_out_dir,
+                device_path,
+                Some(priv_app_names),
+                identifier,
+                cancel,
+            );
+
+            task.run()
+        })
     }
 
     #[inline]

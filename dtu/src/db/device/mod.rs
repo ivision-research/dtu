@@ -15,10 +15,3 @@ pub mod setup;
 pub use setup::*;
 
 use super::common;
-
-pub type DefaultDeviceDatabase = db::DeviceSqliteDatabase;
-
-/// Get the default [DeviceDatabase] implementation
-pub fn get_default_devicedb(ctx: &dyn crate::Context) -> common::Result<DefaultDeviceDatabase> {
-    db::DeviceSqliteDatabase::new(ctx)
-}

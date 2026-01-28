@@ -1,5 +1,5 @@
 use clap::{self, Args, Subcommand};
-use dtu::db::{DeviceDatabase, DeviceSqliteDatabase, MetaDatabase, MetaSqliteDatabase};
+use dtu::db::{DeviceDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::{Context, DefaultContext};
 
@@ -59,7 +59,7 @@ pub fn get_diff_source(
         }
         None => {
             meta.ensure_prereq(Prereq::EmulatorDiff)?;
-            let db = DeviceSqliteDatabase::new(ctx)?;
+            let db = DeviceDatabase::new(ctx)?;
             db.get_diff_source_by_name(EMULATOR_DIFF_SOURCE)?
         }
     };
