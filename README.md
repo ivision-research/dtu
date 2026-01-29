@@ -74,6 +74,15 @@ This will create a test application that is installed on the device. This applic
 
 After you're setup you can start actually using `dtu` for analysis. How you do this is up to you, but we'll mention some useful tips here.
 
+### Relevant environmental variables
+
+- `DTU_EDITOR` - If this is set, all `open` related flags will use this instead of `EDITOR`. This does not need to be set if `EDITOR` is set
+- `DTU_CACHEBUST` - Some commands will cache their result in `$DTU_PROJECT_HOME/dtu_out/cache`, if you don't want this caching set this
+- `NO_COLOR` - We try to respect this setting, let us know if it isn't
+- `DTU_OPEN_EXECUTABLE` - Used by the UI when opening files. If this doesn't exist that functionality will just silently fail, see below for more info
+- `DTU_CLIPBOARD_EXECUTABLE` - Used by the UI to put some prepopulated commands into your clipboard. If this doesn't exist that functionality will jsut silently fail, see below for more info
+- `DTU_ANDROID_API_LEVEL` - Set the API level, otherwise this is discovered dynamically with ADB
+
 ### Diffing and `dtu diff ui`
 
 Note: when you open the diff TUI via `dtu diff ui`, type `?` to get some basic help.

@@ -3,7 +3,7 @@ use dtu::utils::{ClassName, DevicePath};
 use dtu::DefaultContext;
 
 use crate::parsers::DevicePathValueParser;
-use crate::utils::{exec_open_file, find_smali_file, invoke_dtu_open_file};
+use crate::utils::{exec_open_file, find_smali_file};
 
 #[derive(Args)]
 pub struct OpenSmaliFile {
@@ -21,21 +21,13 @@ pub struct OpenSmaliFile {
     /// The class name (smali or Java) of the file to open
     #[arg(short, long)]
     class: ClassName,
-
-    /// Use `dtu-open-file` instead
-    #[arg(short, long)]
-    dtu_open: bool,
 }
 
 impl OpenSmaliFile {
     pub fn run(&self) -> anyhow::Result<()> {
         let ctx = DefaultContext::new();
         let fname = find_smali_file(&ctx, &self.class, &self.apk, !self.no_fallback)?;
-        if self.dtu_open {
-            invoke_dtu_open_file(&ctx, &fname, "")?;
-        } else {
-            exec_open_file(&ctx, &fname)?;
-        }
+        exec_open_file(&ctx, &fname)?;
         Ok(())
     }
 }

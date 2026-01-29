@@ -20,6 +20,9 @@ use protected_broadcast::ProtectedBroadcast;
 
 mod utils;
 
+mod manifest;
+use manifest::FindManifest;
+
 mod callers;
 use callers::FindCallers;
 
@@ -64,6 +67,10 @@ enum Command {
     /// Find calls leaving IPC to the given method
     #[command()]
     IPCCalls(FindIPCCalls),
+
+    /// Find and optionally open an APK's manifest file
+    #[command()]
+    Manifest(FindManifest),
 }
 
 fn graph_db(ctx: &dyn Context) -> anyhow::Result<DefaultGraphDatabase> {
@@ -80,6 +87,7 @@ impl Find {
             Command::Permission(c) => c.run(&ctx),
             Command::ProtectedBroadcast(c) => c.run(&ctx),
             Command::SmaliFile(c) => c.run(&ctx),
+            Command::Manifest(c) => c.run(&ctx),
 
             Command::Callers(c) => {
                 let db = graph_db(&ctx)?;

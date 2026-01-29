@@ -9,14 +9,14 @@ use dtu::Context;
 use std::path::PathBuf;
 
 use crate::parsers::SystemServiceValueParser;
-use crate::utils::{exec_open_file, invoke_dtu_open_file, prompt_choice, vec_to_single};
+use crate::utils::{exec_open_file, prompt_choice, vec_to_single};
 
 #[derive(Args)]
 pub struct ServiceFile {
     #[arg(short, long, value_parser = SystemServiceValueParser)]
     service: SystemService,
 
-    /// Open the file in $EDITOR unless -d/--dtu-open set
+    /// Open the file in $EDITOR (or $DTU_EDITOR if set)
     #[arg(
         short,
         long,
@@ -24,10 +24,6 @@ pub struct ServiceFile {
         default_value_t = false,
     )]
     open: bool,
-
-    /// Use `dtu-open-file` instead
-    #[arg(short, long)]
-    dtu_open: bool,
 
     #[command(subcommand)]
     command: Command,
@@ -68,11 +64,7 @@ impl ServiceFile {
             return Ok(());
         }
         let class_file = class_file.to_str().expect("valid paths");
-        if self.dtu_open {
-            invoke_dtu_open_file(ctx, class_file, "")?;
-        } else {
-            exec_open_file(ctx, class_file)?;
-        }
+        exec_open_file(ctx, class_file)?;
         Ok(())
     }
 

@@ -130,7 +130,11 @@ pub fn exec_open_file(ctx: &dyn Context, file_name: &str) -> anyhow::Result<()> 
 
 #[cfg(not(windows))]
 pub fn exec_open_file(ctx: &dyn Context, file_name: &str) -> anyhow::Result<()> {
-    let cmd = ctx.get_env("EDITOR")?;
+    let cmd = match ctx.get_env("DTU_EDITOR") {
+        Ok(v) => v,
+        Err(_) => ctx.get_env("EDITOR")?,
+    };
+
     let cmd_cstr = CString::new(cmd.as_str())?;
     let file_cstr = CString::new(file_name)?;
 
