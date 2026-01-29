@@ -202,17 +202,14 @@ impl CompleteContext {
         self.show_results(results.into_iter().map(<R as Into<CompleteResult>>::into))
     }
 
-    fn conn_simple_filter<Get, R>(&self, filter: &str, get: Get) -> anyhow::Result<()>
+    fn conn_simple<Get, R>(&self, get: Get) -> anyhow::Result<()>
     where
         R: Into<CompleteResult> + Send,
         Get: FnOnce(&mut SqlConnection) -> QueryResult<Vec<R>> + Send,
     {
         let db = DeviceDatabase::new(&self.ctx)?;
         let results = db.with_connection(get)?;
-        self.filter_by_and_show_results(
-            filter,
-            results.into_iter().map(<R as Into<CompleteResult>>::into),
-        )
+        self.show_results(results.into_iter().map(<R as Into<CompleteResult>>::into))
     }
 
     fn conn_completion_like<OnEmpty, OnPartial, R>(
@@ -292,12 +289,16 @@ impl CompleteContext {
             return self.complete_component_pkg();
         };
 
-        self.conn_simple_filter(name, |c| {
-            activities::table
+        self.conn_simple(|c| {
+            Ok(activities::table
                 .inner_join(apks::table)
                 .select(activities::class_name)
                 .filter(apks::app_name.eq(pkg))
-                .get_results::<String>(c)
+                .filter(activities::class_name.like(&format!("{name}%")))
+                .get_results::<String>(c)?
+                .into_iter()
+                .map(|it| format!("{pkg}/{it}"))
+                .collect::<Vec<String>>())
         })
     }
 
@@ -306,12 +307,16 @@ impl CompleteContext {
             return self.complete_component_pkg();
         };
 
-        self.conn_simple_filter(name, |c| {
-            services::table
+        self.conn_simple(|c| {
+            Ok(services::table
                 .inner_join(apks::table)
                 .select(services::class_name)
                 .filter(apks::app_name.eq(pkg))
-                .get_results::<String>(c)
+                .filter(services::class_name.like(&format!("{name}%")))
+                .get_results::<String>(c)?
+                .into_iter()
+                .map(|it| format!("{pkg}/{it}"))
+                .collect::<Vec<String>>())
         })
     }
 
@@ -320,12 +325,16 @@ impl CompleteContext {
             return self.complete_component_pkg();
         };
 
-        self.conn_simple_filter(name, |c| {
-            receivers::table
+        self.conn_simple(|c| {
+            Ok(receivers::table
                 .inner_join(apks::table)
                 .select(receivers::class_name)
                 .filter(apks::app_name.eq(pkg))
-                .get_results::<String>(c)
+                .filter(receivers::class_name.like(&format!("{name}%")))
+                .get_results::<String>(c)?
+                .into_iter()
+                .map(|it| format!("{pkg}/{it}"))
+                .collect::<Vec<String>>())
         })
     }
 
@@ -334,12 +343,16 @@ impl CompleteContext {
             return self.complete_component_pkg();
         };
 
-        self.conn_simple_filter(name, |c| {
-            providers::table
+        self.conn_simple(|c| {
+            Ok(providers::table
                 .inner_join(apks::table)
                 .select(providers::name)
                 .filter(apks::app_name.eq(pkg))
-                .get_results::<String>(c)
+                .filter(providers::name.like(&format!("{name}%")))
+                .get_results::<String>(c)?
+                .into_iter()
+                .map(|it| format!("{pkg}/{it}"))
+                .collect::<Vec<String>>())
         })
     }
 
