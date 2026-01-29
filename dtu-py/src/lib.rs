@@ -12,9 +12,17 @@ mod parcel_string;
 mod sql;
 mod types;
 mod utils;
+mod version;
 
 #[pymodule(name = "dtu")]
 mod pydtu {
+
+    #[pymodule_export]
+    use super::version::Version;
+
+    #[pymodule_export]
+    const VERSION: Version = Version::current();
+
     #[pymodule_export]
     use super::exception::DtuError;
 
