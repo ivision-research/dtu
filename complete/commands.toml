@@ -194,6 +194,11 @@ options = [
 
 [find]
 
+[find.class]
+options = [
+    ["class", "c", "GraphClass", ""],
+]
+
 [find.manifest]
 options = [
     ["apk", "a", "Apk", ""],

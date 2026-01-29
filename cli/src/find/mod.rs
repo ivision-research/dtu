@@ -26,6 +26,9 @@ use manifest::FindManifest;
 mod callers;
 use callers::FindCallers;
 
+mod class;
+use class::FindClass;
+
 mod apk_graph;
 use apk_graph::{ApkIPCCallsGeneric, FindIPCCalls, FindIntentActivities, FindParseUri};
 #[derive(Args)]
@@ -71,6 +74,11 @@ enum Command {
     /// Find and optionally open an APK's manifest file
     #[command()]
     Manifest(FindManifest),
+
+    /// Find a class by name, showing the sources that define that class
+    #[command()]
+    Class(FindClass),
+
 }
 
 fn graph_db(ctx: &dyn Context) -> anyhow::Result<DefaultGraphDatabase> {
@@ -88,6 +96,7 @@ impl Find {
             Command::ProtectedBroadcast(c) => c.run(&ctx),
             Command::SmaliFile(c) => c.run(&ctx),
             Command::Manifest(c) => c.run(&ctx),
+            Command::Class(c) => c.run(&ctx),
 
             Command::Callers(c) => {
                 let db = graph_db(&ctx)?;
