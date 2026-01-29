@@ -104,6 +104,7 @@
 
         dtuFs = mkBin "dtu-fs";
         dtuDecompile = mkBin "dtu-decompile";
+        dtuComplete = mkBin "dtu-complete";
         dtuCli = mkBin "dtu";
 
         jarInstall = prog: src:
@@ -220,7 +221,7 @@
       in
       {
         packages = rec {
-          inherit dtuFs dtuDecompile;
+          inherit dtuFs dtuDecompile dtuComplete;
           dtu = dtuCli;
           default = dtu;
 
