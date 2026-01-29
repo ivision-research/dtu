@@ -1,18 +1,22 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::hash::Hash;
 use std::io::stdout;
 
 use clap::{self, Args};
-use dtu::db::device::models::{Activity, Provider, Receiver, Service};
+use dtu::db::device::models::Activity;
+use dtu::db::device::schema::{activities, apks, providers, receivers, services};
+use itertools::Itertools;
 use sha2::{Digest, Sha256};
 
 use crate::find::utils::get_method_search;
 use crate::parsers::DevicePathValueParser;
 use crate::printer::{color, Printer};
 use crate::utils::{ostr, project_cacheable};
-use dtu::db::graph::models::{MethodCallPath, MethodSpec};
+use dtu::db::graph::models::MethodCallPath;
 use dtu::db::graph::GraphDatabase;
-use dtu::db::{ApkIPC, DeviceDatabase, Enablable, Exportable};
+use dtu::db::{DeviceDatabase, Enablable, Exportable};
+use dtu::diesel::prelude::*;
 use dtu::utils::{hex, ClassName, DevicePath};
 use dtu::Context;
 
@@ -35,17 +39,18 @@ struct SourcedClass<'a> {
     source: Cow<'a, str>,
 }
 
+struct IPCClasses {
+    apk_path: DevicePath,
+    classes: Vec<ClassName>,
+}
+
 impl ApkIPCCallsGeneric {
     fn run_inner_source(
         &self,
         graphdb: &dyn GraphDatabase,
         source: Option<&str>,
-        apk_map: &HashMap<i32, DevicePath>,
-        receivers: &[Receiver],
-        activities: &[Activity],
-        services: &[Service],
-        providers: &[Provider],
-        mut results: &mut ApkCallsResult,
+        map: BTreeMap<i32, IPCClasses>,
+        results: &mut ApkCallsResult,
     ) -> anyhow::Result<()> {
         let search = get_method_search(
             ostr(&self.method),
@@ -71,10 +76,27 @@ impl ApkIPCCallsGeneric {
             lookup.insert(key, value);
         }
 
-        self.run_for_ipc(&mut lookup, &apk_map, &receivers, &mut results)?;
-        self.run_for_ipc(&mut lookup, &apk_map, &activities, &mut results)?;
-        self.run_for_ipc(&mut lookup, &apk_map, &services, &mut results)?;
-        self.run_for_ipc(&mut lookup, &apk_map, &providers, &mut results)?;
+        for apk_classes in map.into_values() {
+            let source = apk_classes.apk_path.as_squashed_str();
+            for class in apk_classes.classes {
+                let search = SourcedClass {
+                    source: Cow::Borrowed(&source),
+                    class,
+                };
+
+                if let Some(path) = lookup.get(&search) {
+                    let devpath = DevicePath::from_squashed(source);
+                    let found = MethodCallPath { path: path.clone() };
+                    match results.get_mut(&devpath) {
+                        Some(v) => v.push(found),
+                        None => {
+                            let v = vec![found];
+                            results.insert(devpath, v);
+                        }
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
@@ -91,79 +113,60 @@ impl ApkIPCCallsGeneric {
             apk_map.insert(apk.id, apk.device_path);
         }
 
-        let receivers = db
-            .get_receivers()?
-            .into_iter()
-            .filter(|it| it.is_enabled() && it.is_exported())
-            .collect::<Vec<Receiver>>();
+        let classes = db.with_connection(|c| {
+            receivers::table
+                .inner_join(apks::table)
+                .select((apks::id, receivers::class_name))
+                .union_all(
+                    services::table
+                        .inner_join(apks::table)
+                        .select((apks::id, services::class_name)),
+                )
+                .union_all(
+                    activities::table
+                        .inner_join(apks::table)
+                        .select((apks::id, activities::class_name)),
+                )
+                .union_all(
+                    providers::table
+                        .inner_join(apks::table)
+                        .select((apks::id, providers::name)),
+                )
+                .get_results::<(i32, ClassName)>(c)
+        })?;
 
-        let activities = db
-            .get_activities()?
-            .into_iter()
-            .filter(|it| it.is_enabled() && it.is_exported())
-            .collect::<Vec<Activity>>();
+        let apk_ids = classes.iter().map(|it| it.0).unique();
 
-        let services = db
-            .get_services()?
+        let mut map = db
+            .with_connection(|c| {
+                apks::table
+                    .select((apks::id, apks::device_path))
+                    .filter(apks::id.eq_any(apk_ids))
+                    .get_results::<(i32, DevicePath)>(c)
+            })?
             .into_iter()
-            .filter(|it| it.is_enabled() && it.is_exported())
-            .collect::<Vec<Service>>();
+            .map(|(id, apk_path)| {
+                (
+                    id,
+                    IPCClasses {
+                        apk_path,
+                        classes: Vec::new(),
+                    },
+                )
+            })
+            .collect::<BTreeMap<i32, IPCClasses>>();
 
-        let providers = db
-            .get_providers()?
-            .into_iter()
-            .filter(|it| it.is_enabled() && it.is_exported())
-            .collect::<Vec<Provider>>();
+        for (apk, class) in classes {
+            if let Some(v) = map.get_mut(&apk) {
+                v.classes.push(class);
+            }
+        }
 
         let mut results = ApkCallsResult::new();
 
-        self.run_inner_source(
-            graphdb,
-            source,
-            &apk_map,
-            &receivers,
-            &activities,
-            &services,
-            &providers,
-            &mut results,
-        )?;
+        self.run_inner_source(graphdb, source, map, &mut results)?;
 
         Ok(results)
-    }
-
-    fn run_for_ipc<T: ApkIPC>(
-        &self,
-        callers: &mut HashMap<SourcedClass, Vec<MethodSpec>>,
-        apk_map: &HashMap<i32, DevicePath>,
-        ipcs: &[T],
-        results: &mut ApkCallsResult,
-    ) -> anyhow::Result<()> {
-        for ipc in ipcs {
-            let source = apk_map
-                .get(&ipc.get_apk_id())
-                .map(|it| it.as_squashed_str())
-                .unwrap_or("framework");
-
-            let name = ipc.get_class_name();
-
-            let search = SourcedClass {
-                class: name.clone(),
-                source: Cow::Borrowed(source),
-            };
-
-            if let Some(path) = callers.get(&search) {
-                let devpath = DevicePath::from_squashed(source);
-                let found = MethodCallPath { path: path.clone() };
-                match results.get_mut(&devpath) {
-                    Some(v) => v.push(found),
-                    None => {
-                        let v = vec![found];
-                        results.insert(devpath, v);
-                    }
-                }
-            }
-        }
-        Ok(())
     }
 
     pub fn run(&self, ctx: &dyn Context, graphdb: &dyn GraphDatabase) -> anyhow::Result<()> {
