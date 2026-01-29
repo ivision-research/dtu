@@ -14,9 +14,10 @@ mod tabs;
 use crate::diff::get_diff_source;
 use crate::parsers::DiffSourceValueParser;
 use crate::ui::{restore_terminal, setup_terminal, TerminalImpl};
+use crate::utils::get_adb_if_configured;
 use applet::Applet;
 use dtu::db::device::models::DiffSource;
-use dtu::db::MetaDatabase;
+use dtu::db::{DeviceDatabase, MetaDatabase};
 
 #[derive(Args)]
 pub struct UI {
@@ -28,7 +29,9 @@ pub struct UI {
 impl UI {
     pub fn run(&self, ctx: &dyn Context, meta: &dyn MetaDatabase) -> anyhow::Result<()> {
         let diff_source = get_diff_source(ctx, meta, &self.diff_source)?;
-        let mut applet = Applet::new(&ctx, diff_source)?;
+        let adb = get_adb_if_configured(ctx, true)?;
+        let db = DeviceDatabase::new(ctx)?;
+        let mut applet = Applet::new(&ctx, db, adb, diff_source)?;
 
         let mut term = setup_terminal()?;
 

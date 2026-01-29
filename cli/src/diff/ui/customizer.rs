@@ -1,8 +1,11 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fmt::Display;
 use std::marker::PhantomData;
 use std::ops::Deref;
 
+use anyhow::bail;
+use dtu::adb::{Adb, ExecAdb};
 use ratatui::style::Style;
 use ratatui::widgets::{Paragraph, Widget};
 
@@ -45,6 +48,12 @@ pub trait Customizer<E> {
         let _ = item;
         let _ = ctx;
         anyhow::bail!("clipbaord not supported")
+    }
+
+    fn clipboard_logcat_selection(&self, ctx: &dyn Context, item: &E) -> anyhow::Result<()> {
+        let _ = item;
+        let _ = ctx;
+        anyhow::bail!("logcat not supported")
     }
 }
 
@@ -151,6 +160,7 @@ impl Customizer<DiffedSystemServiceMethod> for SystemServiceMethodCustomizer {
 
 pub struct ApkIPCCustomizer<U> {
     db: DeviceDatabase,
+    adb: Option<ExecAdb>,
     hidden_apks: HashSet<i32>,
 
     marker: PhantomData<U>,
@@ -163,9 +173,10 @@ where
     T: ApkIPC + Display,
     U: Deref<Target = T>,
 {
-    pub fn new(db: DeviceDatabase, hidden_apks: HashSet<i32>) -> Self {
+    pub fn new(db: DeviceDatabase, adb: Option<ExecAdb>, hidden_apks: HashSet<i32>) -> Self {
         Self {
             db,
+            adb,
             hidden_apks,
             marker: PhantomData::default(),
         }
@@ -204,6 +215,44 @@ fn open_for_apk_and_class(
     Ok(())
 }
 
+fn apk_ipc_clipboard_logcat_selection<T, U>(
+    ctx: &dyn Context,
+    adb: &Option<ExecAdb>,
+    item: &U,
+) -> anyhow::Result<()>
+where
+    T: ApkIPC,
+    U: Deref<Target = T>,
+{
+    let adb = adb
+        .as_ref()
+        .ok_or_else(|| anyhow::Error::msg("no ADB access for project"))?;
+    let mut pkg = item.get_package();
+
+    if pkg.contains('"') {
+        pkg = Cow::Owned(pkg.replace('"', "\\\""));
+    }
+
+    let cmd = format!("ps -A | awk '$NF == \"{}\" {{print $2}}'", pkg);
+
+    let res = match adb.shell(&cmd)?.err_on_status() {
+        Err(e) => {
+            log::error!("failed to get a PID for the package: {e}");
+            return Err(e.into());
+        }
+        Ok(v) => v,
+    };
+
+    let sout = res.stdout_utf8_lossy();
+    let sout = sout.trim();
+    if sout.contains('\n') {
+        bail!("invalid output for `{cmd}`: {sout}");
+    }
+
+    let logcat_cmd = format!("adb logcat --pid '{}'", sout);
+    invoke_dtu_clipboard(ctx, &logcat_cmd)
+}
+
 impl<U, T> Customizer<U> for ApkIPCCustomizer<U>
 where
     T: ApkIPC + Display,
@@ -226,6 +275,10 @@ where
         } else {
             None
         }
+    }
+
+    fn clipboard_logcat_selection(&self, ctx: &dyn Context, item: &U) -> anyhow::Result<()> {
+        apk_ipc_clipboard_logcat_selection(ctx, &self.adb, item)
     }
 
     fn clipboard_selection(&self, ctx: &dyn Context, item: &U) -> anyhow::Result<()> {
@@ -291,12 +344,17 @@ where
 
 pub struct ProviderCustomizer {
     db: DeviceDatabase,
+    adb: Option<ExecAdb>,
     hidden_apks: HashSet<i32>,
 }
 
 impl ProviderCustomizer {
-    pub fn new(db: DeviceDatabase, hidden_apks: HashSet<i32>) -> Self {
-        Self { db, hidden_apks }
+    pub fn new(db: DeviceDatabase, adb: Option<ExecAdb>, hidden_apks: HashSet<i32>) -> Self {
+        Self {
+            db,
+            adb,
+            hidden_apks,
+        }
     }
 }
 
@@ -343,6 +401,14 @@ impl Customizer<DiffedProvider> for ProviderCustomizer {
         } else {
             None
         }
+    }
+
+    fn clipboard_logcat_selection(
+        &self,
+        ctx: &dyn Context,
+        item: &DiffedProvider,
+    ) -> anyhow::Result<()> {
+        apk_ipc_clipboard_logcat_selection(ctx, &self.adb, item)
     }
 
     fn clipboard_selection(&self, ctx: &dyn Context, item: &DiffedProvider) -> anyhow::Result<()> {

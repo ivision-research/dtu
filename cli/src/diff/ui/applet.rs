@@ -4,6 +4,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use dtu::adb::ExecAdb;
 use ratatui::style::Style;
 use ratatui::text::Text;
 use ratatui::widgets::{Borders, ListItem, Paragraph, Widget};
@@ -29,6 +30,7 @@ pub struct Applet<'a> {
     active_tab: Box<dyn Tab>,
     ctx: &'a dyn Context,
     db: DeviceDatabase,
+    adb: Option<ExecAdb>,
     active_section: ActiveSection,
     diff_source: DiffSource,
     state: State,
@@ -41,14 +43,19 @@ pub struct Applet<'a> {
 }
 
 impl<'a> Applet<'a> {
-    pub fn new(ctx: &'a dyn Context, diff_source: DiffSource) -> anyhow::Result<Self> {
-        let db = DeviceDatabase::new(ctx)?;
+    pub fn new(
+        ctx: &'a dyn Context,
+        db: DeviceDatabase,
+        adb: Option<ExecAdb>,
+        diff_source: DiffSource,
+    ) -> anyhow::Result<Self> {
         let state = State::load(ctx)?;
         let active_tab =
             system_services_tab(&db, diff_source.id, &state.hidden_system_services, true)?;
         Ok(Self {
             ctx,
             db,
+            adb,
             diff_source,
             state,
             active_tab,
@@ -135,6 +142,7 @@ impl<'a> Applet<'a> {
             KeyCode::Char('H') => self.toggle_active_selection_hidden(),
             KeyCode::Char('G') => self.sel_end(),
             KeyCode::Char('O') => self.open_requested(),
+            KeyCode::Char('L') => self.logcat_requested(),
             _ => return false,
         }
         true
@@ -155,6 +163,12 @@ impl<'a> Applet<'a> {
 
     fn on_unmodified_tab(&mut self) {
         self.next_tab()
+    }
+
+    fn logcat_requested(&self) {
+        if let Err(e) = self.active_tab.clipboard_logcat_selection(self.ctx) {
+            log::error!("failed to send logcat info to the clipboard: {e}");
+        }
     }
 
     fn clipboard_requested(&self) {
@@ -392,6 +406,7 @@ impl<'a> Applet<'a> {
     {
         Box::new(ApkIPCCustomizer::new(
             self.db.clone(),
+            self.adb.clone(),
             self.state.hidden_apks.clone(),
         ))
     }
@@ -522,6 +537,7 @@ impl<'a> Applet<'a> {
         let filter_box = self.new_apk_ipc_filter(providers.as_slice());
         let customizer = Box::new(ProviderCustomizer::new(
             self.db.clone(),
+            self.adb.clone(),
             self.state.hidden_apks.clone(),
         ));
         let mut container = Box::new(TabContainer::new(
@@ -620,6 +636,8 @@ O               Attempt to open tile file containing the selection
                 with $DTU_OPEN_EXECUTABLE or dtu-open-file
 c               Invoke the clipboard action with $DTU_CLIPBOARD_EXECUTABLE
                 or dtu-clipboard
+L               Attempt to send a logcat string for the currently highlighted
+                selection to dtu-clipboard
 J/K             Change diff type down/up
 j/k             Move selection down/up
 g               Move selection to top

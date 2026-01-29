@@ -23,6 +23,7 @@ This new version contains significant breaking changes to the graph database and
 - Added `dtu-complete`
 - Added `find manifest` for APK manifest files
 - Added the ability to call methods on Intent's via command line intents with `#m:`
+- Added `L` to the diff UI for logcat strings
 
 # 4.2.0
 

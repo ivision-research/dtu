@@ -28,6 +28,7 @@ pub trait Tab {
     fn get_list_items(&self) -> Vec<ListItem<'_>>;
     fn open_selection(&self, ctx: &dyn Context) -> anyhow::Result<()>;
     fn clipboard_selection(&self, ctx: &dyn Context) -> anyhow::Result<()>;
+    fn clipboard_logcat_selection(&self, ctx: &dyn Context) -> anyhow::Result<()>;
 
     fn on_filter_box_key_event(&mut self, evt: KeyEvent) -> bool;
     fn on_filter_box_mouse_event(&mut self, evt: MouseEvent) -> bool;
@@ -316,6 +317,16 @@ where
             None => anyhow::bail!("tab doesn't support clipboard"),
             Some(it) => match self.items.get(self.sel) {
                 Some(item) => it.clipboard_selection(ctx, item),
+                None => anyhow::bail!("invalid selection"),
+            },
+        }
+    }
+
+    fn clipboard_logcat_selection(&self, ctx: &dyn Context) -> anyhow::Result<()> {
+        match &self.customizer {
+            None => anyhow::bail!("tab doesn't support clipboard"),
+            Some(it) => match self.items.get(self.sel) {
+                Some(item) => it.clipboard_logcat_selection(ctx, item),
                 None => anyhow::bail!("invalid selection"),
             },
         }

@@ -94,6 +94,28 @@ fn get_app_server_recur(ctx: &dyn Context, called: bool) -> anyhow::Result<TcpAp
     }
 }
 
+pub fn get_adb_if_configured(
+    ctx: &dyn Context,
+    prompt_on_multiple: bool,
+) -> anyhow::Result<Option<ExecAdb>> {
+    let config = ctx.get_project_config()?;
+    if let Some(conf) = config {
+        let base = conf.get_map();
+        let can_adb = base
+            .maybe_get_map_typecheck("device-access")?
+            .map(|it| it.get_bool_or("can-adb", true))
+            .unwrap_or(true);
+
+        if can_adb {
+            get_adb(ctx, prompt_on_multiple).map(Some)
+        } else {
+            Ok(None)
+        }
+    } else {
+        get_adb(ctx, prompt_on_multiple).map(Some)
+    }
+}
+
 /// Gets an [Adb] implementation using the context
 ///
 /// If multiple devices are plugged in and ANDROID_SERIAL isn't set,
