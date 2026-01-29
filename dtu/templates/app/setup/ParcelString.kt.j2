@@ -120,6 +120,20 @@ class IntentString(private val values: Map<String, Value>) {
 
 }
 
+private fun maybeCall(intent: Intent, name: String, vararg args: Any): Boolean {
+    if (!name.startsWith("#m:")) {
+        return false;
+    }
+    val methodName = name.substring(3)
+    val clazz = intent::class
+    val method = clazz.members.find {
+        it.name == methodName && it.parameters.size == args.size + 1
+    } ?: return false;
+    alogv("Invoking Intent.${methodName}")
+    method.call(intent, *args)
+    return true
+}
+
 sealed class Value() {
 
     abstract fun writeToParcel(dest: Parcel, flags: Int)
@@ -164,7 +178,9 @@ sealed class Value() {
         }
 
         override fun addToIntent(key: String, intent: Intent) {
-            intent.putExtra(key, value)
+            if (!maybeCall(intent, key, value)) {
+                intent.putExtra(key, value)
+            }
         }
 
         override fun writeToParcel(dest: Parcel, flags: Int) {
@@ -187,7 +203,9 @@ sealed class Value() {
         }
 
         override fun addToIntent(key: String, intent: Intent) {
-            intent.putExtra(key, value)
+            if (!maybeCall(intent, key, value)) {
+                intent.putExtra(key, value)
+            }
         }
 
         override fun writeToParcel(dest: Parcel, flags: Int) {
@@ -209,7 +227,9 @@ sealed class Value() {
         }
 
         override fun addToIntent(key: String, intent: Intent) {
-            intent.putExtra(key, value)
+            if (!maybeCall(intent, key, value)) {
+                intent.putExtra(key, value)
+            }
         }
 
         override fun writeToParcel(dest: Parcel, flags: Int) {
@@ -231,7 +251,9 @@ sealed class Value() {
         }
 
         override fun addToIntent(key: String, intent: Intent) {
-            intent.putExtra(key, value)
+            if (!maybeCall(intent, key, value)) {
+                intent.putExtra(key, value)
+            }
         }
 
         override fun writeToParcel(dest: Parcel, flags: Int) {
@@ -253,7 +275,9 @@ sealed class Value() {
         }
 
         override fun addToIntent(key: String, intent: Intent) {
-            intent.putExtra(key, value)
+            if (!maybeCall(intent, key, value)) {
+                intent.putExtra(key, value)
+            }
         }
 
         override fun writeToParcel(dest: Parcel, flags: Int) {
@@ -540,7 +564,9 @@ sealed class Value() {
         }
 
         override fun addToIntent(key: String, intent: Intent) {
-            intent.putExtra(key, value)
+            if (!maybeCall(intent, key, value)) {
+                intent.putExtra(key, value)
+            }
         }
     }
 
@@ -559,7 +585,9 @@ sealed class Value() {
         }
 
         override fun addToIntent(key: String, intent: Intent) {
-            intent.putExtra(key, value)
+            if (!maybeCall(intent, key, value)) {
+                intent.putExtra(key, value)
+            }
         }
 
         override fun addToContentValues(key: String, into: ContentValues) {
@@ -570,7 +598,9 @@ sealed class Value() {
     class VByteArray(val value: ByteArray) : Value() {
 
         override fun addToIntent(key: String, intent: Intent) {
-            intent.putExtra(key, value)
+            if (!maybeCall(intent, key, value)) {
+                intent.putExtra(key, value)
+            }
         }
 
         override fun writeToParcel(dest: Parcel, flags: Int) {
@@ -614,7 +644,9 @@ sealed class Value() {
         }
 
         override fun addToIntent(key: String, intent: Intent) {
-            intent.putExtra(key, value)
+            if (!maybeCall(intent, key, value)) {
+                intent.putExtra(key, value)
+            }
         }
 
         companion object {
@@ -779,9 +811,7 @@ class SimpleEscapeSplitter(private val splitChar: Char) {
             val string = part.toString()
             part.clear()
             return@generateSequence string
-
         }
-
     }
 }
 

@@ -22,6 +22,7 @@ This new version contains significant breaking changes to the graph database and
 - Removed some restructions on `find-callers`
 - Added `dtu-complete`
 - Added `find manifest` for APK manifest files
+- Added the ability to call methods on Intent's via command line intents with `#m:`
 
 # 4.2.0
 
