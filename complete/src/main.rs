@@ -624,7 +624,7 @@ impl CompleteContext {
             |c, inc| {
                 sources::table
                     .select(sources::name)
-                    .filter(sources::name.like(inc))
+                    .filter(sources::name.like(&format!("%{inc}%")))
                     .get_results::<String>(c)
             },
         )
