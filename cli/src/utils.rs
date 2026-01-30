@@ -15,6 +15,8 @@ use itertools::Itertools;
 use promptly::prompt;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use sha2::Digest;
+use sha2::Sha256;
 use signal_hook::consts::TERM_SIGNALS;
 use signal_hook::iterator::Handle;
 use signal_hook::iterator::Signals;
@@ -34,20 +36,20 @@ use dtu::{run_cmd, Context};
 pub fn project_cacheable<F, R: Serialize + DeserializeOwned>(
     ctx: &dyn Context,
     cache_file: &str,
-    mut force: bool,
+    force: bool,
     f: F,
 ) -> anyhow::Result<R>
 where
     F: FnOnce() -> anyhow::Result<R>,
 {
+    let cache_bust = is_cachebust(ctx);
+    if cache_bust {
+        return f();
+    }
     let cache_path = ctx
         .get_project_cache_dir()?
         .join(cache_file)
         .with_extension("json");
-
-    if !force {
-        force = ctx.has_env("DTU_CACHEBUST");
-    }
 
     if !force && cache_path.exists() {
         let f = File::open(&cache_path)?;
@@ -64,6 +66,22 @@ where
         _ = serde_json::to_writer(&f, &it);
     }
     Ok(it)
+}
+
+pub fn is_cachebust(ctx: &dyn Context) -> bool {
+    ctx.has_env("DTU_CACHEBUST")
+}
+
+pub fn shash<T: AsRef<str> + ?Sized>(sha: &mut Sha256, s: &T) {
+    let as_str = s.as_ref();
+    let bytes = as_str.as_bytes();
+    sha.update(bytes);
+}
+
+pub fn oshash<T: AsRef<str>>(sha: &mut Sha256, opt: &Option<T>) {
+    if let Some(s) = opt {
+        shash(sha, s.as_ref());
+    }
 }
 
 /// Convenience function to get an [AppServer] implementation and give a user

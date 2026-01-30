@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use crate::find::utils::get_method_search;
 use crate::parsers::DevicePathValueParser;
 use crate::printer::{color, Printer};
-use crate::utils::{ostr, project_cacheable};
+use crate::utils::{oshash, ostr, project_cacheable};
 use dtu::db::graph::models::MethodCallPath;
 use dtu::db::graph::GraphDatabase;
 use dtu::db::{DeviceDatabase, Enablable, Exportable};
@@ -190,17 +190,9 @@ impl ApkIPCCallsGeneric {
 impl From<FindIPCCalls> for ApkIPCCallsGeneric {
     fn from(value: FindIPCCalls) -> Self {
         let mut hasher = Sha256::new();
-
-        if let Some(v) = &value.name {
-            hasher.update(v.as_bytes());
-        }
-        if let Some(v) = &value.signature {
-            hasher.update(v.as_bytes());
-        }
-        if let Some(v) = &value.class {
-            hasher.update(v.as_str().as_bytes());
-        }
-
+        oshash(&mut hasher, &value.name);
+        oshash(&mut hasher, &value.signature);
+        oshash(&mut hasher, &value.class);
         let res = hasher.finalize();
         let hex = hex::bytes_to_hex(&res);
         let cache = format!("ipc-calls-{}", hex);

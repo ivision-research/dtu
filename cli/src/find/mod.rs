@@ -103,12 +103,12 @@ impl Find {
 
             Command::OutgoingCalls(c) => {
                 let db = graph_db(&ctx)?;
-                c.run(&db)
+                c.run(&ctx, &db)
             }
 
             Command::Callers(c) => {
                 let db = graph_db(&ctx)?;
-                c.run(&db)
+                c.run(&ctx, &db)
             }
             Command::IntentActivities(c) => {
                 let db = graph_db(&ctx)?;

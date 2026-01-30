@@ -1,10 +1,12 @@
 use clap::{self, Args};
+use dtu::Context;
+use sha2::{Digest, Sha256};
 
 use crate::find::utils::get_method_search;
 use crate::printer::{color, Printer};
-use crate::utils::ostr;
+use crate::utils::{oshash, ostr, project_cacheable};
 use dtu::db::graph::{GraphDatabase, MethodCallPath};
-use dtu::utils::ClassName;
+use dtu::utils::{hex, ClassName};
 
 #[derive(Args)]
 pub struct FindCallers {
@@ -31,24 +33,27 @@ pub struct FindCallers {
     /// Depth to search
     #[arg(short, long, default_value_t = 3)]
     depth: usize,
+
+    /// Ignore the cached results
+    #[arg(short, long, default_value_t = false)]
+    no_cache: bool,
 }
 
 impl FindCallers {
-    pub fn run(&self, db: &dyn GraphDatabase) -> anyhow::Result<()> {
-        let class_ref = self.class.as_ref();
-        let search = get_method_search(
-            ostr(&self.name),
-            class_ref,
-            ostr(&self.signature),
-            ostr(&self.method_source),
-        )?;
-        let mpaths = db.find_callers(&search, ostr(&self.call_source), self.depth)?;
-
-        let printer = Printer::new();
-
+    pub fn run(&self, ctx: &dyn Context, db: &dyn GraphDatabase) -> anyhow::Result<()> {
+        let mut hasher = Sha256::new();
+        oshash(&mut hasher, &self.method_source);
+        oshash(&mut hasher, &self.method_source);
+        oshash(&mut hasher, &self.name);
+        oshash(&mut hasher, &self.signature);
+        oshash(&mut hasher, &self.class);
+        let digest = hasher.finalize();
+        let cache = format!("find-callers-{}-{}", hex::bytes_to_hex(&digest), self.depth);
+        let mpaths = project_cacheable(&ctx, &cache, self.no_cache, || self.go(db))?;
         // If the name isn't provided we have to show it :)
         let take_offset = if self.name.is_some() { 1 } else { 0 };
 
+        let printer = Printer::new();
         for p in mpaths {
             let mut iter = p.path.iter().take(p.path.len() - take_offset);
             let first = match iter.next() {
@@ -64,6 +69,17 @@ impl FindCallers {
             }
         }
         Ok(())
+    }
+
+    fn go(&self, db: &dyn GraphDatabase) -> anyhow::Result<Vec<MethodCallPath>> {
+        let class_ref = self.class.as_ref();
+        let search = get_method_search(
+            ostr(&self.name),
+            class_ref,
+            ostr(&self.signature),
+            ostr(&self.method_source),
+        )?;
+        Ok(db.find_callers(&search, ostr(&self.call_source), self.depth)?)
     }
 }
 
@@ -92,18 +108,29 @@ pub struct FindOutgoingCalls {
     /// Depth to search
     #[arg(short, long, default_value_t = 3)]
     depth: usize,
+
+    /// Ignore the cached results
+    #[arg(short, long, default_value_t = false)]
+    no_cache: bool,
 }
 
 impl FindOutgoingCalls {
-    pub fn run(&self, db: &dyn GraphDatabase) -> anyhow::Result<()> {
-        let class_ref = self.class.as_ref();
-        let search = get_method_search(
-            ostr(&self.name),
-            class_ref,
-            ostr(&self.signature),
-            ostr(&self.leaving_source),
-        )?;
-        let mpaths = db.find_outgoing_calls(&search, self.depth)?;
+    pub fn run(&self, ctx: &dyn Context, db: &dyn GraphDatabase) -> anyhow::Result<()> {
+        let mut hasher = Sha256::new();
+        // We deliberately leave the `into_source` out of this cache string because the
+        // filtering happens here and not in the graph database call. Until one day it
+        // does and someone shares this comment with me explaining the soure of a bug.
+        oshash(&mut hasher, &self.leaving_source);
+        oshash(&mut hasher, &self.name);
+        oshash(&mut hasher, &self.signature);
+        oshash(&mut hasher, &self.class);
+        let digest = hasher.finalize();
+        let cache = format!(
+            "find-outgoing-call-{}-{}",
+            hex::bytes_to_hex(&digest),
+            self.depth
+        );
+        let mpaths = project_cacheable(&ctx, &cache, self.no_cache, || self.go(db))?;
 
         // If the name isn't provided we have to show it :)
         let take_offset = if self.name.is_some() { 1 } else { 0 };
@@ -113,6 +140,17 @@ impl FindOutgoingCalls {
         } else {
             self.show(take_offset, mpaths)
         }
+    }
+
+    fn go(&self, db: &dyn GraphDatabase) -> anyhow::Result<Vec<MethodCallPath>> {
+        let class_ref = self.class.as_ref();
+        let search = get_method_search(
+            ostr(&self.name),
+            class_ref,
+            ostr(&self.signature),
+            ostr(&self.leaving_source),
+        )?;
+        Ok(db.find_outgoing_calls(&search, self.depth)?)
     }
 
     fn show_into(
