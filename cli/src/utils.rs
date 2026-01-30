@@ -2,15 +2,18 @@ use std::any::Any;
 use std::ffi::CString;
 use std::fmt::Display;
 use std::fs;
-use std::fs::File;
 use std::fs::OpenOptions;
+use std::io::BufWriter;
 use std::io::ErrorKind;
+use std::io::Read;
 use std::io::Write;
+use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread::JoinHandle;
 
 use anyhow::bail;
+use anyhow::Context as AnyhowContext;
 use itertools::Itertools;
 use promptly::prompt;
 use serde::de::DeserializeOwned;
@@ -49,11 +52,20 @@ where
     let cache_path = ctx
         .get_project_cache_dir()?
         .join(cache_file)
-        .with_extension("json");
+        .with_extension("postcard");
 
     if !force && cache_path.exists() {
-        let f = File::open(&cache_path)?;
-        return Ok(serde_json::from_reader(f)?);
+        let mut f = dtu::utils::fs::open_file(&cache_path)?;
+        let mut data = match f.metadata() {
+            Ok(v) => {
+                let size = v.size();
+                Vec::with_capacity(size as usize)
+            }
+            Err(_) => Vec::with_capacity(1024),
+        };
+        f.read_to_end(&mut data)
+            .with_context(|| format!("reading cache file: {cache_file}"))?;
+        return Ok(postcard::from_bytes(&data)?);
     }
 
     let it = f()?;
@@ -63,7 +75,7 @@ where
         .truncate(true)
         .open(&cache_path)
     {
-        _ = serde_json::to_writer(&f, &it);
+        _ = postcard::to_io(&it, BufWriter::new(f));
     }
     Ok(it)
 }

@@ -793,6 +793,7 @@ dependencies = [
  "log",
  "mockall",
  "nix 0.31.1",
+ "postcard",
  "promptly",
  "rand",
  "ratatui",

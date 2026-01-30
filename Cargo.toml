@@ -34,6 +34,7 @@ lazy_static = "1.4"
 sha2 = "0.10"
 flexi_logger = "0.30"
 toml = { version = "0.8", default-features = false, features = ["parse"] }
+postcard = { version = "1.0.0", features = ["alloc", "use-std"] }
 
 [profile.dev.build-override]
 opt-level = 3
