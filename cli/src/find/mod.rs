@@ -24,7 +24,7 @@ mod manifest;
 use manifest::FindManifest;
 
 mod callers;
-use callers::FindCallers;
+use callers::{FindCallers, FindOutgoingCalls};
 
 mod class;
 use class::FindClass;
@@ -59,6 +59,10 @@ enum Command {
     #[command()]
     Callers(FindCallers),
 
+    /// Find all methods called by the given class or method
+    #[command()]
+    OutgoingCalls(FindOutgoingCalls),
+
     /// Find Activitys that call `getIntent`
     #[command()]
     IntentActivities(FindIntentActivities),
@@ -78,7 +82,6 @@ enum Command {
     /// Find a class by name, showing the sources that define that class
     #[command()]
     Class(FindClass),
-
 }
 
 fn graph_db(ctx: &dyn Context) -> anyhow::Result<DefaultGraphDatabase> {
@@ -97,6 +100,11 @@ impl Find {
             Command::SmaliFile(c) => c.run(&ctx),
             Command::Manifest(c) => c.run(&ctx),
             Command::Class(c) => c.run(&ctx),
+
+            Command::OutgoingCalls(c) => {
+                let db = graph_db(&ctx)?;
+                c.run(&db)
+            }
 
             Command::Callers(c) => {
                 let db = graph_db(&ctx)?;

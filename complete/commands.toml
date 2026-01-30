@@ -237,6 +237,17 @@ options = [
     ["no-fallback", "", "None", ""],
 ]
 
+[find.outgoing-calls]
+options = [
+    ["into-source", "T", "GraphSource", ""],
+    ["leaving-source", "L", "GraphSource", ""],
+    ["name", "n", "GraphMethod", ""],
+    ["signature", "s", "GraphSignature", ""],
+    ["class", "c", "GraphClass", ""],
+    ["depth", "d", "Uncompletable", ""],
+]
+
+
 [find.callers]
 options = [
     ["method-source", "M", "GraphSource", ""],
