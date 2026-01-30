@@ -1,8 +1,8 @@
 import hashlib
 import pickle
-from typing import Optional
+from typing import Optional, List
 
-from dtu import Context, GraphDB
+from dtu import Context, GraphDB, MethodCallPath, ClassSpec, ClassName, MethodSpec
 
 
 def _key(*args, **kwargs):
@@ -47,7 +47,7 @@ class CachingGraphDB:
         method_source=None,
         call_source=None,
         depth=5,
-    ):
+    ) -> List[MethodCallPath]:
         """
         Find all callers of the given class up to a certain depth.
 
@@ -66,7 +66,7 @@ class CachingGraphDB:
 
     def find_classes_implementing(
         self, /, iface, *, iface_source=None, impl_source=None
-    ):
+    ) -> List[ClassSpec]:
         """
         Find all classes that implement the given interface
         """
@@ -79,7 +79,7 @@ class CachingGraphDB:
 
     def find_outgoing_calls(
         self, /, *, class_=None, name=None, signature=None, source=None, depth=5
-    ):
+    ) -> List[MethodCallPath]:
         """
         Find all calls leaving the given method up to a given depth.
         """
@@ -92,19 +92,19 @@ class CachingGraphDB:
             depth=depth,
         )
 
-    def get_all_sources(self, /):
+    def get_all_sources(self, /) -> List[str]:
         """
         Get a set of all sources in the database
         """
         return self._maybe_cached(self.wrapped.get_all_sources)
 
-    def get_classes_for(self, /, src):
+    def get_classes_for(self, /, src) -> List[ClassName]:
         """
         Get all classes defined by the given source
         """
         return self._maybe_cached(self.wrapped.get_classes_for, src)
 
-    def get_methods_for(self, /, source):
+    def get_methods_for(self, /, source) -> List[MethodSpec]:
         """
         Get all methods defined by the given soruce
         """
