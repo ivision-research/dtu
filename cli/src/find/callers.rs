@@ -50,8 +50,10 @@ impl FindCallers {
         let digest = hasher.finalize();
         let cache = format!("find-callers-{}-{}", hex::bytes_to_hex(&digest), self.depth);
         let mpaths = project_cacheable(&ctx, &cache, self.no_cache, || self.go(db))?;
-        // If the name isn't provided we have to show it :)
+        // If the name isn't provided we have to show it
         let take_offset = if self.name.is_some() { 1 } else { 0 };
+        // If they didn't provide a source, we have to show it
+        let show_source = self.call_source.is_none();
 
         let printer = Printer::new();
         for p in mpaths {
@@ -61,7 +63,14 @@ impl FindCallers {
                 None => continue,
             };
 
-            printer.println_colored(first.as_smali(), color::YELLOW);
+            if show_source {
+                printer.println_colored(
+                    format!("{} in {}", first.as_smali(), first.source),
+                    color::YELLOW,
+                );
+            } else {
+                printer.println_colored(first.as_smali(), color::YELLOW);
+            }
 
             for c in iter {
                 printer.print("   ");
