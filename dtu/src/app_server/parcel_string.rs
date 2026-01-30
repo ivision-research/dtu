@@ -26,6 +26,7 @@ pub enum ParcelStringElem<'a> {
     Map(HashMap<ParcelStringElem<'a>, ParcelStringElem<'a>>),
     List(Vec<ParcelStringElem<'a>>),
     Complex(Vec<ParcelStringElem<'a>>),
+    Message(i32, i32, i32, Option<HashMap<String, ParcelStringElem<'a>>>),
 }
 
 /// Builder object to create Parcel strings
@@ -126,6 +127,16 @@ impl<'a> ParcelString<'a> {
     def_write_fmt!(write_binder, Binder);
     def_write_fmt!(write_null, Null);
 
+    pub fn add_message(
+        &mut self,
+        what: i32,
+        arg1: i32,
+        arg2: i32,
+        bund: Option<HashMap<String, ParcelStringElem<'a>>>,
+    ) -> &mut Self {
+        self.push(ParcelStringElem::Message(what, arg1, arg2, bund))
+    }
+
     pub fn add_write_fd(&mut self, val: &'a str) -> &mut Self {
         self.push(ParcelStringElem::WriteFd(val.into()))
     }
@@ -180,6 +191,7 @@ pub(crate) fn escape_string(s: &str) -> String {
         .replace(":", "\\:")
         .replace("|", "\\|")
         .replace(">", "\\>")
+        .replace("%", "\\%")
 }
 
 impl<'a> Eq for ParcelStringElem<'a> {}
@@ -214,6 +226,20 @@ impl<'a> Display for ParcelStringElem<'a> {
             ParcelStringElem::String(v) => write!(f, "_STR{}", escape_string(v)),
             ParcelStringElem::RawByteArray(v) => write!(f, "BARR{}", bytes_to_hex(v)),
             ParcelStringElem::HexByteArray(v) => write!(f, "BARR{}", v),
+            ParcelStringElem::Message(what, arg1, arg2, data) => {
+                write!(f, "_MSG{what}%{arg1}%{arg2}")?;
+                if let Some(v) = data {
+                    write!(f, "%")?;
+                    let last = v.len() - 1;
+                    for (i, (key, value)) in v.iter().enumerate() {
+                        write!(f, "{}={}", escape_string(key), value)?;
+                        if i < last {
+                            write!(f, ":")?;
+                        }
+                    }
+                }
+                Ok(())
+            }
             ParcelStringElem::Bundle(v) => {
                 write!(f, "BUND")?;
                 if v.len() > 0 {

@@ -43,12 +43,25 @@ pub fn parse_parcel_string(args: &[String]) -> anyhow::Result<ParcelString<'_>> 
     Ok(parcel_string)
 }
 
+fn parse_i32(iter: &mut Iter<String>, name: &str) -> anyhow::Result<i32> {
+    let Some(s) = iter.next() else {
+        bail!("{name} required");
+    };
+    Ok(s.parse::<i32>()?)
+}
+
 fn parse_single(iter: &mut Iter<String>) -> anyhow::Result<Option<ParcelStringElem<'static>>> {
     let ident = match iter.next() {
         None => return Ok(None),
         Some(v) => v.as_str(),
     };
+    parse_single_str(ident, iter)
+}
 
+fn parse_single_str(
+    ident: &str,
+    iter: &mut Iter<String>,
+) -> anyhow::Result<Option<ParcelStringElem<'static>>> {
     match ident {
         "end" => {
             return Ok(None);
@@ -58,6 +71,36 @@ fn parse_single(iter: &mut Iter<String>) -> anyhow::Result<Option<ParcelStringEl
         }
         "null" => {
             return Ok(Some(ParcelStringElem::Null));
+        }
+        "msg" => {
+            let what = parse_i32(iter, "msg.what")?;
+            let arg1 = parse_i32(iter, "msg.arg1")?;
+            let arg2 = parse_i32(iter, "msg.arg2")?;
+            let Some(next) = iter.next() else {
+                bail!("msg needs either end or the start of a bundle");
+            };
+            if next == "end" {
+                return Ok(Some(ParcelStringElem::Message(what, arg1, arg2, None)));
+            }
+            if next != "bund" {
+                bail!("msg should end in either end or bund");
+            }
+            let mut map = HashMap::new();
+            loop {
+                let key = match iter.next() {
+                    None => bail!("no end of msg bundle found"),
+                    Some(v) => v,
+                };
+                if key == "end" {
+                    break;
+                }
+                let value = match parse_single(iter)? {
+                    None => bail!("expected a value for bundle key {}", key),
+                    Some(v) => v,
+                };
+                map.insert(key.clone(), value);
+            }
+            return Ok(Some(ParcelStringElem::Message(what, arg1, arg2, Some(map))));
         }
         "map" => {
             let mut map = HashMap::new();

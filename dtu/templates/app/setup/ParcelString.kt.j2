@@ -361,6 +361,37 @@ sealed class Value() {
         }
     }
 
+    class VMessage(val value: Message) : Value() {
+        companion object {
+            @JvmStatic
+            fun fromString(s: String): VMessage {
+                val split = SimpleEscapeSplitter('%').split(s)
+                val iter = split.iterator()
+                val what = Integer.parseInt(iter.next())
+                val arg1 = Integer.parseInt(iter.next())
+                val arg2 = Integer.parseInt(iter.next())
+                val msg = Message.obtain()
+                msg.what = what
+                msg.arg1 = arg1
+                msg.arg2 = arg2
+                if (iter.hasNext()) {
+                    val bund = VBundle.fromString(iter.next())
+                    msg.data = bund.value
+                }
+                return VMessage(msg)
+            }
+        }
+        override fun addToContentValues(key: String, into: ContentValues) {
+            throw UnsupportedContentValuesUsage("Message")
+        }
+        override fun addToIntent(key: String, intent: Intent) {
+            throw UnsupportedIntentUsage("Message")
+        }
+        override fun writeToParcel(dest: Parcel, flags: Int) {
+            value.writeToParcel(dest, flags)
+        }
+    }
+
     class VBundle(val value: Bundle) : Value() {
         companion object {
             @JvmStatic
@@ -412,6 +443,7 @@ sealed class Value() {
                             // TODO This is partially doable
                         is VList,
                         is VNull,
+                        is VMessage,
                         is VReadFd,
                         is VWriteFd,
                         is VCombined -> {
@@ -735,7 +767,7 @@ sealed class Value() {
                     into.append(c); 1
                 }
                 // Custom escapes
-                '=', ':', '|', ',', '>' -> {
+                '=', ':', '|', ',', '>', '%' -> {
                     into.append(c); 1
                 }
                 else -> throw IllegalArgumentException("unexpected escape $c")
@@ -758,6 +790,7 @@ enum class ParcelStringPrefix(val prefix: String, val clazz: KClass<out Value>) 
     VWriteFd("WRFD", Value.VWriteFd::class),
     VNull("NULL", Value.VNull::class),
     VBundle("BUND", Value.VBundle::class),
+    VMessage("_MSG", Value.VMessage::class),
     VMap("_MAP", Value.VMap::class),
     VList("LIST", Value.VList::class),
     VByteArray("BARR", Value.VByteArray::class),

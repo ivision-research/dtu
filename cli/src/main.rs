@@ -241,12 +241,23 @@ enum Commands {
     /// list 1 ... N end  - Writes a list/array. The elements of the array{n}
     ///                     are specified in the same language{n}
     ///{n}
-    /// map : k v ... k v end  - Writes a map. The keys and values can both{n}
-    ///                          be arbitrary values{n}
+    /// map k v ... k v end  - Writes a map. The keys and values can both{n}
+    ///                        be arbitrary values{n}
     ///{n}
-    /// bund : key v .. end  -  Writes a Bundle. The keys must be strings, you{n}
-    ///                         do not need to specify `str` in front of them{n}
-    ///                         since they're guaranteed to be strings.{n}
+    /// bund k v .. end  -  Writes a Bundle. The keys must be strings, you{n}
+    ///                     do not need to specify `str` in front of them{n}
+    ///                     since they're guaranteed to be strings.{n}
+    ///{n}
+    /// msg <i32> <i32> <i32> [bund k v ...] end{n}
+    ///{n}
+    /// Writes a Message type, the `what`, `arg1`, and `arg2` are requred and{n}
+    /// an optional `bund` may be supplied followed by a required `end`.{n}
+    ///{n}
+    ///{n}
+    /// Note that this is a very low level interface. If a type may be nullable{n}
+    /// you will need to include the flag yourself. For example, the `msg` type{n}
+    /// will need to be proceeded by `i32 1` to tag it as non null. This may{n}
+    /// be changed in the future
     #[command()]
     Call(Call),
 
