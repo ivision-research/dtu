@@ -176,7 +176,10 @@ SELECT * from method_calls;"#,
             let rows: Vec<MethodCallRow> = query!(q).get_results(c)?;
             let it = PathRowIterator::new(rows.into_iter());
 
-            let res = it.collect::<MethodSpec>(true).into_iter();
+            // Reverse the results only if we're doing call into
+            let res = it
+                .collect::<MethodSpec>(matches!(dir, CallDirection::Into))
+                .into_iter();
 
             Ok(match call_source {
                 None => res.map(MethodCallPath::from).collect(),
