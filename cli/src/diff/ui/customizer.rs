@@ -9,14 +9,15 @@ use dtu::adb::{Adb, ExecAdb};
 use ratatui::style::Style;
 use ratatui::widgets::{Paragraph, Widget};
 
-use dtu::db::device::models::{DiffedProvider, DiffedSystemServiceMethod};
+use dtu::db::device::models::DiffedProvider;
 use dtu::db::{ApkIPC, ApkIPCKind, DeviceDatabase};
 
+use crate::diff::ui::diffed_method::DiffedSystemServiceMethodData;
 use crate::diff::{smali_sig_contains_class, smali_sig_looks_like_binder};
 use crate::ui::widgets::{
     BlockBuilder, ClosureWidget, BG_COLOR, FG_COLOR, INTERESTING_COLOR, PURPLE,
 };
-use crate::utils::{find_fully_qualified_apk, invoke_dtu_clipboard, invoke_dtu_open_file};
+use crate::utils::{find_fully_qualified_apk, invoke_dtu_clipboard, invoke_dtu_open_file, ostr};
 use dtu::utils::{find_smali_file_for_class, path_must_str, ClassName};
 use dtu::Context;
 
@@ -71,18 +72,18 @@ impl SystemServiceMethodCustomizer {
     }
 }
 
-impl Customizer<DiffedSystemServiceMethod> for SystemServiceMethodCustomizer {
-    fn display(&self, item: &DiffedSystemServiceMethod) -> String {
+impl Customizer<DiffedSystemServiceMethodData> for SystemServiceMethodCustomizer {
+    fn display(&self, item: &DiffedSystemServiceMethodData) -> String {
         item.to_string()
     }
 
-    fn filter(&self, item: &DiffedSystemServiceMethod) -> bool {
+    fn filter(&self, item: &DiffedSystemServiceMethodData) -> bool {
         self.hidden_services.contains(&item.system_service_id)
     }
 
-    fn style(&self, m: &DiffedSystemServiceMethod) -> Option<Style> {
-        let sig = m.get_signature();
-        let ret = m.get_return_type();
+    fn style(&self, m: &DiffedSystemServiceMethodData) -> Option<Style> {
+        let sig = ostr(&m.signature).unwrap_or("?");
+        let ret = ostr(&m.return_type).unwrap_or("?");
         if smali_sig_looks_like_binder(sig) || smali_sig_looks_like_binder(ret) {
             Some(Style::default().fg(PURPLE))
         } else if smali_sig_contains_class(sig) {
@@ -95,14 +96,14 @@ impl Customizer<DiffedSystemServiceMethod> for SystemServiceMethodCustomizer {
     fn clipboard_selection(
         &self,
         ctx: &dyn Context,
-        item: &DiffedSystemServiceMethod,
+        item: &DiffedSystemServiceMethodData,
     ) -> anyhow::Result<()> {
         let db = DeviceDatabase::new(ctx)?;
-        let service = db.get_system_service_by_id(item.method.system_service_id)?;
+        let service = db.get_system_service_by_id(item.system_service_id)?;
 
         let cmd = format!(
             "dtu call system-service -s '{}' -m '{}'",
-            service.name, item.method.name
+            service.name, item.name
         );
 
         invoke_dtu_clipboard(ctx, &cmd)
@@ -111,7 +112,7 @@ impl Customizer<DiffedSystemServiceMethod> for SystemServiceMethodCustomizer {
     fn open_selection(
         &self,
         ctx: &dyn Context,
-        item: &DiffedSystemServiceMethod,
+        item: &DiffedSystemServiceMethodData,
     ) -> anyhow::Result<()> {
         let impls = self.db.get_system_service_impls(item.system_service_id)?;
 
@@ -138,7 +139,7 @@ impl Customizer<DiffedSystemServiceMethod> for SystemServiceMethodCustomizer {
         Ok(())
     }
 
-    fn get_popup(&self, item: &DiffedSystemServiceMethod) -> Option<ClosureWidget> {
+    fn get_popup(&self, item: &DiffedSystemServiceMethodData) -> Option<ClosureWidget> {
         let system_service = self
             .db
             .get_system_service_by_id(item.system_service_id)

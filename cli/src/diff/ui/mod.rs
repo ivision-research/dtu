@@ -7,6 +7,7 @@ mod filter_boxes;
 mod state;
 mod ui;
 
+mod diffed_method;
 mod applet;
 mod customizer;
 mod tabs;

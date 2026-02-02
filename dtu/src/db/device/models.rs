@@ -768,12 +768,12 @@ impl Display for SystemServiceMethod {
 impl SystemServiceMethod {
     /// Gets the signature if there is one and returns "?" otherwise
     pub fn get_signature(&self) -> &str {
-        self.signature.as_ref().map_or("", |it| it.as_str())
+        self.signature.as_ref().map_or("?", |it| it.as_str())
     }
 
     /// Gets the return type if there is one and returns "?" otherwise
     pub fn get_return_type(&self) -> &str {
-        self.return_type.as_ref().map_or("", |it| it.as_str())
+        self.return_type.as_ref().map_or("?", |it| it.as_str())
     }
 }
 

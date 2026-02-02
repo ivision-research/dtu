@@ -5,20 +5,23 @@ use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use dtu::adb::ExecAdb;
+use dtu::db::device::schema::system_services;
 use ratatui::style::Style;
 use ratatui::text::Text;
 use ratatui::widgets::{Borders, ListItem, Paragraph, Widget};
 
 use dtu::db::device::models::{
     Apk, DiffSource, DiffedActivity, DiffedApk, DiffedProvider, DiffedReceiver, DiffedService,
-    DiffedSystemService, DiffedSystemServiceMethod, SystemService,
+    DiffedSystemService, SystemService,
 };
 use dtu::db::{ApkIPC, DeviceDatabase, Idable};
+use dtu::diesel::prelude::*;
 use dtu::Context;
 
 use crate::diff::ui::customizer::{
     ApkIPCCustomizer, Customizer, ProviderCustomizer, SystemServiceMethodCustomizer,
 };
+use crate::diff::ui::diffed_method::DiffedSystemServiceMethodData;
 use crate::diff::ui::filter_boxes::{ApkIPCFilterBox, SystemServiceMethodFilterBox};
 use crate::diff::ui::tabs::{Tab, TabContainer};
 use crate::diff::ui::ui::{ActiveSection, ActiveTab};
@@ -347,26 +350,17 @@ impl<'a> Applet<'a> {
     }
 
     fn get_system_service_methods_tab(&self) -> anyhow::Result<Box<dyn Tab>> {
-        let methods = self
-            .db
-            .get_system_service_method_diffs_by_diff_id(self.diff_source.id)?
-            .iter()
-            .filter(|it| !it.exists_in_diff || it.hash_matches_diff.is_false())
-            .map(|it| it.clone())
-            .collect::<Vec<DiffedSystemServiceMethod>>();
+        let diffid = self.diff_source.id;
+        let methods = DiffedSystemServiceMethodData::vec_from_db(&self.db, diffid)?;
         let mut service_ids = HashSet::new();
         service_ids.extend(methods.iter().map(|it| it.system_service_id));
         let hidden_services = self.state.hidden_system_services.clone();
-        let services = self
-            .db
-            .get_system_services()
-            .ok()
-            .unwrap_or(vec![])
-            .iter()
-            .filter(|it| service_ids.contains(&it.id))
-            .map(|it| it.clone())
-            .collect::<Vec<SystemService>>();
 
+        let services = self.db.with_connection(|c| {
+            system_services::table
+                .filter(system_services::id.eq_any(&service_ids))
+                .get_results::<SystemService>(c)
+        })?;
         let container = self.new_tab_container(
             methods,
             self.state.hidden_system_service_methods.clone(),
@@ -586,10 +580,13 @@ impl<'a> Applet<'a> {
     }
 }
 
+// This was an unfortunate decision, completely reversing the typical concept of filtering in Rust.
+// One day this should be refactored to return false if it should be hidden..
+
 /// Function used to filter out a given item from the display
 ///
 /// This function should return `true` if the item should be hidden and false
-/// otherwise
+/// otherwise.
 pub type FilterBoxFunction<T> = dyn Fn(&T) -> bool;
 
 /// Used by the UI to display a filter box.

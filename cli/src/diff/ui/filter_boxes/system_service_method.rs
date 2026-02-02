@@ -1,8 +1,9 @@
 use crate::circular::CircularVec;
 use crate::diff::ui::applet::{FilterBox, FilterBoxFunction};
+use crate::diff::ui::diffed_method::DiffedSystemServiceMethodData;
 use crate::ui::widgets::{CheckBox, ClosureWidget, ComboBox, ComboBoxState, BG_COLOR, FG_COLOR};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
-use dtu::db::device::models::{DiffedSystemServiceMethod, SystemService};
+use dtu::db::device::models::SystemService;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::Style;
 use ratatui::widgets::{StatefulWidget, Widget};
@@ -37,6 +38,7 @@ enum Focus {
     Combo,
     OnlyNew,
     OnlyModified,
+    OnlyAvailableBinders,
 }
 
 impl Focus {
@@ -44,15 +46,17 @@ impl Focus {
         *self = match self {
             Focus::Combo => Focus::OnlyNew,
             Focus::OnlyNew => Focus::OnlyModified,
-            Focus::OnlyModified => Focus::OnlyNew,
+            Focus::OnlyModified => Focus::OnlyAvailableBinders,
+            Focus::OnlyAvailableBinders => Focus::OnlyNew,
         }
     }
 
     fn prev(&mut self) {
         *self = match self {
-            Focus::Combo => Focus::OnlyModified,
+            Focus::Combo => Focus::OnlyAvailableBinders,
             Focus::OnlyModified => Focus::OnlyNew,
             Focus::OnlyNew => Focus::Combo,
+            Focus::OnlyAvailableBinders => Focus::OnlyModified,
         }
     }
 }
@@ -65,6 +69,7 @@ pub struct SystemServiceMethodFilterBox {
     combo_search: String,
     only_new: bool,
     only_modified: bool,
+    only_binders: bool,
 }
 
 impl SystemServiceMethodFilterBox {
@@ -83,6 +88,7 @@ impl SystemServiceMethodFilterBox {
             combo_expanded: false,
             only_new: false,
             only_modified: false,
+            only_binders: true,
         }
     }
 
@@ -131,6 +137,7 @@ impl SystemServiceMethodFilterBox {
                 }
                 Focus::OnlyNew => self.only_new = !self.only_new,
                 Focus::OnlyModified => self.only_modified = !self.only_modified,
+                Focus::OnlyAvailableBinders => self.only_binders = !self.only_binders,
             },
             KeyCode::Char(c) => return self.handle_char_key(c),
             _ => return false,
@@ -162,7 +169,7 @@ impl SystemServiceMethodFilterBox {
     }
 }
 
-impl FilterBox<DiffedSystemServiceMethod> for SystemServiceMethodFilterBox {
+impl FilterBox<DiffedSystemServiceMethodData> for SystemServiceMethodFilterBox {
     fn on_key_event(&mut self, evt: KeyEvent) -> bool {
         match evt.modifiers {
             KeyModifiers::NONE => self.handle_unmodified_key(evt),
@@ -196,7 +203,7 @@ impl FilterBox<DiffedSystemServiceMethod> for SystemServiceMethodFilterBox {
         true
     }
 
-    fn make_filter(&self) -> Option<Box<FilterBoxFunction<DiffedSystemServiceMethod>>> {
+    fn make_filter(&self) -> Option<Box<FilterBoxFunction<DiffedSystemServiceMethodData>>> {
         let service_id = match self.services.current() {
             Some(v) => {
                 if v.id == -1 {
@@ -210,28 +217,37 @@ impl FilterBox<DiffedSystemServiceMethod> for SystemServiceMethodFilterBox {
 
         let only_new = self.only_new;
         let only_modified = self.only_modified;
+        let only_binders = self.only_binders;
 
-        Some(Box::new(move |it: &DiffedSystemServiceMethod| -> bool {
-            if let Some(id) = service_id {
-                if it.system_service_id != id {
+        Some(Box::new(
+            move |it: &DiffedSystemServiceMethodData| -> bool {
+                if let Some(id) = service_id {
+                    if it.system_service_id != id {
+                        return true;
+                    }
+                }
+
+                // Intentionally strict against unknown
+                if only_binders && !it.service_binder_available.is_true() {
                     return true;
                 }
-            }
 
-            if only_new && it.exists_in_diff {
-                return true;
-            }
-
-            if only_modified {
-                if !it.exists_in_diff {
-                    return true;
-                } else if it.hash_matches_diff.is_true() {
+                if only_new && it.exists_in_diff {
                     return true;
                 }
-            }
 
-            false
-        }))
+                if only_modified {
+                    // It isn't "modified" if it doesn't even exist
+                    if !it.exists_in_diff {
+                        return true;
+                    } else if it.hash_matches_diff.is_true() {
+                        return true;
+                    }
+                }
+
+                false
+            },
+        ))
     }
 
     fn get_widget(&self) -> Option<ClosureWidget> {
@@ -246,6 +262,7 @@ impl FilterBox<DiffedSystemServiceMethod> for SystemServiceMethodFilterBox {
         let combo_expanded = self.combo_expanded;
         let only_modified = self.only_modified;
         let only_new = self.only_new;
+        let only_binders = self.only_binders;
 
         Some(ClosureWidget::new(Box::new(move |area, buf| {
             let mut combo = ComboBox::new(items)
@@ -255,9 +272,10 @@ impl FilterBox<DiffedSystemServiceMethod> for SystemServiceMethodFilterBox {
                 .with_highlight_style(Style::default().fg(BG_COLOR).bg(FG_COLOR));
             let chunks = Layout::default()
                 .constraints(vec![
-                    Constraint::Percentage(33),
-                    Constraint::Percentage(33),
-                    Constraint::Percentage(33),
+                    Constraint::Percentage(25),
+                    Constraint::Percentage(25),
+                    Constraint::Percentage(25),
+                    Constraint::Percentage(25),
                 ])
                 .split(area);
 
@@ -268,11 +286,15 @@ impl FilterBox<DiffedSystemServiceMethod> for SystemServiceMethodFilterBox {
 
             let mut only_new_box = CheckBox::new("Only new").with_checked(only_new);
             let mut only_modified_box = CheckBox::new("Only modified").with_checked(only_modified);
+            let mut only_binders_box = CheckBox::new("Only service binder available").with_checked(only_binders);
 
             match focus {
                 Focus::OnlyNew => only_new_box = only_new_box.with_style(focused_style),
                 Focus::OnlyModified => {
                     only_modified_box = only_modified_box.with_style(focused_style)
+                }
+                Focus::OnlyAvailableBinders => {
+                    only_binders_box = only_binders_box.with_style(focused_style)
                 }
                 Focus::Combo if !combo_expanded => combo = combo.with_style(focused_style),
                 _ => {}
@@ -281,6 +303,7 @@ impl FilterBox<DiffedSystemServiceMethod> for SystemServiceMethodFilterBox {
             StatefulWidget::render(combo, chunks[0], buf, &mut state);
             only_new_box.render(chunks[1], buf);
             only_modified_box.render(chunks[2], buf);
+            only_binders_box.render(chunks[3], buf);
         })))
     }
 }
