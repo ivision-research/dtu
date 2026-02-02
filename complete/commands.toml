@@ -19,6 +19,8 @@ options = [
 
 [db]
 
+[db.update-binder-availability]
+
 [db.setup]
 
 options = [

@@ -4,6 +4,7 @@ mod diff_source;
 mod emulator_diff;
 mod monitor;
 mod setup;
+mod update_binder_status;
 
 use std::path::PathBuf;
 
@@ -20,6 +21,8 @@ use add_service_impl::AddServiceImpl;
 use diff_source::DiffSource;
 use emulator_diff::EmulatorDiff;
 use setup::Setup;
+
+use crate::db::update_binder_status::UpdateBinderAvailability;
 
 #[derive(Args)]
 pub struct DB {
@@ -52,6 +55,10 @@ enum Commands {
     #[command()]
     AddApk(add_apk::AddApk),
 
+    /// Use the application server application to determine if binders are available
+    /// and update the database
+    UpdateBinderAvailability(UpdateBinderAvailability),
+
     /// Wipes the whole database
     #[command()]
     Wipe,
@@ -65,6 +72,7 @@ impl DB {
             Commands::DiffSource(c) => c.run(),
             Commands::EmulatorDiff(c) => c.run(),
             Commands::AddApk(c) => c.run(),
+            Commands::UpdateBinderAvailability(c) => c.run(),
             Commands::Wipe => self.wipe_database(),
         }
     }

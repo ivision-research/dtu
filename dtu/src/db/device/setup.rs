@@ -1753,7 +1753,8 @@ pub struct ServiceMeta {
 }
 
 impl ServiceMeta {
-    fn from_line(line: &str) -> Option<Self> {
+    /// Parse a [ServiceMeta] from the output of `service list`
+    pub fn from_line(line: &str) -> Option<Self> {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             return None;
