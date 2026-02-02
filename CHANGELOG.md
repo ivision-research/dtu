@@ -21,11 +21,12 @@ This new version contains significant breaking changes to the graph database and
 - Exposed some functionality that was not previous `pub` or was just `pub (crate)`
 - Removed some restructions on `find-callers`
 - Added `dtu-complete`
-- Added `find manifest` for APK manifest files
 - Added the ability to call methods on Intent's via command line intents with `#m:`
 - Added `L` to the diff UI for logcat strings
 - Added `Message` types to the Parcel mini language
-- Added `find outgoing-calls`
+- Added `find manifest` for APK manifest files
+- Added `find outgoing-calls` for outgoing calls
+- Added `find class-with-method` to find classes that define a given method
 
 # 4.2.0
 

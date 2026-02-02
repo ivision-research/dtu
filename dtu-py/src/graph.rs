@@ -163,6 +163,22 @@ impl GraphDB {
             .map(PyMethodSpec::from)
             .collect())
     }
+
+    /// Get all classes defining the given method
+    #[pyo3(signature = (name, *, args = None, source = None))]
+    fn find_classes_with_method(
+        &self,
+        name: &str,
+        args: Option<&str>,
+        source: Option<&str>,
+    ) -> Result<Vec<PyClassSpec>> {
+        Ok(self
+            .0
+            .find_classes_with_method(name, args, source)?
+            .into_iter()
+            .map(PyClassSpec::from)
+            .collect())
+    }
 }
 
 impl Deref for GraphDB {

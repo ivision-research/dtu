@@ -341,6 +341,48 @@ impl<'a> MethodSearchParams<'a> {
     }
 }
 
+fn conn_find_classes_with_method(
+    conn: &mut SqliteConnection,
+    name: &str,
+    args: Option<&str>,
+    source: Option<&str>,
+) -> Result<Vec<ClassSpec>> {
+    let mut where_clause = format!("m.name = ?");
+
+    if args.is_some() {
+        where_clause.push_str(&format!(" AND m.args = ?"));
+    }
+
+    if source.is_some() {
+        where_clause.push_str(&format!(" AND s.source = ?"));
+    }
+
+    let raw_q = format!(
+        r#"SELECT s.name AS source, c.name, c.access_flags
+FROM classes AS c
+JOIN sources AS s
+    ON c.source = s.id
+JOIN methods AS m
+    ON m.class = c.id
+WHERE {where_clause}
+"#
+    );
+
+    let mut q = sql_query(raw_q).into_boxed();
+    q = q.bind::<Text, _>(name);
+
+    if let Some(a) = args {
+        q = q.bind::<Text, _>(a);
+    }
+
+    if let Some(s) = source {
+        q = q.bind::<Text, _>(s);
+    }
+
+    let rows: Vec<ChildClassRow> = query!(q).get_results(conn)?;
+    Ok(rows.into_iter().map(ClassSpec::from).collect())
+}
+
 impl GraphDatabase for GraphSqliteDatabase {
     fn find_callers(
         &self,
@@ -374,6 +416,15 @@ impl GraphDatabase for GraphSqliteDatabase {
                 .select(classes::name))
             .load::<ClassName>(c)?)
         })
+    }
+
+    fn find_classes_with_method(
+        &self,
+        name: &str,
+        args: Option<&str>,
+        source: Option<&str>,
+    ) -> Result<Vec<ClassSpec>> {
+        self.with_connection(|c| conn_find_classes_with_method(c, name, args, source))
     }
 
     fn get_methods_for(&self, source: &str) -> Result<Vec<MethodSpec>> {
@@ -603,8 +654,8 @@ struct ChildClassRow {
     source: String,
     #[diesel(sql_type = Text)]
     name: String,
-    #[diesel(sql_type = Integer)]
-    access_flags: i32,
+    #[diesel(sql_type = BigInt)]
+    access_flags: i64,
 }
 
 impl From<ChildClassRow> for ClassSpec {

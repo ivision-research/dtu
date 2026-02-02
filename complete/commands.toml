@@ -213,6 +213,16 @@ options = [
     ["open", "o", "None", ""],
 ]
 
+
+[find.class-with-method]
+options = [
+    ["source", "S", "DiffSource", ""],
+    ["no-cache", "n", "None", ""],
+    ["no-abstract", "N", "None", ""],
+    ["name", "n", "Uncompletable", ""],
+    ["sig", "s", "Uncompletable", ""]
+]
+
 [find.service-file.impl]
 
 [find.service-file.interface]

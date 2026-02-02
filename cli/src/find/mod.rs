@@ -29,6 +29,9 @@ use callers::{FindCallers, FindOutgoingCalls};
 mod class;
 use class::FindClass;
 
+mod class_with_method;
+use class_with_method::FindClassWithMethod;
+
 mod apk_graph;
 use apk_graph::{ApkIPCCallsGeneric, FindIPCCalls, FindIntentActivities, FindParseUri};
 #[derive(Args)]
@@ -82,6 +85,10 @@ enum Command {
     /// Find a class by name, showing the sources that define that class
     #[command()]
     Class(FindClass),
+
+    /// Find all classes defining the given method
+    #[command()]
+    ClassWithMethod(FindClassWithMethod),
 }
 
 fn graph_db(ctx: &dyn Context) -> anyhow::Result<DefaultGraphDatabase> {
@@ -111,6 +118,10 @@ impl Find {
                 c.run(&ctx, &db)
             }
             Command::IntentActivities(c) => {
+                let db = graph_db(&ctx)?;
+                c.run(&ctx, &db)
+            }
+            Command::ClassWithMethod(c) => {
                 let db = graph_db(&ctx)?;
                 c.run(&ctx, &db)
             }

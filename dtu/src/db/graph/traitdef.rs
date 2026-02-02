@@ -57,6 +57,13 @@ pub trait GraphDatabase: Sync + Send {
     fn find_outgoing_calls(&self, from: &MethodSearch, depth: usize)
         -> Result<Vec<MethodCallPath>>;
 
+    fn find_classes_with_method(
+        &self,
+        name: &str,
+        args: Option<&str>,
+        source: Option<&str>,
+    ) -> Result<Vec<ClassSpec>>;
+
     /// Get all classes defined by the given source
     fn get_classes_for(&self, source: &str) -> Result<Vec<ClassName>>;
 

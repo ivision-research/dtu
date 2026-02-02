@@ -92,6 +92,16 @@ class CachingGraphDB:
             depth=depth,
         )
 
+    def find_classes_with_method(
+        self, name, *, args=None, source=None
+    ) -> List[ClassSpec]:
+        """
+        Find all classes defining the specified method
+        """
+        return self._maybe_cached(
+            self.wrapped.find_classes_with_method, name, args=args, source=source
+        )
+
     def get_all_sources(self, /) -> List[str]:
         """
         Get a set of all sources in the database
