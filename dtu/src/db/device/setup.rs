@@ -675,7 +675,7 @@ impl DeviceDatabase {
             if opts.force {
                 prog.completed = false;
                 log::debug!("wiping database due to force");
-                self.wipe()?;
+                self.wipe(ctx)?;
                 meta.update_progress(&prog)?;
                 meta.update_prereq(Prereq::EmulatorDiff, false)?;
             } else {
@@ -685,7 +685,7 @@ impl DeviceDatabase {
             // Need to fall through to here just in case it was only partially
             // done.
             log::debug!("wiping database due to force");
-            self.wipe()?;
+            self.wipe(ctx)?;
         }
 
         let task = DBSetupTask::new(ctx, helper, graph, self, monitor, cancel);

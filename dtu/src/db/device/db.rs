@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use diesel::delete;
 use diesel::prelude::*;
 use diesel_migrations::{embed_migrations, EmbeddedMigrations};
 
@@ -12,7 +11,6 @@ use crate::Context;
 
 use super::common::*;
 use super::models::*;
-use super::schema;
 
 #[derive(Clone)]
 pub struct DeviceDatabase {
@@ -176,23 +174,11 @@ macro_rules! impl_diff_item {
 // they're not bothering anyone.
 
 impl DeviceDatabase {
-    pub fn wipe(&self) -> Result<()> {
+    pub fn wipe(&self, ctx: &dyn Context) -> Result<()> {
         log::debug!("wiping the database");
-        self.with_connection(|conn| {
-            conn.transaction(|txn| {
-                delete(schema::apk_permissions::dsl::apk_permissions).execute(txn)?;
-                delete(schema::apk_diffs::dsl::apk_diffs).execute(txn)?;
-                delete(schema::device_properties::dsl::device_properties).execute(txn)?;
-                delete(schema::system_services::dsl::system_services).execute(txn)?;
-                delete(schema::apks::dsl::apks).execute(txn)?;
-                delete(schema::protected_broadcasts::dsl::protected_broadcasts).execute(txn)?;
-                delete(schema::fuzz_results::dsl::fuzz_results).execute(txn)?;
-                delete(schema::diff_sources::dsl::diff_sources)
-                    .filter(schema::diff_sources::dsl::name.is_not(EMULATOR_DIFF_SOURCE))
-                    .execute(txn)?;
-                Ok(())
-            })
-        })
+        let path = ctx.get_sqlite_dir()?.join(DEVICE_DATABASE_FILE_NAME);
+        std::fs::remove_file(&path)?;
+        Ok(())
     }
 
     impl_get_multi_by!(

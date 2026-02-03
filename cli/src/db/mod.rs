@@ -81,7 +81,7 @@ impl DB {
         let ctx = DefaultContext::new();
         let meta = MetaSqliteDatabase::new(&ctx)?;
         let db = DeviceDatabase::new(&ctx)?;
-        db.wipe()?;
+        db.wipe(&ctx)?;
         meta.update_prereq(Prereq::EmulatorDiff, false)?;
         meta.update_prereq(Prereq::SQLDatabaseSetup, false)?;
         Ok(())
