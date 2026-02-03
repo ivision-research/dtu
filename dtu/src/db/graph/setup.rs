@@ -350,6 +350,7 @@ WHERE dst.id != src.id"#
 
                 CREATE INDEX IF NOT EXISTS class_source ON classes(source);
                 CREATE INDEX IF NOT EXISTS methods_source ON methods(source);
+                CREATE INDEX IF NOT EXISTS methods_name ON methods(name);
 
                 CREATE INDEX IF NOT EXISTS calls_callee_source ON calls(callee, source);
                 CREATE INDEX IF NOT EXISTS calls_callee_source ON calls(callee, source);
