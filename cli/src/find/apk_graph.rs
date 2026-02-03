@@ -28,6 +28,9 @@ pub struct ApkIPCCallsGeneric {
     depth: usize,
     cache: String,
 
+    only_exported: bool,
+    only_enabled: bool,
+
     method: Option<String>,
     signature: Option<String>,
     class: Option<ClassName>,
@@ -113,24 +116,42 @@ impl ApkIPCCallsGeneric {
             apk_map.insert(apk.id, apk.device_path);
         }
 
+        // We handle only_exported/only_enabled with `eq_any` filters:
+        //
+        // if true, &[true, true] filters only on true
+        // if false, &[false, true] will get either
+        //
+        // slightly less efficient, but much easier to write..
+
+        let en_filter = &[self.only_enabled, true];
+        let ex_filter = &[self.only_exported, true];
+
         let classes = db.with_connection(|c| {
             receivers::table
                 .inner_join(apks::table)
                 .select((apks::id, receivers::class_name))
+                .filter(receivers::exported.eq_any(ex_filter))
+                .filter(receivers::enabled.eq_any(en_filter))
                 .union_all(
                     services::table
                         .inner_join(apks::table)
-                        .select((apks::id, services::class_name)),
+                        .select((apks::id, services::class_name))
+                        .filter(services::exported.eq_any(ex_filter))
+                        .filter(services::enabled.eq_any(en_filter)),
                 )
                 .union_all(
                     activities::table
                         .inner_join(apks::table)
-                        .select((apks::id, activities::class_name)),
+                        .select((apks::id, activities::class_name))
+                        .filter(activities::exported.eq_any(ex_filter))
+                        .filter(activities::enabled.eq_any(en_filter)),
                 )
                 .union_all(
                     providers::table
                         .inner_join(apks::table)
-                        .select((apks::id, providers::name)),
+                        .select((apks::id, providers::name))
+                        .filter(providers::exported.eq_any(ex_filter))
+                        .filter(providers::enabled.eq_any(en_filter)),
                 )
                 .get_results::<(i32, ClassName)>(c)
         })?;
@@ -172,18 +193,35 @@ impl ApkIPCCallsGeneric {
     pub fn run(&self, ctx: &dyn Context, graphdb: &dyn GraphDatabase) -> anyhow::Result<()> {
         let create = || self.run_inner(ctx, graphdb);
 
+        let tag = bits_tag(self.only_exported, self.only_enabled);
+
         let cache_file_name = match &self.apk {
-            None => format!("all-{}-{}", self.cache, self.depth),
+            None => format!("all-{}-{}-{}", self.cache, self.depth, tag),
             Some(v) => format!(
-                "{}-{}-{}",
+                "{}-{}-{}-{}",
                 v.as_squashed_str_no_ext(),
                 self.cache,
-                self.depth
+                self.depth,
+                tag
             ),
         };
 
         let res = project_cacheable(ctx, &cache_file_name, self.no_cache, create)?;
         dump_apk_calls_result(&res, self.json, self.depth > 1)
+    }
+}
+
+fn bits_tag(only_exported: bool, only_enabled: bool) -> &'static str {
+    if only_enabled {
+        if only_exported {
+            "b3"
+        } else {
+            "b2"
+        }
+    } else if only_exported {
+        "b1"
+    } else {
+        "b0"
     }
 }
 
@@ -202,6 +240,8 @@ impl From<FindIPCCalls> for ApkIPCCallsGeneric {
             no_cache: value.no_cache,
             json: value.json,
             depth: value.depth,
+            only_exported: value.only_exported,
+            only_enabled: value.only_enabled,
             cache,
             method: value.name,
             class: value.class,
@@ -217,6 +257,8 @@ impl From<FindParseUri> for ApkIPCCallsGeneric {
             no_cache: value.no_cache,
             json: value.json,
             depth: 1,
+            only_exported: value.only_exported,
+            only_enabled: value.only_enabled,
             cache: "ipc-ParseUri".into(),
             method: Some(String::from("parseUri")),
             class: Some(ClassName::new("Landroid/content/Intent;".into())),
@@ -238,6 +280,14 @@ pub struct FindParseUri {
     /// Output JSON
     #[arg(short, long, default_value_t = false)]
     json: bool,
+
+    /// Only show exported IPC
+    #[arg(short = 'X', long, default_value_t = false)]
+    only_exported: bool,
+
+    /// Only show enabled IPC
+    #[arg(short = 'E', long, default_value_t = false)]
+    only_enabled: bool,
 }
 
 #[derive(Args)]
@@ -253,10 +303,6 @@ pub struct FindIntentActivities {
     /// Output JSON
     #[arg(short, long, default_value_t = false)]
     json: bool,
-
-    /// Only show from privileged applications
-    #[arg(short, long, default_value_t = false)]
-    only_priv: bool,
 
     /// Strictly search for calls to Landroid/app/Activity;->getIntent()
     ///
@@ -363,10 +409,6 @@ impl FindIntentActivities {
             cache_file_name = Cow::Owned(format!("{}-strict", cache_file_name));
         }
 
-        if self.only_priv {
-            cache_file_name = Cow::Owned(format!("{}-only-priv", cache_file_name));
-        }
-
         let res = project_cacheable(ctx, &cache_file_name, self.no_cache, create)?;
         dump_apk_calls_result(&res, self.json, false)
     }
@@ -389,6 +431,14 @@ pub struct FindIPCCalls {
     /// Method class
     #[arg(short, long)]
     class: Option<ClassName>,
+
+    /// Only show exported IPC
+    #[arg(short = 'X', long, default_value_t = false)]
+    only_exported: bool,
+
+    /// Only show enabled IPC
+    #[arg(short = 'E', long, default_value_t = false)]
+    only_enabled: bool,
 
     /// Depth to search
     #[arg(short, long, default_value_t = 3)]
