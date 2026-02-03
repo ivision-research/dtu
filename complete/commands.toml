@@ -521,7 +521,7 @@ options = [
 ]
 
 
-[shell-cmd]
+[shell-cmd.system-service]
 options = [
     ["service", "s", "SystemService", ""],
     ["timeout", "t", "Uncompletable", ""],
