@@ -29,7 +29,7 @@ pub struct FindClassWithMethod {
     source: Option<String>,
 
     /// Ignore the cached results
-    #[arg(short, long, default_value_t = false)]
+    #[arg(long, default_value_t = false)]
     no_cache: bool,
 
     /// Filter out abstract classes

@@ -154,7 +154,9 @@ impl CompleteContext {
             Ok(v) => Shell::from_str(&v)?,
             _ => Shell::Bash,
         };
-        let incomplete = env::var("DTUC_INCOMPLETE")?;
+        // Remove leading quotes if they are passed to us
+        let mut incomplete = env::var("DTUC_INCOMPLETE")?;
+        incomplete = String::from(incomplete.trim_start_matches('\''));
 
         let skip_count = match env::var("DTUC_SKIP") {
             Ok(v) => str::parse::<usize>(&v).unwrap_or(2),
@@ -656,7 +658,12 @@ impl CompleteContext {
 }
 
 fn main() -> anyhow::Result<()> {
+    let debug = env::var("DTUC_DEBUG").is_ok();
+
     let ctx = CompleteContext::new(DefaultContext::new())?;
-    _ = ctx.complete();
+    let res = ctx.complete();
+    if debug {
+        return res;
+    }
     Ok(())
 }

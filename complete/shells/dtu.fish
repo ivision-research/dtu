@@ -1,8 +1,7 @@
 function __dtu_completions
-    set -gx DTUC_SHELL fish
-    set -gx DTUC_INCOMPLETE (commandline -ct)
+    set -l incomplete (commandline -ct)
     set -l args (commandline -opc)
-    dtu-complete $args
+    env DTUC_SHELL=fish DTUC_INCOMPLETE="$incomplete" dtu-complete $args
 end
 
 complete -f -c dtu -a '(__dtu_completions)'

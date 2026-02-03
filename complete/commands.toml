@@ -212,7 +212,7 @@ options = [
 [find.class-with-method]
 options = [
     ["source", "S", "DiffSource", ""],
-    ["no-cache", "n", "None", ""],
+    ["no-cache", "", "None", ""],
     ["no-abstract", "N", "None", ""],
     ["name", "n", "Uncompletable", ""],
     ["sig", "s", "Uncompletable", ""]
@@ -268,7 +268,7 @@ options = [
 [find.intent-activities]
 options = [
     ["apk", "a", "Apk", ""],
-    ["no-cache", "n", "None", ""],
+    ["no-cache", "", "None", ""],
     ["json", "j", "None", ""],
     ["only-priv", "o", "None", ""],
     ["strict", "s", "None", ""],
@@ -277,7 +277,7 @@ options = [
 [find.parse-uri]
 options = [
     ["apk", "a", "Apk", ""],
-    ["no-cache", "n", "None", ""],
+    ["no-cache", "", "None", ""],
     ["json", "j", "None", ""],
 ]
 
@@ -285,7 +285,7 @@ options = [
 [find.ipc-calls]
 options = [
     ["apk", "a", "Apk", ""],
-    ["no-cache", "n", "None", ""],
+    ["no-cache", "", "None", ""],
     ["json", "j", "None", ""],
     ["name", "n", "GraphMethod", ""],
     ["signature", "s", "GraphSignature", ""],

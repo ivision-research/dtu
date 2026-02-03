@@ -232,7 +232,7 @@ pub struct FindParseUri {
     apk: Option<DevicePath>,
 
     /// Ignore the cached results
-    #[arg(short, long, default_value_t = false)]
+    #[arg(long, default_value_t = false)]
     no_cache: bool,
 
     /// Output JSON
@@ -247,7 +247,7 @@ pub struct FindIntentActivities {
     apk: Option<DevicePath>,
 
     /// Ignore the cached results
-    #[arg(short, long, default_value_t = false)]
+    #[arg(long, default_value_t = false)]
     no_cache: bool,
 
     /// Output JSON
@@ -395,7 +395,7 @@ pub struct FindIPCCalls {
     depth: usize,
 
     /// Ignore the cached results
-    #[arg(short, long, default_value_t = false)]
+    #[arg(long, default_value_t = false)]
     no_cache: bool,
 
     /// Output JSON
