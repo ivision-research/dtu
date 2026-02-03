@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
-use dtu::{config::Config, Context, DefaultContext};
+use dtu::{
+    config::{GlobalConfig, ProjectConfig},
+    Context, DefaultContext,
+};
 use pyo3::prelude::*;
 
 use crate::exception::DtuBaseError;
@@ -134,7 +137,11 @@ impl dtu::Context for PyContext {
         self.0.get_target_api_level()
     }
 
-    fn get_project_config<'a>(&'a self) -> dtu::Result<Option<&'a Config>> {
+    fn get_project_config<'a>(&'a self) -> dtu::Result<&'a ProjectConfig> {
         self.0.get_project_config()
+    }
+
+    fn get_global_config<'a>(&'a self) -> dtu::Result<&'a GlobalConfig> {
+        self.0.get_global_config()
     }
 }

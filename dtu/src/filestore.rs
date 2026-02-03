@@ -7,7 +7,7 @@ use std::{
 use serde::Deserialize;
 
 use crate::{
-    config::{parse_config, ConfigMap},
+    config::{FileStoreConfig, LocalFileStoreConfig, S3FileStoreConfig},
     run_cmd,
     utils::{ensure_dir_exists, maybe_link, replace_char, OS_PATH_SEP_CHAR, SQUASH_PATH_SEP_CHAR},
     Context,
@@ -60,50 +60,25 @@ fn get_filestore_env(ctx: &dyn Context) -> Option<Box<dyn FileStore>> {
     None
 }
 
-fn get_default_filestore(ctx: &dyn Context) -> crate::Result<Box<dyn FileStore>> {
-    let base = Box::new(LocalFileStore::new_from_ctx(ctx)?);
-    Ok(base)
-}
-
 /// Get the file store based on the configuration file.
 ///
 /// If no file store is configured, default to returning a LocalFileStore
 pub fn get_filestore(ctx: &dyn Context) -> crate::Result<Box<dyn FileStore>> {
     // Let the environment override everything
     if let Some(from_env) = get_filestore_env(ctx) {
+        log::debug!("returning {} store from env", from_env.name());
         return Ok(from_env);
     }
 
-    let config_dir = ctx.get_user_config_dir()?;
-    let config_file = config_dir.join("config.toml");
-    if !config_file.exists() {
-        return get_default_filestore(ctx);
+    log::debug!("getting the filestore from the global configuration");
+    let config = ctx.get_global_config()?;
+
+    match &config.filestore {
+        FileStoreConfig::S3(s3_cfg) => Ok(Box::new(S3FileStore::from_config(ctx, s3_cfg)?)),
+        FileStoreConfig::Local(local_cfg) => {
+            Ok(Box::new(LocalFileStore::from_config(ctx, local_cfg)))
+        }
     }
-
-    parse_config(
-        &config_file,
-        |cfg: &ConfigMap| -> crate::Result<Box<dyn FileStore>> {
-            if !cfg.has("filestore") {
-                return get_default_filestore(ctx);
-            }
-
-            let filestore = match cfg.maybe_get_map_typecheck("filestore")? {
-                Some(v) => v,
-                None => return get_default_filestore(ctx),
-            };
-
-            match filestore.maybe_get_map_typecheck("s3")? {
-                Some(v) => Ok(Box::new(S3FileStore::from_config(ctx, &v)?)),
-                None => match filestore.maybe_get_map_typecheck("local")? {
-                    Some(v) => Ok(Box::new(LocalFileStore::from_config(&v)?)),
-                    None => Err(crate::Error::new_cfg(
-                        &config_file,
-                        "need one of filestore.s3 or filestore.local",
-                    )),
-                },
-            }
-        },
-    )
 }
 
 /// Implementation of a `FileStore` using the local file system
@@ -119,17 +94,11 @@ impl LocalFileStore {
         Self { base, get_is_link }
     }
 
-    fn new_from_ctx(ctx: &dyn Context) -> crate::Result<Self> {
-        let base = ctx.get_user_local_dir()?.join("filestore");
-        let get_is_link = false;
-        Ok(Self::new(base, get_is_link))
-    }
-
-    fn from_config(cfg: &ConfigMap) -> crate::Result<Self> {
-        let base_str = cfg.must_get_str("base")?;
-        let base = PathBuf::from(base_str);
-        let get_is_link = cfg.get_bool_or("get-is-link", false);
-        Ok(Self { base, get_is_link })
+    fn from_config(_ctx: &dyn Context, cfg: &LocalFileStoreConfig) -> Self {
+        Self {
+            base: cfg.base.clone(),
+            get_is_link: cfg.get_is_link,
+        }
     }
 
     fn join_path(&self, path: &str) -> crate::Result<PathBuf> {
@@ -268,30 +237,13 @@ impl S3FileStore {
         }
     }
 
-    fn from_config(ctx: &dyn Context, cfg: &ConfigMap) -> crate::Result<Self> {
-        let bucket = cfg.must_get_str("bucket")?.to_string();
-        let profile = match cfg.maybe_get_str("profile") {
-            Ok(Some(v)) => v.into(),
-            Ok(None) => ctx
-                .maybe_get_env("DTU_S3_PROFILE")
-                .unwrap_or_else(|| "dtu".into()),
-            Err(_) => return Err(cfg.invalid_key("profile", "str")),
-        };
-
-        let bin = match cfg.maybe_get_str("aws-bin") {
-            Ok(Some(v)) => v.into(),
-            Ok(None) => ctx.get_bin("aws")?,
-            Err(_) => return Err(cfg.invalid_key("bin", "str")),
-        };
-
-        let cache = cfg.get_bool_or("cache", true);
-        let cache_is_link = cfg.get_bool_or("cache-is-link", false);
+    fn from_config(ctx: &dyn Context, cfg: &S3FileStoreConfig) -> crate::Result<Self> {
         Ok(Self {
-            bin,
-            bucket,
-            profile,
-            cache,
-            cache_is_link,
+            bin: cfg.get_aws_bin(ctx)?.into_owned(),
+            bucket: cfg.bucket.clone(),
+            profile: cfg.get_profile(ctx).into_owned(),
+            cache: cfg.cache,
+            cache_is_link: cfg.cache_is_link,
         })
     }
 
@@ -464,24 +416,25 @@ impl FileStore for S3FileStore {
 mod test {
 
     use crate::{
+        config::GlobalConfig,
         testing::{tmp_context, TestContext},
-        utils::ensure_dir_exists,
     };
 
     use super::*;
     use rstest::*;
 
-    fn write_config(ctx: &TestContext, content: &str) -> PathBuf {
-        let cfg = ctx.get_user_config_dir().unwrap();
-        ensure_dir_exists(&cfg).unwrap();
-        let file = cfg.join("config.toml");
-        fs::write(&file, content).expect("writing config toml file");
-        file
+    fn set_config(ctx: &mut TestContext, content: &str) {
+        let cfg: GlobalConfig = if content.is_empty() {
+            GlobalConfig::get_default(ctx).expect("default config failed")
+        } else {
+            toml::from_str(content).expect("invalid config")
+        };
+        ctx.set_global_config(cfg);
     }
 
     #[rstest]
-    fn test_default_fallback(tmp_context: TestContext) {
-        write_config(&tmp_context, "");
+    fn test_default_fallback(mut tmp_context: TestContext) {
+        set_config(&mut tmp_context, "");
         let store = get_filestore(&tmp_context).expect("should have gotten a default filestore");
         assert_eq!(
             store.name(),
@@ -491,9 +444,9 @@ mod test {
     }
 
     #[rstest]
-    fn test_s3_config(tmp_context: TestContext) {
-        write_config(
-            &tmp_context,
+    fn test_s3_config(mut tmp_context: TestContext) {
+        set_config(
+            &mut tmp_context,
             r#"[filestore.s3]
 bucket = "neato"
 aws-bin = "aws"
@@ -508,9 +461,9 @@ aws-bin = "aws"
     }
 
     #[rstest]
-    fn test_local_config(tmp_context: TestContext) {
-        write_config(
-            &tmp_context,
+    fn test_local_config(mut tmp_context: TestContext) {
+        set_config(
+            &mut tmp_context,
             r#"[filestore.local]
 base = "such/path"
 "#,

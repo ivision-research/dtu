@@ -1,8 +1,9 @@
 use itertools::join;
 
 use crate::{
-    adb::{Adb, ExecAdb, ADB_CONFIG_KEY},
+    adb::{Adb, ExecAdb},
     command::{quote, LineCallback},
+    config::DeviceAccessConfig,
     fsdump::FSDumpAccess,
     utils::DevicePath,
     Context,
@@ -325,48 +326,14 @@ where
 /// Get the DeviceFSHelper implementation for the current project
 ///
 /// If no config is found or device-access is unspecified, this returns an AdbDeviceFS
-///
-/// Note that a `device-access` key is required if `can-adb` is false in the configuration.
 pub fn get_project_devicefs_helper(ctx: &dyn Context) -> crate::Result<Box<dyn DeviceFSHelper>> {
-    let config = match ctx.get_project_config()? {
-        None => return Ok(Box::new(AdbDeviceFS::new(ExecAdb::new(ctx)?))),
-        Some(v) => v,
-    };
-    let base = config.get_map();
+    let config = ctx.get_project_config()?;
 
-    let cfg = match base.maybe_get_map_typecheck("device-access")? {
-        None => {
-            if base.get_bool_or("can-adb", true) {
-                return Ok(Box::new(AdbDeviceFS::new(ExecAdb::new(ctx)?)));
-            }
-            return Err(config.invalid_error(
-                "ADB disabled by configuration file and no device-access key".into(),
-            ));
+    match &config.device_access {
+        DeviceAccessConfig::Adb(adb) => {
+            let adb = ExecAdb::try_from_adb_config(ctx, adb)?;
+            Ok(Box::new(AdbDeviceFS::new(adb)))
         }
-        Some(v) => v,
-    };
-
-    if cfg.has(FSDumpAccess::CONFIG_KEY) && cfg.has(ADB_CONFIG_KEY) {
-        return Err(config.invalid_error(format!(
-            "`device-access` can't have both `{ADB_CONFIG_KEY}` and `{}` keys",
-            FSDumpAccess::CONFIG_KEY
-        )));
-    }
-
-    if cfg.has(FSDumpAccess::CONFIG_KEY) {
-        log::trace!("Using dump config");
-        let dump_cfg = cfg.must_get_map(FSDumpAccess::CONFIG_KEY)?;
-        Ok(Box::new(FSDumpAccess::from_cfg_map(ctx, &dump_cfg)?))
-    } else if cfg.has(ADB_CONFIG_KEY) {
-        log::trace!("Using adb config");
-        let adb_cfg = cfg.must_get_map(ADB_CONFIG_KEY)?;
-        Ok(Box::new(AdbDeviceFS::new(ExecAdb::from_config(
-            ctx, &adb_cfg,
-        )?)))
-    } else {
-        Err(config.invalid_error(format!(
-            "`device-access` needs either `{ADB_CONFIG_KEY}` or `{}` keys",
-            FSDumpAccess::CONFIG_KEY
-        )))
+        DeviceAccessConfig::Dump(dump) => Ok(Box::new(FSDumpAccess::from_cfg(&dump))),
     }
 }

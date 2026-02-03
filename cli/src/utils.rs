@@ -128,41 +128,27 @@ pub fn get_adb_if_configured(
     ctx: &dyn Context,
     prompt_on_multiple: bool,
 ) -> anyhow::Result<Option<ExecAdb>> {
-    let config = ctx.get_project_config()?;
-    if let Some(conf) = config {
-        let base = conf.get_map();
-        let can_adb = base
-            .maybe_get_map_typecheck("device-access")?
-            .map(|it| it.get_bool_or("can-adb", true))
-            .unwrap_or(true);
-
-        if can_adb {
-            get_adb(ctx, prompt_on_multiple).map(Some)
-        } else {
-            Ok(None)
-        }
-    } else {
-        get_adb(ctx, prompt_on_multiple).map(Some)
-    }
+    let adb = match ExecAdb::new(ctx) {
+        Ok(v) => v,
+        Err(dtu::Error::AdbDisabled) => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    maybe_prompt_adb(adb, prompt_on_multiple).map(Some)
 }
 
-/// Gets an [Adb] implementation using the context
-///
-/// If multiple devices are plugged in and ANDROID_SERIAL isn't set,
-/// the user will be prompted if `prompt_on_multiple` is true. When using this
-/// tool, `ANDROID_SERIAL` should basically always be set.
-pub fn get_adb(ctx: &dyn Context, prompt_on_multiple: bool) -> anyhow::Result<ExecAdb> {
-    let has_serial = ctx.has_env("ANDROID_SERIAL");
-    let adb = ExecAdb::new(ctx)?;
+fn maybe_prompt_adb(adb: ExecAdb, should_prompt: bool) -> anyhow::Result<ExecAdb> {
+    if adb.has_serial() {
+        return Ok(adb);
+    }
     let devices = adb.get_connected_devices()?;
     if devices.is_empty() {
         bail!("no adb device connected");
     }
     let count = devices.len();
-    if has_serial || count == 1 {
+    if count == 1 {
         return Ok(adb);
     }
-    if !prompt_on_multiple {
+    if !should_prompt {
         bail!("multiple adb devices connected and ANDROID_SERIAL unset");
     }
 
@@ -172,7 +158,17 @@ pub fn get_adb(ctx: &dyn Context, prompt_on_multiple: bool) -> anyhow::Result<Ex
         "Device number: ",
     )?;
 
-    return Ok(ExecAdb::builder(ctx).with_serial(serial.clone()).build());
+    Ok(adb.with_serial(serial.into()))
+}
+
+/// Gets an [Adb] implementation using the context
+///
+/// If multiple devices are plugged in and ANDROID_SERIAL isn't set,
+/// the user will be prompted if `prompt_on_multiple` is true. When using this
+/// tool, `ANDROID_SERIAL` should basically always be set.
+pub fn get_adb(ctx: &dyn Context, prompt_on_multiple: bool) -> anyhow::Result<ExecAdb> {
+    let adb = ExecAdb::new(ctx)?;
+    maybe_prompt_adb(adb, prompt_on_multiple)
 }
 
 #[cfg(windows)]

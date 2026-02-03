@@ -12,6 +12,7 @@ use std::io::{BufRead, BufReader};
 use walkdir::WalkDir;
 
 use crate::command::LineCallback;
+use crate::config::DumpConfig;
 #[cfg(feature = "setup")]
 use crate::db::device::{DatabaseSetupHelper, PackageCallback, ServiceMeta};
 
@@ -20,10 +21,8 @@ use crate::devicefs::{FindLimits, FindName, FindType};
 use crate::utils::open_file;
 use crate::utils::path_must_str;
 use crate::{
-    config::ConfigMap,
     devicefs::DeviceFSHelper,
     utils::{maybe_link, DevicePath},
-    Context,
 };
 
 /// Implementation of device resources accessor traits via a filesystem dump
@@ -33,20 +32,12 @@ pub struct FSDumpAccess {
 }
 
 impl FSDumpAccess {
-    pub(crate) const CONFIG_KEY: &'static str = "dump";
-
     pub fn new(base: PathBuf, pull_is_link: bool) -> Self {
         Self { base, pull_is_link }
     }
 
-    pub fn from_cfg_map(ctx: &dyn Context, cfg: &ConfigMap) -> crate::Result<Self> {
-        let path = cfg.must_get_str("base")?;
-        let mut base = PathBuf::from(path);
-        if base.is_relative() {
-            base = ctx.get_project_dir()?.join(base);
-        }
-        let pull_is_link = cfg.get_bool_or("pull-is-link", false);
-        Ok(Self::new(base, pull_is_link))
+    pub fn from_cfg(cfg: &DumpConfig) -> Self {
+        Self::new(cfg.base.clone(), cfg.pull_is_link)
     }
 }
 

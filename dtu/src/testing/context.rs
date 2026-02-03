@@ -13,7 +13,7 @@ use rstest::fixture;
 use crate::utils::{ensure_dir_exists, path_must_str};
 use crate::Context;
 
-use crate::config::Config;
+use crate::config::{FileStoreConfig, GlobalConfig, LocalFileStoreConfig, ProjectConfig};
 
 #[fixture]
 pub fn tmp_context() -> TestContext {
@@ -36,6 +36,8 @@ pub struct TestContext {
     home_dir: PathBuf,
     env: HashMap<String, String>,
     bins: HashMap<String, String>,
+    project_config: ProjectConfig,
+    global_config: GlobalConfig,
     api_level: u32,
 }
 
@@ -56,6 +58,16 @@ impl TestContext {
 
     pub fn set_bin<K: AsRef<str>, V: AsRef<str>>(&mut self, key: K, bin: V) -> &mut Self {
         self.bins.insert(key.as_ref().into(), bin.as_ref().into());
+        self
+    }
+
+    pub fn unset_env<K: AsRef<str>>(&mut self, key: K) -> &mut Self {
+        _ = self.env.remove(key.as_ref());
+        self
+    }
+
+    pub fn set_global_config(&mut self, cfg: GlobalConfig) -> &mut Self {
+        self.global_config = cfg;
         self
     }
 
@@ -160,11 +172,20 @@ impl Default for TestContext {
         env.insert("DTU_PROJECT_HOME".into(), td.to_string_lossy().into());
         env.insert("ANDROID_SERIAL".into(), "TESTSERIAL".into());
 
+        let global_config = GlobalConfig {
+            filestore: FileStoreConfig::Local(LocalFileStoreConfig {
+                base: td.join("filestore"),
+                get_is_link: false,
+            }),
+        };
+
         let mut bins = HashMap::new();
 
         let mut it = Self {
             base_dir: td,
             home_dir,
+            global_config,
+            project_config: ProjectConfig::default(),
             api_level: Self::API_LEVEL,
             env,
             bins,
@@ -207,8 +228,12 @@ impl Context for TestContext {
         Ok(self.base_dir.join("local"))
     }
 
-    fn get_project_config<'a>(&'a self) -> crate::Result<Option<&'a Config>> {
-        Ok(None)
+    fn get_project_config<'a>(&'a self) -> crate::Result<&'a ProjectConfig> {
+        Ok(&self.project_config)
+    }
+
+    fn get_global_config<'a>(&'a self) -> crate::Result<&'a GlobalConfig> {
+        Ok(&self.global_config)
     }
 }
 
@@ -222,6 +247,7 @@ mock! {
         fn maybe_get_env(&self, key: &str) -> Option<String>;
         fn maybe_get_bin(&self, bin: &str) -> Option<String>;
         fn get_project_dir(&self) -> crate::Result<PathBuf>;
-        fn get_project_config<'a>(&'a self) -> crate::Result<Option<&'a Config>>;
+        fn get_project_config<'a>(&'a self) -> crate::Result<&'a ProjectConfig>;
+        fn get_global_config<'a>(&'a self) -> crate::Result<&'a GlobalConfig>;
     }
 }

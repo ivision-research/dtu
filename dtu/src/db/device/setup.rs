@@ -16,8 +16,9 @@ use smalisa::{
 
 use dtu_proc_macro::{define_setters, wraps_base_error};
 
-use crate::adb::{Adb, ExecAdb, ADB_CONFIG_KEY};
+use crate::adb::{Adb, ExecAdb};
 use crate::command::err_on_status;
+use crate::config::DeviceAccessConfig;
 use crate::context::Context;
 use crate::db::common::Error;
 use crate::db::device::db::{DeviceDatabase, SqlConnection};
@@ -1827,36 +1828,14 @@ fn parse_device_props_output(output: &str) -> HashMap<String, String> {
 pub fn get_project_dbsetup_helper(
     ctx: &dyn Context,
 ) -> crate::Result<Box<dyn DatabaseSetupHelper>> {
-    let config = match ctx.get_project_config()? {
-        None => return Ok(Box::new(AdbDatabaseSetupHelper::new(ExecAdb::new(ctx)?))),
-        Some(v) => v,
-    };
+    let config = ctx.get_project_config()?;
 
-    let base = config.get_map();
-
-    let cfg = match base.maybe_get_map_typecheck("device-access")? {
-        None => return Ok(Box::new(AdbDatabaseSetupHelper::new(ExecAdb::new(ctx)?))),
-        Some(v) => v,
-    };
-
-    if cfg.has(FSDumpAccess::CONFIG_KEY) && cfg.has(ADB_CONFIG_KEY) {
-        return Err(config.invalid_error(format!(
-            "`device-access` can't have both `{ADB_CONFIG_KEY}` and `{}` keys",
-            FSDumpAccess::CONFIG_KEY
-        )));
-    }
-
-    match cfg.maybe_get_map_typecheck(FSDumpAccess::CONFIG_KEY)? {
-        Some(v) => Ok(Box::new(FSDumpAccess::from_cfg_map(ctx, &v)?)),
-        None => match cfg.maybe_get_map_typecheck(ADB_CONFIG_KEY)? {
-            Some(v) => Ok(Box::new(AdbDatabaseSetupHelper::new(ExecAdb::from_config(
-                ctx, &v,
-            )?))),
-            None => Err(config.invalid_error(format!(
-                "`device-access` needs either `{ADB_CONFIG_KEY}` or `{}` keys",
-                FSDumpAccess::CONFIG_KEY
-            ))),
-        },
+    match &config.device_access {
+        DeviceAccessConfig::Adb(adb_cfg) => {
+            let adb = ExecAdb::try_from_adb_config(ctx, adb_cfg)?;
+            Ok(Box::new(AdbDatabaseSetupHelper::new(adb)))
+        }
+        DeviceAccessConfig::Dump(dump_cfg) => Ok(Box::new(FSDumpAccess::from_cfg(dump_cfg))),
     }
 }
 

@@ -7,8 +7,8 @@ use directories::BaseDirs;
 use which::{which, which_in};
 
 use crate::adb::{Adb, ExecAdb};
-use crate::config::Config;
-use crate::utils::ensure_dir_exists;
+use crate::config::{GlobalConfig, ProjectConfig};
+use crate::utils::{ensure_dir_exists, path_must_str, read_file};
 use crate::Error;
 
 use crossbeam::atomic::AtomicCell;
@@ -102,7 +102,8 @@ pub trait Context: Send + Sync {
         self.get_project_dir_child("dtu.toml")
     }
 
-    fn get_project_config<'a>(&'a self) -> crate::Result<Option<&'a Config>>;
+    fn get_project_config<'a>(&'a self) -> crate::Result<&'a ProjectConfig>;
+    fn get_global_config<'a>(&'a self) -> crate::Result<&'a GlobalConfig>;
 
     fn get_test_app_dir(&self) -> crate::Result<PathBuf> {
         self.get_project_dir_child("test_app")
@@ -177,7 +178,8 @@ pub trait Context: Send + Sync {
 pub struct DefaultContext {
     target_api_level: AtomicCell<Option<u32>>,
     bin_cache: Mutex<Vec<CachedBin>>,
-    project_config: OnceCell<Option<Config>>,
+    project_config: OnceCell<ProjectConfig>,
+    global_config: OnceCell<GlobalConfig>,
 }
 
 impl Clone for DefaultContext {
@@ -185,10 +187,12 @@ impl Clone for DefaultContext {
         let target_api_level = self.target_api_level.load();
         let cache = self.bin_cache.lock().expect("failed to lock");
         let project_config = self.project_config.clone();
+        let global_config = self.global_config.clone();
         Self {
             target_api_level: AtomicCell::new(target_api_level),
             bin_cache: Mutex::new(cache.clone()),
             project_config,
+            global_config,
         }
     }
 }
@@ -210,24 +214,50 @@ impl Default for DefaultContext {
         Self {
             target_api_level: AtomicCell::new(None),
             bin_cache: Mutex::new(Vec::new()),
+            global_config: OnceCell::new(),
             project_config,
         }
     }
 }
 
 impl Context for DefaultContext {
-    fn get_project_config<'a>(&'a self) -> crate::Result<Option<&'a Config>> {
+    fn get_global_config<'a>(&'a self) -> crate::Result<&'a GlobalConfig> {
+        let cfg = self
+            .global_config
+            .get_or_try_init(|| -> crate::Result<GlobalConfig> {
+                let path = self.get_user_config_dir()?.join("config.toml");
+
+                if !path.exists() {
+                    log::debug!("Getting default global configuration");
+                    return GlobalConfig::get_default(self);
+                }
+
+                log::debug!("Getting global configuration from {}", path_must_str(&path));
+
+                let content = read_file(&path)?;
+                toml::from_str(&content).map_err(|e| {
+                    crate::Error::InvalidConfig(path_must_str(&path).into(), e.to_string())
+                })
+            })?;
+        Ok(&cfg)
+    }
+
+    fn get_project_config<'a>(&'a self) -> crate::Result<&'a ProjectConfig> {
         let cfg = self
             .project_config
-            .get_or_try_init(|| -> crate::Result<Option<Config>> {
+            .get_or_try_init(|| -> crate::Result<ProjectConfig> {
                 let path = self.get_project_config_file()?;
+
                 if !path.exists() {
-                    Ok(None)
-                } else {
-                    Ok(Some(Config::parse(&path)?))
+                    return Ok(ProjectConfig::default());
                 }
+
+                let content = read_file(&path)?;
+                toml::from_str(&content).map_err(|e| {
+                    crate::Error::InvalidConfig(path_must_str(&path).into(), e.to_string())
+                })
             })?;
-        Ok(cfg.as_ref())
+        Ok(&cfg)
     }
 
     fn get_target_api_level(&self) -> u32 {

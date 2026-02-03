@@ -16,13 +16,12 @@ use crate::command::{
     run_cmd, run_cmd_split_streamed, run_cmd_streamed, spawn_cmd, CmdOutput, LineCallback,
     OutputCallback,
 };
-use crate::config;
-use crate::config::ConfigMap;
+use crate::config::AdbConfig;
+use crate::config::DeviceAccessConfig;
+use crate::config::ProjectConfig;
 use crate::utils::ensure_dir_exists;
 use crate::utils::path_must_str;
 use crate::Context;
-
-pub(crate) const ADB_CONFIG_KEY: &'static str = "adb";
 
 // TODO: I don't think the Adb trait should be so heavily tied to the Command
 //  API, but it isn't that big of a deal so whatever.
@@ -173,21 +172,9 @@ impl ExecAdb {
     /// be pulled from the environment. `can-adb = false` in the config, this function will fail.
     /// Note that `can-adb` defaults to true.
     pub fn new(ctx: &dyn Context) -> crate::Result<Self> {
-        let project_config = match ctx.get_project_config()? {
-            None => return Self::from_env(ctx),
-            Some(v) => v,
-        };
-
-        let base = project_config.get_map();
-
-        if !base.get_bool_or("can-adb", true) {
-            return Err(crate::Error::AdbDisabled);
-        }
-
-        match base.get_map("device-access") {
-            Err(config::Error::MissingKey) => Self::from_env(ctx),
-            Err(config::Error::InvalidType) => Err(base.invalid_key("device-access", "table")),
-            Ok(v) => Self::from_config(ctx, &v),
+        match ctx.get_project_config() {
+            Ok(v) => Self::try_from_project_config(ctx, &v),
+            Err(_) => Self::from_env(ctx),
         }
     }
 
@@ -198,18 +185,29 @@ impl ExecAdb {
         Ok(Self { bin, serial })
     }
 
-    pub fn from_config(ctx: &dyn Context, map: &ConfigMap) -> crate::Result<Self> {
-        let mut builder = ExecAdb::builder(ctx);
+    pub fn has_serial(&self) -> bool {
+        self.serial.is_some()
+    }
 
-        if let Some(ser) = map.maybe_get_str_typecheck("serial")? {
-            builder = builder.with_serial(ser.into());
+    pub fn with_serial(mut self, serial: String) -> Self {
+        self.serial = Some(serial);
+        self
+    }
+
+    fn try_from_project_config(ctx: &dyn Context, cfg: &ProjectConfig) -> crate::Result<Self> {
+        if !cfg.can_adb {
+            return Err(crate::Error::AdbDisabled);
         }
-
-        if let Some(bin) = map.maybe_get_str_typecheck("executable")? {
-            builder = builder.with_bin(bin.into());
+        match &cfg.device_access {
+            DeviceAccessConfig::Adb(adb) => Self::try_from_adb_config(ctx, adb),
+            DeviceAccessConfig::Dump(_) => Self::from_env(ctx),
         }
+    }
 
-        Ok(builder.build())
+    pub fn try_from_adb_config(ctx: &dyn Context, cfg: &AdbConfig) -> crate::Result<Self> {
+        let bin = cfg.get_executable(ctx)?.into_owned();
+        let serial = cfg.get_serial(ctx).map(|it| it.into_owned()).ok();
+        Ok(Self { bin, serial })
     }
 
     pub fn builder(ctx: &dyn Context) -> Builder {
