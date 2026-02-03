@@ -86,11 +86,6 @@ options = [
 
 [graph.wipe]
 
-[graph.add-apk-methods]
-options = [
-    ["apk", "a", "File", ""],
-]
-
 [graph.remove-source]
 options = [
     ["apk", "a", "GraphSource", ""],

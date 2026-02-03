@@ -8,7 +8,6 @@ use crate::parsers::DevicePathValueParser;
 use dtu::db::graph::{get_default_graphdb, GraphDatabase};
 use dtu::utils::DevicePath;
 
-mod import_apk_methods;
 mod monitor;
 mod setup;
 
@@ -28,10 +27,6 @@ enum Command {
     #[command()]
     Wipe,
 
-    /// Add an APK's methods to the existing database
-    #[command()]
-    AddApkMethods(import_apk_methods::ImportApkMethods),
-
     /// Remove a graph database source
     #[command()]
     RemoveSource(RemoveSource),
@@ -41,7 +36,6 @@ impl Graph {
     pub fn run(self) -> anyhow::Result<()> {
         match self.command {
             Command::Setup(c) => c.run(),
-            Command::AddApkMethods(c) => c.run(),
             Command::RemoveSource(c) => c.run(),
             Command::Wipe => self.wipe(),
         }
