@@ -173,12 +173,12 @@ impl PyAppServer {
     /// Call a method on the given application service.
     ///
     /// The parcel_data must be provided as a list of `ParcelValue` instances
-    #[pyo3(signature = (txn, package, class, *, iface = None, action = None, parcel_data = None))]
+    #[pyo3(signature = (package, class, *, txn = None, iface = None, action = None, parcel_data = None))]
     fn call_app_service(
         &mut self,
-        txn: u32,
         package: &str,
         class: &str,
+        txn: Option<u32>,
         iface: Option<&str>,
         action: Option<&str>,
         parcel_data: Option<Vec<ParcelValue>>,

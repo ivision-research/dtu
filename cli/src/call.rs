@@ -51,9 +51,9 @@ pub struct AppService {
     #[arg(short = 'I', long)]
     iface: Option<ClassName>,
 
-    /// The transaction number
+    /// The transaction number, otherwise defaults to the interface transaction
     #[arg(short, long)]
-    txn: u32,
+    txn: Option<u32>,
 
     /// An optional action to set on the intent when binding
     #[arg(short, long)]

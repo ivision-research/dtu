@@ -53,7 +53,7 @@ pub trait AppServer {
 
     fn call_app_service(
         &mut self,
-        txn: u32,
+        txn: Option<u32>,
         package: &str,
         class: &ClassName,
         iface: Option<&ClassName>,
@@ -451,7 +451,7 @@ impl AppServer for TcpAppServer {
 
     fn call_app_service(
         &mut self,
-        txn: u32,
+        txn: Option<u32>,
         package: &str,
         class: &ClassName,
         iface: Option<&ClassName>,
@@ -637,7 +637,8 @@ pub struct IntentData<'a> {
 #[cfg_attr(test, derive(Debug))]
 #[derive(Serialize)]
 pub struct CallAppService<'a> {
-    pub txn: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub txn: Option<u32>,
     #[serde(rename = "appId")]
     pub package: &'a str,
     pub class: &'a ClassName,
