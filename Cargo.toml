@@ -14,7 +14,7 @@ resolver = "2"
 
 
 [workspace.package]
-version = "5.0.0-beta"
+version = "5.0.0-rc1"
 
 [workspace.dependencies]
 clap = { version = "4.5", features = ["derive"] }
