@@ -13,6 +13,7 @@ mod sql;
 mod types;
 mod utils;
 mod version;
+mod funcs;
 
 #[pymodule(name = "dtu")]
 mod pydtu {
@@ -65,5 +66,5 @@ mod pydtu {
     use super::devicefs::{PyDeviceFS, PyFindLimits, PyFindName, PyFindType};
 
     #[pymodule_export]
-    use super::utils::split_smali_args;
+    use super::funcs::{split_smali_args, find_smali_files_for_class, get_smali_file_for_class};
 }

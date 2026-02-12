@@ -74,6 +74,9 @@ impl PyDevicePath {
     fn device_str(&self) -> &str {
         self.0.as_device_str()
     }
+
+    #[getter]
+    fn squashed_str(&self) -> &str { self.0.as_squashed_str() }
 }
 
 #[pyclass(module = "dtu", frozen, eq, name = "UnknownBool")]

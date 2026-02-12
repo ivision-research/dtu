@@ -736,7 +736,7 @@ dependencies = [
 
 [[package]]
 name = "dtu"
-version = "5.0.0-beta"
+version = "5.0.0-rc1"
 dependencies = [
  "anyhow",
  "askama",
@@ -778,7 +778,7 @@ dependencies = [
 
 [[package]]
 name = "dtu-cli"
-version = "5.0.0-beta"
+version = "5.0.0-rc1"
 dependencies = [
  "anyhow",
  "base64",
@@ -809,7 +809,7 @@ dependencies = [
 
 [[package]]
 name = "dtu-complete"
-version = "5.0.0-beta"
+version = "5.0.0-rc1"
 dependencies = [
  "anyhow",
  "dtu",
@@ -821,7 +821,7 @@ dependencies = [
 
 [[package]]
 name = "dtu-decompile"
-version = "5.0.0-beta"
+version = "5.0.0-rc1"
 dependencies = [
  "anyhow",
  "clap",
@@ -831,7 +831,7 @@ dependencies = [
 
 [[package]]
 name = "dtu-fs"
-version = "5.0.0-beta"
+version = "5.0.0-rc1"
 dependencies = [
  "anyhow",
  "clap",
@@ -840,7 +840,7 @@ dependencies = [
 
 [[package]]
 name = "dtu-py"
-version = "5.0.0-beta"
+version = "5.0.0-rc1"
 dependencies = [
  "anyhow",
  "dtu",
@@ -1823,7 +1823,7 @@ dependencies = [
 
 [[package]]
 name = "protoc_generate"
-version = "5.0.0-beta"
+version = "5.0.0-rc1"
 dependencies = [
  "protobuf-codegen",
 ]

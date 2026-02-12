@@ -8,6 +8,31 @@ def split_smali_args(args: str) -> list[str]:
     """
 
 
+def find_files_for_class(
+    self, class_name: "ClassName", *, ctx: Optional["Context"] = None
+) -> list[Path]:
+    """Searches the entire smali directory for the files that implement the given class.
+
+    If ctx is None, the default context is used.
+    """
+
+
+def get_smali_file_for_class(
+    self,
+    class_name: "ClassName",
+    *,
+    apk_path: Optional["DevicePath"] = None,
+    ctx: Optional["Context"] = None
+) -> Optional[Path]:
+    """Return the smali implementation file path for a given class.
+    None is returned if file was not found.
+
+    If apk_path is None, the smali file is resolved within the framework.
+    If ctx is None, the default context is used.
+    """
+
+
+
 class Context:
     def __new__(cls) -> Context: ...
 
@@ -118,6 +143,9 @@ class DevicePath:
 
     @property
     def device_str(self) -> str: ...
+
+    @property
+    def squashed_str(self) -> str: ...
 
 
 class UnknownBool:

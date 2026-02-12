@@ -1,19 +1,8 @@
-use dtu::utils::smali::SmaliMethodSignatureIterator;
-
 use pyo3::{prelude::*, types::PyTuple, IntoPyObjectExt, PyTypeInfo};
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::exception::DtuError;
 
-#[pyfunction]
-pub fn split_smali_args(args: &str) -> PyResult<Vec<String>> {
-    let it =
-        SmaliMethodSignatureIterator::new(args).map_err(|e| DtuError::new_err(String::from(e)))?;
-    Ok(it
-        .into_iter()
-        .map(|it| it.to_string())
-        .collect::<Vec<String>>())
-}
 
 pub fn unpickle<T, U>(value: &[u8]) -> PyResult<U>
 where
