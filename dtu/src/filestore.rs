@@ -163,6 +163,13 @@ impl FileStore for LocalFileStore {
         local_path: &str,
     ) -> crate::Result<()> {
         let from = self.join_path(remote_path)?;
+
+        let local_dir = Path::new(local_path)
+            .parent()
+            .ok_or_else(|| crate::Error::Generic(format!("invalid local path: {}", local_path)))?;
+
+        ensure_dir_exists(local_dir)?;
+
         if self.get_is_link {
             maybe_link(remote_path, local_path)?;
         } else {

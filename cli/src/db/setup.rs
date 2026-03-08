@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 
 use anyhow::bail;
+use anyhow::Context as AnyhowContext;
 use clap::{self, Args};
 use crossbeam::channel::Receiver;
 use crossterm::style::{ContentStyle, Stylize};
@@ -219,6 +220,17 @@ impl Setup {
         let db = DeviceDatabase::new(&ctx)?;
         let graph = get_default_graphdb(&ctx)?;
 
+        let api_level = self.api_level.unwrap_or_else(|| ctx.get_target_api_level());
+
+        let aosp_db = if self.no_diff {
+            None
+        } else {
+            // Ensure up front that we have the aosp DB if we will be doing a diff later on.
+            Some(get_aosp_database(&ctx, api_level).context(
+                format!("Failed to get AOSP database for API level {}", api_level)
+            )?)
+        };
+
         let (mon, chan) = ChannelEventMonitor::create();
         let (_cancel, check) = task_canceller()?;
         let join = start_monitor_thread(self.quiet, chan);
@@ -228,33 +240,29 @@ impl Setup {
         let err_reporter = join.join().expect("failed to join thread").unwrap();
         res?;
 
-        if self.no_diff {
-            return err_reporter.as_err();
-        }
+        if let Some(db) = &aosp_db {
+            let source = db.get_diff_source_by_name(EMULATOR_DIFF_SOURCE)?;
+            let (_cancel, check) = task_canceller()?;
+            let opts = DiffOptions::new(source);
+            let (mon, join) = PrintMonitor::start()?;
+            let task = DiffTask::new(opts, &db, aosp_db.as_ref().unwrap(), check, &mon);
+            let res = task.run();
+            drop(mon);
+            _ = join.join();
+            res?;
 
-        let source = db.get_diff_source_by_name(EMULATOR_DIFF_SOURCE)?;
-        let (_cancel, check) = task_canceller()?;
-        let opts = DiffOptions::new(source);
-        let api_level = self.api_level.unwrap_or_else(|| ctx.get_target_api_level());
-        let aosp_db = get_aosp_database(&ctx, api_level)?;
-        let (mon, join) = PrintMonitor::start()?;
-        let task = DiffTask::new(opts, &db, &aosp_db, check, &mon);
-        let res = task.run();
-        drop(mon);
-        _ = join.join();
-        res?;
+            mdb.update_prereq(Prereq::EmulatorDiff, true)?;
 
-        mdb.update_prereq(Prereq::EmulatorDiff, true)?;
-
-        let src_path = get_aosp_database_path(&ctx, api_level)?;
-        let path = get_path_for_diff_source(&ctx, EMULATOR_DIFF_SOURCE)?;
-        if let Err(e) = fs::copy(&src_path, &path) {
-            bail!(
-                "failed to copy {} to {}: {}",
-                path_must_str(&src_path),
-                path_must_str(&path),
-                e
-            );
+            let src_path = get_aosp_database_path(&ctx, api_level)?;
+            let path = get_path_for_diff_source(&ctx, EMULATOR_DIFF_SOURCE)?;
+            if let Err(e) = fs::copy(&src_path, &path) {
+                bail!(
+                    "failed to copy {} to {}: {}",
+                    path_must_str(&src_path),
+                    path_must_str(&path),
+                    e
+                );
+            }
         }
 
         err_reporter.as_err()
