@@ -9,6 +9,7 @@ mod update_binder_status;
 use std::path::PathBuf;
 
 use anyhow::bail;
+use anyhow::Context as AnyhowContext;
 use clap::{self, Args, Subcommand};
 
 use dtu::db::{DeviceDatabase, MetaDatabase, MetaSqliteDatabase};
@@ -111,7 +112,14 @@ pub(crate) fn get_aosp_database(
 
     let store = get_filestore(ctx)?;
 
-    store.get_file(ctx, &remote_path, path_as_str)?;
+    store.get_file(ctx, &remote_path, path_as_str).context(
+        format!(
+            "failed to copy remote path {} to path {} with store {}",
+            remote_path,
+            path_as_str,
+            store.name(),
+        )
+    )?;
 
     if !path.exists() {
         bail!(

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 
 use anyhow::bail;
+use anyhow::Context as AnyhowContext;
 use clap::{self, Args};
 use crossbeam::channel::Receiver;
 use crossterm::style::{ContentStyle, Stylize};
@@ -219,6 +220,16 @@ impl Setup {
         let db = DeviceDatabase::new(&ctx)?;
         let graph = get_default_graphdb(&ctx)?;
 
+        // Ensure up front that we will be able to do the diff
+        let api_level = self.api_level.unwrap_or_else(|| ctx.get_target_api_level());
+        let aosp_db = if self.no_diff {
+            None
+        } else {
+             Some(get_aosp_database(&ctx, api_level).context(
+                 format!("Failed to get AOSP database for API level {}", api_level)
+             )?)
+        };
+
         let (mon, chan) = ChannelEventMonitor::create();
         let (_cancel, check) = task_canceller()?;
         let join = start_monitor_thread(self.quiet, chan);
@@ -235,10 +246,8 @@ impl Setup {
         let source = db.get_diff_source_by_name(EMULATOR_DIFF_SOURCE)?;
         let (_cancel, check) = task_canceller()?;
         let opts = DiffOptions::new(source);
-        let api_level = self.api_level.unwrap_or_else(|| ctx.get_target_api_level());
-        let aosp_db = get_aosp_database(&ctx, api_level)?;
         let (mon, join) = PrintMonitor::start()?;
-        let task = DiffTask::new(opts, &db, &aosp_db, check, &mon);
+        let task = DiffTask::new(opts, &db, aosp_db.as_ref().unwrap(), check, &mon);
         let res = task.run();
         drop(mon);
         _ = join.join();
