@@ -140,11 +140,6 @@ impl<'a> PullTask<'a> {
             &mut on_file,
         )?;
 
-        //self.adb.streamed_find_no_stderr(
-        //    "find / -type f -name '*.cil' -print0 2> /dev/null",
-        //    &mut on_file,
-        //)?;
-
         self.emit(Event::FoundPolicyFiles {
             files: paths.clone(),
         });

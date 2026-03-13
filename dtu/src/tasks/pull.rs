@@ -850,11 +850,6 @@ where {
 
         self.dfs
             .find(dir, FindType::Any, None, None, &mut on_stdout)?;
-        //let cmd = format!(
-        //    "find '{}' -type f -print0 2> /dev/null",
-        //    dir.replace('\'', "'\"'\"'")
-        //);
-        //self.adb.streamed_find_no_stderr(&cmd, &mut on_stdout)?;
         Ok(())
     }
 
@@ -870,17 +865,6 @@ where {
         };
 
         self.dfs.find_framework_dirs(&mut on_dir)?;
-
-        //self.adb.streamed_find_no_stderr(
-        //    "find / -mindepth 2 -maxdepth 4 -type d -name 'framework' -print0 2> /dev/null",
-        //    &mut on_stdout,
-        //)?;
-
-        //self.adb.streamed_find_no_stderr(
-        //    "find / -mindepth 2 -maxdepth 4 -type d -name 'apex' -print0 2> /dev/null",
-        //    &mut on_stdout,
-        //)?;
-
         Ok(())
     }
 

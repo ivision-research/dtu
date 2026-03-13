@@ -66,16 +66,6 @@ impl Command {
     }
 }
 
-//macro_rules! ps {
-//    ($out:ident, $s:literal) => {
-//        $out.push_str($s)
-//    };
-//
-//    ($out:ident, $s:ident) => {
-//        $out.push_str($s.as_ref())
-//    };
-//}
-
 macro_rules! psf {
     ($out:ident, $s:literal) => {
         $out.push_str(&format!($s))
@@ -94,18 +84,6 @@ macro_rules! wf {
         $out.write_all(format!($s, $($args,)+).as_bytes()).expect("failed to write to output file")
     };
 }
-
-//macro_rules! w {
-//    ($out:ident, $s:literal) => {
-//        $out.write_all($s.as_bytes())
-//            .expect("failed to write to output file")
-//    };
-//
-//    ($out:ident, $s:ident) => {
-//        $out.write_all($s.as_bytes())
-//            .expect("failed to write to output file")
-//    };
-//}
 
 type OutFile = BufWriter<File>;
 

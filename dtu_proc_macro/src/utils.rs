@@ -33,20 +33,3 @@ impl ToTokens for SetterMethod {
     }
 }
 
-//pub(crate) fn quote_string(s: &str) -> String {
-//    let mut into = String::from("\"");
-//    for c in s.escape_default() {
-//        into.push(c);
-//    }
-//    into.push('"');
-//    into
-//}
-//
-//pub(crate) fn quote_string_into(s: &str, into: &mut String) {
-//    into.truncate(0);
-//    into.push('"');
-//    for c in s.escape_default() {
-//        into.push(c);
-//    }
-//    into.push('"');
-//}

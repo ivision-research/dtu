@@ -416,16 +416,6 @@ impl CompleteContext {
         Ok(())
     }
 
-    //fn complete_system_service_method(self, ssm: SystemServiceMethod) -> anyhow::Result<()> {
-    //    self.db_complete_selector_startswith(
-    //        |db| {
-    //            let svc = db.get_system_service_by_name(&ssm.service)?;
-    //            db.get_system_service_methods_by_service_id(svc.id)
-    //        },
-    //        |e| e.name,
-    //    )
-    //}
-
     fn complete(self) -> anyhow::Result<()> {
         match &self.kind {
             CompleteKind::Uncompletable => Ok(()),
