@@ -240,12 +240,12 @@ impl Setup {
         let err_reporter = join.join().expect("failed to join thread").unwrap();
         res?;
 
-        if let Some(db) = &aosp_db {
+        if let Some(diff_db) = &aosp_db {
             let source = db.get_diff_source_by_name(EMULATOR_DIFF_SOURCE)?;
             let (_cancel, check) = task_canceller()?;
             let opts = DiffOptions::new(source);
             let (mon, join) = PrintMonitor::start()?;
-            let task = DiffTask::new(opts, &db, aosp_db.as_ref().unwrap(), check, &mon);
+            let task = DiffTask::new(opts, &db, diff_db, check, &mon);
             let res = task.run();
             drop(mon);
             _ = join.join();
