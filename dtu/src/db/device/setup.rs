@@ -547,7 +547,7 @@ impl<'a> AddManifestTask<'a> {
             Ok(f) => f,
         };
 
-        let lexer = Lexer::new(&mut file);
+        let lexer = Lexer::new_buffered(&mut file);
         let mut parser = Parser::new(lexer);
 
         let parsed = match parse_class(&mut parser) {
@@ -877,7 +877,7 @@ impl<'a> AddSystemServiceTask<'a> {
     /// Parse a file with smalisa to find the class name
     fn get_class_from_file(&self, path: &PathBuf) -> SetupResult<ClassName> {
         let mut file = open_file(&path)?;
-        let lexer = Lexer::new(&mut file);
+        let lexer = Lexer::new_buffered(&mut file);
         let mut parser = Parser::new(lexer);
         let mut line = Line::default();
         loop {
@@ -924,7 +924,7 @@ impl<'a> AddSystemServiceTask<'a> {
         };
 
         let mut file = open_file(&path)?;
-        let lexer = Lexer::new(&mut file);
+        let lexer = Lexer::new_buffered(&mut file);
         let mut parser = Parser::new(lexer);
 
         let class = parse_class(&mut parser).map_err(|e| SetupError::Smalisa(e.to_string()))?;
@@ -1118,7 +1118,7 @@ impl<'a> AddSystemServiceTask<'a> {
     ) -> SetupResult<HashMap<String, MethodData>> {
         let mut methods: HashMap<String, MethodData> = HashMap::new();
         let mut stub_file = open_file(stub_path)?;
-        let stub_lexer = Lexer::new(&mut stub_file);
+        let stub_lexer = Lexer::new_buffered(&mut stub_file);
         let mut stub_parser = Parser::new(stub_lexer);
 
         let mut line = Line::default();
@@ -1218,7 +1218,7 @@ impl<'a> AddSystemServiceTask<'a> {
 
         let mut line = Line::default();
         let mut iface_file = open_file(&iface_path)?;
-        let iface_lexer = Lexer::new(&mut iface_file);
+        let iface_lexer = Lexer::new_buffered(&mut iface_file);
         let mut iface_parser = Parser::new(iface_lexer);
         loop {
             self.cancel_check()?;

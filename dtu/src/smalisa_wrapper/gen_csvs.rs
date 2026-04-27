@@ -452,7 +452,7 @@ where
     let mut class = "";
     let mut calling_method_args = "";
     let mut calling_method_name = "";
-    let lexer = Lexer::new(&file);
+    let lexer = Lexer::new_buffered(&file);
     let mut parser = Parser::new(lexer);
     let mut line = Line::Empty;
 
