@@ -1,12 +1,18 @@
+use std::collections::HashMap;
 use std::fmt::Display;
+use std::io;
 
 use clap::{self, Args, Subcommand};
 
-use dtu::db::device::models;
+use dtu::db::device::models::{self, Activity, Apk, DiffSource, Provider, Receiver, Service};
+use dtu::db::meta::get_default_metadb;
 use dtu::db::{ApkIPC, DeviceDatabase};
 use dtu::prereqs::Prereq;
-use dtu::utils::ensure_prereq;
+use dtu::utils::{ensure_prereq, ClassName};
 use dtu::DefaultContext;
+
+use crate::diff::get_diff_source;
+use crate::parsers::DiffSourceValueParser;
 
 mod apks;
 use apks::Apks;
@@ -31,6 +37,14 @@ pub struct List {
 
 #[derive(Args)]
 struct CommonParams {
+    /// Only show entries that don't exist in the given diff source (or emulator by default)
+    #[arg(short = 'N', long)]
+    only_new: bool,
+
+    /// Set the diff source (only valid with -N/--only-new) otherwise the emulator is the default
+    #[arg(short = 'S', long, value_parser = DiffSourceValueParser)]
+    diff_source: Option<DiffSource>,
+
     /// Only show public entries
     #[arg(short = 'P', long)]
     only_public: bool,
@@ -38,10 +52,27 @@ struct CommonParams {
     /// Only show enabled entries
     #[arg(short = 'E', long)]
     only_enabled: bool,
+
+    #[arg(short = 'j', long = "json")]
+    json: bool,
+}
+
+impl CommonParams {
+    fn get_diff_id(&self, ctx: &DefaultContext) -> anyhow::Result<i32> {
+        let meta = get_default_metadb(ctx)?;
+        Ok(get_diff_source(ctx, &meta, &self.diff_source)?.id)
+    }
 }
 
 #[derive(Args)]
 struct ServiceParams {
+    /// Only show entries that don't exist in the given diff source (or emulator by default)
+    #[arg(short = 'N', long)]
+    only_new: bool,
+
+    #[arg(short = 'S', long, value_parser = DiffSourceValueParser)]
+    diff_source: Option<DiffSource>,
+
     /// Only show public services
     #[arg(short = 'P', long)]
     only_public: bool,
@@ -53,6 +84,9 @@ struct ServiceParams {
     /// Only show Services that return a binder
     #[arg(short = 'B', long)]
     only_returns_binder: bool,
+
+    #[arg(short = 'j', long = "json")]
+    json: bool,
 }
 
 #[derive(Subcommand)]
@@ -125,41 +159,139 @@ impl List {
         Ok(())
     }
 
+    fn get_items<F, R>(
+        &self,
+        ctx: &DefaultContext,
+        db: &DeviceDatabase,
+        p: &CommonParams,
+        func: F,
+    ) -> anyhow::Result<Vec<R>>
+    where
+        R: ApkIPC + Display,
+        F: FnOnce(&DefaultContext, &DeviceDatabase) -> anyhow::Result<Vec<R>>,
+    {
+        let unfiltered = func(ctx, db)?;
+
+        Ok(unfiltered
+            .into_iter()
+            .filter(|it| {
+                if p.only_public && !it.is_exported() {
+                    return false;
+                }
+                if p.only_enabled && !it.is_enabled() {
+                    return false;
+                }
+                true
+            })
+            .collect())
+    }
+
+    fn do_list_json<F, R>(
+        &self,
+        ctx: &DefaultContext,
+        db: &DeviceDatabase,
+        p: &CommonParams,
+        func: F,
+    ) -> anyhow::Result<()>
+    where
+        R: ApkIPC + Display,
+        F: FnOnce(&DefaultContext, &DeviceDatabase) -> anyhow::Result<Vec<R>>,
+    {
+        let apks: HashMap<i32, Apk> =
+            HashMap::from_iter(db.get_apks()?.into_iter().map(|apk| (apk.id, apk)));
+
+        #[derive(serde::Serialize)]
+        struct JsonOutput<'a> {
+            id: i32,
+            class: ClassName,
+            package: String,
+            enabled: bool,
+            exported: bool,
+            requires_permission: bool,
+            apk: &'a str,
+            source: &'a str,
+        }
+
+        let res = self
+            .get_items(ctx, db, p, func)?
+            .into_iter()
+            .filter_map(|it| {
+                let apk = apks.get(&it.get_apk_id())?;
+
+                let source = if apk.app_name == "android" {
+                    "framework"
+                } else {
+                    apk.device_path.as_squashed_str()
+                };
+
+                Some(JsonOutput {
+                    id: it.get_id(),
+                    class: it.get_class_name(),
+                    package: it.get_package().to_string(),
+                    enabled: it.is_enabled(),
+                    exported: it.is_exported(),
+                    requires_permission: it.requires_permission(),
+                    apk: &apk.name,
+                    source,
+                })
+            })
+            .collect::<Vec<JsonOutput>>();
+
+        serde_json::to_writer(io::stdout(), &res)?;
+
+        Ok(())
+    }
+
     fn do_list<F, R>(&self, p: &CommonParams, func: F) -> anyhow::Result<()>
     where
         R: ApkIPC + Display,
-        F: FnOnce(&DeviceDatabase) -> anyhow::Result<Vec<R>>,
+        F: FnOnce(&DefaultContext, &DeviceDatabase) -> anyhow::Result<Vec<R>>,
     {
         let ctx = DefaultContext::new();
         ensure_prereq(&ctx, Prereq::SQLDatabaseSetup)?;
+
         let db = DeviceDatabase::new(&ctx)?;
-        let unfiltered = func(&db)?;
-        let items = unfiltered.iter().filter(|it| {
-            if p.only_public && !it.is_exported() {
-                return false;
-            }
-            if p.only_enabled && !it.is_enabled() {
-                return false;
-            }
-            true
-        });
-        for it in items {
+
+        if p.json {
+            return self.do_list_json(&ctx, &db, p, func);
+        }
+        for it in self.get_items(&ctx, &db, p, func)? {
             println!("{}", it);
         }
         Ok(())
     }
 
     fn list_receivers(&self, p: &CommonParams) -> anyhow::Result<()> {
-        self.do_list(p, |db| Ok(db.get_receivers()?))
+        self.do_list(p, |ctx, db| {
+            Ok(if p.only_new {
+                db.get_receiver_diffs_by_diff_id(p.get_diff_id(ctx)?)?
+                    .into_iter()
+                    .map(|it| it.receiver)
+                    .collect::<Vec<Receiver>>()
+            } else {
+                db.get_receivers()?
+            })
+        })
     }
 
     fn list_services(&self, p: &ServiceParams) -> anyhow::Result<()> {
         let c = CommonParams {
             only_public: p.only_public,
             only_enabled: p.only_enabled,
+            json: p.json,
+            only_new: p.only_new,
+            diff_source: p.diff_source.clone(),
         };
-        self.do_list(&c, |db| {
-            let services = db.get_services()?;
+        self.do_list(&c, |ctx, db| {
+            let services = if p.only_new {
+                db.get_service_diffs_by_diff_id(c.get_diff_id(ctx)?)?
+                    .into_iter()
+                    .map(|it| it.service)
+                    .collect::<Vec<Service>>()
+            } else {
+                db.get_services()?
+            };
+
             if !p.only_returns_binder {
                 return Ok(services);
             }
@@ -172,10 +304,28 @@ impl List {
     }
 
     fn list_activities(&self, p: &CommonParams) -> anyhow::Result<()> {
-        self.do_list(p, |db| Ok(db.get_activities()?))
+        self.do_list(p, |ctx, db| {
+            Ok(if p.only_new {
+                db.get_activity_diffs_by_diff_id(p.get_diff_id(ctx)?)?
+                    .into_iter()
+                    .map(|it| it.activity)
+                    .collect::<Vec<Activity>>()
+            } else {
+                db.get_activities()?
+            })
+        })
     }
 
     fn list_providers(&self, p: &CommonParams) -> anyhow::Result<()> {
-        self.do_list(p, |db| Ok(db.get_providers()?))
+        self.do_list(p, |ctx, db| {
+            Ok(if p.only_new {
+                db.get_provider_diffs_by_diff_id(p.get_diff_id(ctx)?)?
+                    .into_iter()
+                    .map(|it| it.provider)
+                    .collect::<Vec<Provider>>()
+            } else {
+                db.get_providers()?
+            })
+        })
     }
 }
