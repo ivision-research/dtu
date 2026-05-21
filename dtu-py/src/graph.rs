@@ -266,6 +266,11 @@ impl PyMethodSpec {
         reduce::<_, MethodSpec>(self, py)
     }
     #[getter]
+    fn id(&self) -> i32 {
+        self.0.id
+    }
+
+    #[getter]
     fn class_(&self) -> PyClassName {
         self.0.class.clone().into()
     }

@@ -147,8 +147,8 @@ impl GraphSqliteDatabase {
         WHERE ct.distance < ?
         ORDER BY 2 DESC
     ),
-    method_calls(source, class, name, args, ret, access_flags, idx) AS (
-        SELECT s.name, c.name, m.name, m.args, m.ret, m.access_flags, CAST(p.key AS INTEGER)
+    method_calls(source, class, id, name, args, ret, access_flags, idx) AS (
+        SELECT s.name, c.name, m.id, m.name, m.args, m.ret, m.access_flags, CAST(p.key AS INTEGER)
         FROM calls_to AS ct
         JOIN json_each(ct.path) AS p
         JOIN methods AS m
@@ -435,23 +435,27 @@ impl GraphDatabase for GraphSqliteDatabase {
                 .filter(sources::name.eq(source))
                 .select((
                     classes::name,
+                    methods::id,
                     methods::name,
                     methods::args,
                     methods::ret,
                     methods::access_flags,
                     sources::name,
                 )))
-            .load::<(String, String, String, String, i64, String)>(c)?;
+            .load::<(String, i32, String, String, String, i64, String)>(c)?;
             Ok(rows
                 .into_iter()
-                .map(|(class, name, signature, ret, flags, source)| MethodSpec {
-                    class: class.into(),
-                    name,
-                    signature,
-                    ret,
-                    access_flags: AccessFlag::from_bits_truncate(flags as u64),
-                    source,
-                })
+                .map(
+                    |(class, id, name, signature, ret, flags, source)| MethodSpec {
+                        class: class.into(),
+                        name,
+                        id,
+                        signature,
+                        ret,
+                        access_flags: AccessFlag::from_bits_truncate(flags as u64),
+                        source,
+                    },
+                )
                 .collect())
         })
     }
@@ -613,6 +617,8 @@ struct MethodCallRow {
     source: String,
     #[diesel(sql_type = Text)]
     class: String,
+    #[diesel(sql_type = Integer)]
+    id: i32,
     #[diesel(sql_type = Text)]
     name: String,
     #[diesel(sql_type = Text)]
@@ -630,6 +636,7 @@ impl From<MethodCallRow> for MethodSpec {
         Self {
             class: ClassName::from(value.class),
             ret: value.ret,
+            id: value.id,
             name: value.name,
             signature: value.args,
             source: value.source,

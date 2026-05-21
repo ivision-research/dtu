@@ -168,6 +168,7 @@ where
 #[derive(Eq, Clone, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(test, derive(Debug, PartialOrd, Ord))]
 pub struct MethodSpec {
+    pub id: i32,
     pub class: ClassName,
     pub name: String,
     pub signature: String,
