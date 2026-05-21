@@ -1,3 +1,8 @@
+# 5.0.2
+
+- Surface method IDs in graph queries
+- Started adding a hidden `_scripting`/`_s` command that does some metadata related tasks for making shell scripts easier to write
+
 # 5.0.0
 
 This new version contains significant breaking changes to the graph database and also adds Python bindings.

@@ -75,6 +75,9 @@ use check::RunCheck;
 mod selinux;
 use selinux::Selinux;
 
+mod scripting;
+use scripting::Scripting;
+
 #[cfg(test)]
 mod testing;
 
@@ -264,6 +267,11 @@ enum Commands {
     /// Selinux related commands
     #[command()]
     Selinux(Selinux),
+
+    #[command(name = "_scripting")]
+    #[command(alias = "_s")]
+    #[command(hide = true)]
+    Scripting(Scripting),
 }
 
 impl Cli {
@@ -330,6 +338,7 @@ fn main() -> anyhow::Result<()> {
     let log_handle = cli.configure_loggers(&ctx)?;
 
     let res = match cli.command {
+        Commands::Scripting(c) => c.run(),
         Commands::Pull(c) => c.run(),
         Commands::GenEnvrc(c) => c.run(),
         Commands::DB(c) => c.run(),

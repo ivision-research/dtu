@@ -145,23 +145,33 @@ pub fn find_file_for_class(ctx: &dyn Context, class: &ClassName) -> Option<PathB
     find_files_for_class(ctx, class).into_iter().next()
 }
 
-pub fn try_proj_home_relative(ctx: &dyn Context, path: &Path) -> PathBuf {
+/// Attempt to make the path into a path relative to DTU_PROJECT_HOME
+///
+/// Returns None if the path can't be make relative
+pub fn proj_home_relative(ctx: &dyn Context, path: &Path) -> Option<PathBuf> {
+    let base = ctx.get_project_dir().ok()?;
     if path.is_relative() {
-        return PathBuf::from(path);
+        let check = base.join(path);
+        if !check.exists() {
+            return None;
+        }
+        return Some(PathBuf::from(path));
     }
-    let home = match ctx.get_project_dir() {
-        Ok(v) => v,
-        Err(_) => return PathBuf::from(path),
-    };
+    let base_str = path_must_str(&base);
+    let path = path_must_str(path);
+    if !path.starts_with(base_str) {
+        return None;
+    }
 
-    let home_str = home.to_str().expect("valid paths");
-    let path = path.to_str().expect("valid paths");
-    if path.starts_with(home_str) {
-        let (_, rel) = path.split_at(home_str.len());
-        PathBuf::from(rel.trim_start_matches(OS_PATH_SEP))
-    } else {
-        PathBuf::from(path)
-    }
+    let (_, rel) = path.split_at(base_str.len());
+    Some(PathBuf::from(rel.trim_start_matches(OS_PATH_SEP)))
+}
+
+/// Attempt to make the path into a path relative to DTU_PROJECT_HOME
+///
+/// This can't fail and just returns the path itself if it can't be make relative
+pub fn try_proj_home_relative(ctx: &dyn Context, path: &Path) -> PathBuf {
+    proj_home_relative(ctx, path).unwrap_or_else(|| PathBuf::from(path))
 }
 
 pub fn find_smali_file_for_class(
