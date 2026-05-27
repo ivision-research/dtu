@@ -1560,12 +1560,12 @@ impl<'a> DBSetupTask<'a> {
     }
 
     fn add_apks(&self) -> SetupResult<()> {
-        let dir = self.ctx.get_apks_dir()?.join("decompiled");
+        let dir = self.ctx.get_apks_dir()?.join("framework");
         let mut last_apk_id: usize = 0;
         let mut dir_id: usize = 0;
         last_apk_id += self.add_apks_from_dir(&dir, dir_id, last_apk_id)?;
         dir_id += 1;
-        let dir = self.ctx.get_apks_dir()?.join("framework");
+        let dir = self.ctx.get_apks_dir()?.join("decompiled");
         self.add_apks_from_dir(&dir, dir_id, last_apk_id)?;
         Ok(())
     }

@@ -1,5 +1,8 @@
 # 5.0.2
 
+- Major bugfixes:
+    - Permissions were UNIQUE(name), updated to UNIQUE(name, source_apk_id)
+    - Missing index on a graph query made it take very long
 - Surface method IDs in graph queries
 - Started adding a hidden `_scripting`/`_s` command that does some metadata related tasks for making shell scripts easier to write
 
