@@ -186,14 +186,17 @@ impl List {
             .collect())
     }
 
-    fn do_list_json<F, R>(
+    fn do_list_json<F, R, M, MetaData>(
         &self,
         ctx: &DefaultContext,
         db: &DeviceDatabase,
         p: &CommonParams,
         func: F,
+        meta_func: Option<&M>,
     ) -> anyhow::Result<()>
     where
+        MetaData: serde::Serialize,
+        M: Fn(&R) -> MetaData + ?Sized,
         R: ApkIPC + Display,
         F: FnOnce(&DefaultContext, &DeviceDatabase) -> anyhow::Result<Vec<R>>,
     {
@@ -201,7 +204,7 @@ impl List {
             HashMap::from_iter(db.get_apks()?.into_iter().map(|apk| (apk.id, apk)));
 
         #[derive(serde::Serialize)]
-        struct JsonOutput<'a> {
+        struct JsonOutput<'a, MD: serde::Serialize> {
             id: i32,
             class: ClassName,
             package: String,
@@ -210,6 +213,7 @@ impl List {
             requires_permission: bool,
             apk: &'a str,
             source: &'a str,
+            meta: Option<MD>,
         }
 
         let res = self
@@ -224,6 +228,12 @@ impl List {
                     apk.device_path.as_squashed_str()
                 };
 
+                let meta = if let Some(f) = &meta_func {
+                    Some(f(&it))
+                } else {
+                    None
+                };
+
                 Some(JsonOutput {
                     id: it.get_id(),
                     class: it.get_class_name(),
@@ -232,18 +242,26 @@ impl List {
                     exported: it.is_exported(),
                     requires_permission: it.requires_permission(),
                     apk: &apk.name,
+                    meta,
                     source,
                 })
             })
-            .collect::<Vec<JsonOutput>>();
+            .collect::<Vec<JsonOutput<'_, MetaData>>>();
 
         serde_json::to_writer(io::stdout(), &res)?;
 
         Ok(())
     }
 
-    fn do_list<F, R>(&self, p: &CommonParams, func: F) -> anyhow::Result<()>
+    fn do_list<F, R, M, MetaData>(
+        &self,
+        p: &CommonParams,
+        func: F,
+        meta_func: Option<&M>,
+    ) -> anyhow::Result<()>
     where
+        M: Fn(&R) -> MetaData + ?Sized,
+        MetaData: serde::Serialize,
         R: ApkIPC + Display,
         F: FnOnce(&DefaultContext, &DeviceDatabase) -> anyhow::Result<Vec<R>>,
     {
@@ -253,7 +271,7 @@ impl List {
         let db = DeviceDatabase::new(&ctx)?;
 
         if p.json {
-            return self.do_list_json(&ctx, &db, p, func);
+            return self.do_list_json(&ctx, &db, p, func, meta_func);
         }
         for it in self.get_items(&ctx, &db, p, func)? {
             println!("{}", it);
@@ -262,16 +280,20 @@ impl List {
     }
 
     fn list_receivers(&self, p: &CommonParams) -> anyhow::Result<()> {
-        self.do_list(p, |ctx, db| {
-            Ok(if p.only_new {
-                db.get_receiver_diffs_by_diff_id(p.get_diff_id(ctx)?)?
-                    .into_iter()
-                    .map(|it| it.receiver)
-                    .collect::<Vec<Receiver>>()
-            } else {
-                db.get_receivers()?
-            })
-        })
+        self.do_list(
+            p,
+            |ctx, db| {
+                Ok(if p.only_new {
+                    db.get_receiver_diffs_by_diff_id(p.get_diff_id(ctx)?)?
+                        .into_iter()
+                        .map(|it| it.receiver)
+                        .collect::<Vec<Receiver>>()
+                } else {
+                    db.get_receivers()?
+                })
+            },
+            None::<&dyn for<'a> Fn(&'a Receiver) -> String>,
+        )
     }
 
     fn list_services(&self, p: &ServiceParams) -> anyhow::Result<()> {
@@ -282,50 +304,66 @@ impl List {
             only_new: p.only_new,
             diff_source: p.diff_source.clone(),
         };
-        self.do_list(&c, |ctx, db| {
-            let services = if p.only_new {
-                db.get_service_diffs_by_diff_id(c.get_diff_id(ctx)?)?
-                    .into_iter()
-                    .map(|it| it.service)
-                    .collect::<Vec<Service>>()
-            } else {
-                db.get_services()?
-            };
+        self.do_list(
+            &c,
+            |ctx, db| {
+                let services = if p.only_new {
+                    db.get_service_diffs_by_diff_id(c.get_diff_id(ctx)?)?
+                        .into_iter()
+                        .map(|it| it.service)
+                        .collect::<Vec<Service>>()
+                } else {
+                    db.get_services()?
+                };
 
-            if !p.only_returns_binder {
-                return Ok(services);
-            }
-            let filtered = services
-                .into_iter()
-                .filter(|it| it.returns_binder.is_true_or_unknown())
-                .collect::<Vec<models::Service>>();
-            Ok(filtered)
-        })
+                if !p.only_returns_binder {
+                    return Ok(services);
+                }
+                let filtered = services
+                    .into_iter()
+                    .filter(|it| it.returns_binder.is_true_or_unknown())
+                    .collect::<Vec<models::Service>>();
+                Ok(filtered)
+            },
+            None::<&dyn for<'a> Fn(&'a Service) -> String>,
+        )
     }
 
     fn list_activities(&self, p: &CommonParams) -> anyhow::Result<()> {
-        self.do_list(p, |ctx, db| {
-            Ok(if p.only_new {
-                db.get_activity_diffs_by_diff_id(p.get_diff_id(ctx)?)?
-                    .into_iter()
-                    .map(|it| it.activity)
-                    .collect::<Vec<Activity>>()
-            } else {
-                db.get_activities()?
-            })
-        })
+        self.do_list(
+            p,
+            |ctx, db| {
+                Ok(if p.only_new {
+                    db.get_activity_diffs_by_diff_id(p.get_diff_id(ctx)?)?
+                        .into_iter()
+                        .map(|it| it.activity)
+                        .collect::<Vec<Activity>>()
+                } else {
+                    db.get_activities()?
+                })
+            },
+            None::<&dyn for<'a> Fn(&'a Activity) -> String>,
+        )
     }
 
     fn list_providers(&self, p: &CommonParams) -> anyhow::Result<()> {
-        self.do_list(p, |ctx, db| {
-            Ok(if p.only_new {
-                db.get_provider_diffs_by_diff_id(p.get_diff_id(ctx)?)?
-                    .into_iter()
-                    .map(|it| it.provider)
-                    .collect::<Vec<Provider>>()
-            } else {
-                db.get_providers()?
-            })
-        })
+        self.do_list(
+            p,
+            |ctx, db| {
+                Ok(if p.only_new {
+                    db.get_provider_diffs_by_diff_id(p.get_diff_id(ctx)?)?
+                        .into_iter()
+                        .map(|it| it.provider)
+                        .collect::<Vec<Provider>>()
+                } else {
+                    db.get_providers()?
+                })
+            },
+            Some(&|prov: &Provider| {
+                prov.get_authorities()
+                    .map(String::from)
+                    .collect::<Vec<String>>()
+            }),
+        )
     }
 }
