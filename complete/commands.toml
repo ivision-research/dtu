@@ -148,24 +148,36 @@ options = [
 
 [list.providers]
 options = [
+    ["only-new", "N", "None", ""],
+    ["diff-source", "S", "DiffSource", ""],
+    ["json", "j", "None", ""],
     ["only-public", "P", "None", ""],
     ["only-enabled", "E", "None", ""],
 ]
 
 [list.receivers]
 options = [
+    ["only-new", "N", "None", ""],
+    ["diff-source", "S", "DiffSource", ""],
+    ["json", "j", "None", ""],
     ["only-public", "P", "None", ""],
     ["only-enabled", "E", "None", ""],
 ]
 
 [list.activities]
 options = [
+    ["only-new", "N", "None", ""],
+    ["diff-source", "S", "DiffSource", ""],
+    ["json", "j", "None", ""],
     ["only-public", "P", "None", ""],
     ["only-enabled", "E", "None", ""],
 ]
 
 [list.services]
 options = [
+    ["only-new", "N", "None", ""],
+    ["diff-source", "S", "DiffSource", ""],
+    ["json", "j", "None", ""],
     ["only-public", "P", "None", ""],
     ["only-enabled", "E", "None", ""],
     ["only-returns-binder", "B", "None", ""],
