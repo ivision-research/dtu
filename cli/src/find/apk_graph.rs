@@ -12,10 +12,10 @@ use sha2::{Digest, Sha256};
 use crate::find::utils::get_method_search;
 use crate::parsers::DevicePathValueParser;
 use crate::printer::{color, Printer};
-use crate::utils::{oshash, ostr, project_cacheable};
+use crate::utils::{oshash, ostr, project_cacheable, tostringshash};
 use dtu::db::graph::models::MethodCallPath;
 use dtu::db::graph::GraphDatabase;
-use dtu::db::{DeviceDatabase, Enablable, Exportable};
+use dtu::db::{DeviceDatabase, Enablable, Exportable, PermissionProtected};
 use dtu::diesel::prelude::*;
 use dtu::utils::{hex, ClassName, DevicePath};
 use dtu::Context;
@@ -30,6 +30,7 @@ pub struct ApkIPCCallsGeneric {
 
     only_exported: bool,
     only_enabled: bool,
+    no_perms: bool,
 
     method: Option<String>,
     signature: Option<String>,
@@ -116,45 +117,50 @@ impl ApkIPCCallsGeneric {
             apk_map.insert(apk.id, apk.device_path);
         }
 
-        // We handle only_exported/only_enabled with `eq_any` filters:
-        //
-        // if true, &[true, true] filters only on true
-        // if false, &[false, true] will get either
-        //
-        // slightly less efficient, but much easier to write..
+        macro_rules! get_ipc {
+            ($tbl:ident) => {{
+                get_ipc!($tbl, $tbl::class_name)
+            }};
 
-        let en_filter = &[self.only_enabled, true];
-        let ex_filter = &[self.only_exported, true];
+            ($tbl:ident, $cls:expr) => {{
+                get_ipc!($tbl, $cls, $tbl::permission.is_null())
+            }};
 
-        let classes = db.with_connection(|c| {
-            receivers::table
-                .inner_join(apks::table)
-                .select((apks::id, receivers::class_name))
-                .filter(receivers::exported.eq_any(ex_filter))
-                .filter(receivers::enabled.eq_any(en_filter))
-                .union_all(
-                    services::table
-                        .inner_join(apks::table)
-                        .select((apks::id, services::class_name))
-                        .filter(services::exported.eq_any(ex_filter))
-                        .filter(services::enabled.eq_any(en_filter)),
-                )
-                .union_all(
-                    activities::table
-                        .inner_join(apks::table)
-                        .select((apks::id, activities::class_name))
-                        .filter(activities::exported.eq_any(ex_filter))
-                        .filter(activities::enabled.eq_any(en_filter)),
-                )
-                .union_all(
-                    providers::table
-                        .inner_join(apks::table)
-                        .select((apks::id, providers::name))
-                        .filter(providers::exported.eq_any(ex_filter))
-                        .filter(providers::enabled.eq_any(en_filter)),
-                )
-                .get_results::<(i32, ClassName)>(c)
-        })?;
+            ($tbl:ident, $cls:expr, $perm_filter:expr) => {{
+                let mut q = $tbl::table
+                    .inner_join(apks::table)
+                    .select((apks::id, $cls))
+                    .into_boxed();
+
+                if (self.only_exported) {
+                    q = q.filter($tbl::exported.eq(true));
+                }
+                if (self.only_enabled) {
+                    q = q.filter($tbl::enabled.eq(true));
+                }
+                if (self.no_perms) {
+                    q = q.filter($perm_filter);
+                }
+                q
+            }};
+        }
+
+        let rcvq = get_ipc!(receivers);
+        let svcq = get_ipc!(services);
+        let actq = get_ipc!(activities);
+        let provq = get_ipc!(
+            providers,
+            providers::name,
+            providers::permission
+                .is_null()
+                .and(providers::read_permission.is_null())
+                .and(providers::write_permission.is_null())
+        );
+
+        let class_query = rcvq.union_all(svcq).union_all(actq).union_all(provq);
+
+        let classes =
+            db.with_connection(move |c| class_query.get_results::<(i32, ClassName)>(c))?;
 
         let apk_ids = classes.iter().map(|it| it.0).unique();
 
@@ -231,6 +237,7 @@ impl From<FindIPCCalls> for ApkIPCCallsGeneric {
         oshash(&mut hasher, &value.name);
         oshash(&mut hasher, &value.signature);
         oshash(&mut hasher, &value.class);
+        tostringshash(&mut hasher, &value.no_perms);
         let res = hasher.finalize();
         let hex = hex::bytes_to_hex(&res);
         let cache = format!("ipc-calls-{}", hex);
@@ -243,6 +250,7 @@ impl From<FindIPCCalls> for ApkIPCCallsGeneric {
             only_exported: value.only_exported,
             only_enabled: value.only_enabled,
             cache,
+            no_perms: value.no_perms,
             method: value.name,
             class: value.class,
             signature: value.signature,
@@ -259,6 +267,7 @@ impl From<FindParseUri> for ApkIPCCallsGeneric {
             depth: 1,
             only_exported: value.only_exported,
             only_enabled: value.only_enabled,
+            no_perms: value.no_perms,
             cache: "ipc-ParseUri".into(),
             method: Some(String::from("parseUri")),
             class: Some(ClassName::new("Landroid/content/Intent;".into())),
@@ -280,6 +289,10 @@ pub struct FindParseUri {
     /// Output JSON
     #[arg(short, long, default_value_t = false)]
     json: bool,
+
+    /// Only show IPC that doesn't require permissions
+    #[arg(short = 'P', long, default_value_t = false)]
+    no_perms: bool,
 
     /// Only show exported IPC
     #[arg(short = 'X', long, default_value_t = false)]
@@ -303,6 +316,10 @@ pub struct FindIntentActivities {
     /// Output JSON
     #[arg(short, long, default_value_t = false)]
     json: bool,
+
+    /// Only show activities that don't have permissions
+    #[arg(short = 'P', long, default_value_t = false)]
+    no_perms: bool,
 
     /// Strictly search for calls to Landroid/app/Activity;->getIntent()
     ///
@@ -338,7 +355,9 @@ impl FindIntentActivities {
         let activities = db
             .get_activities()?
             .into_iter()
-            .filter(|it| it.is_enabled() && it.is_exported())
+            .filter(|it| {
+                it.is_enabled() && it.is_exported() && (!self.no_perms || it.requires_permission())
+            })
             .collect::<Vec<Activity>>();
 
         let mut apk_map = HashMap::new();
@@ -439,6 +458,10 @@ pub struct FindIPCCalls {
     /// Only show enabled IPC
     #[arg(short = 'E', long, default_value_t = false)]
     only_enabled: bool,
+
+    /// Only show IPC that doesn't require permissions
+    #[arg(short = 'P', long, default_value_t = false)]
+    no_perms: bool,
 
     /// Depth to search
     #[arg(short, long, default_value_t = 3)]

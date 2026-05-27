@@ -281,6 +281,7 @@ options = [
 options = [
     ["apk", "a", "Apk", ""],
     ["no-cache", "", "None", ""],
+    ["no-perms", "P", "None", ""],
     ["json", "j", "None", ""],
     ["only-priv", "o", "None", ""],
     ["strict", "s", "None", ""],
@@ -292,6 +293,7 @@ options = [
     ["no-cache", "", "None", ""],
     ["only-exported", "X", "None", ""],
     ["only-enabled", "E", "None", ""],
+    ["no-perms", "P", "None", ""],
     ["json", "j", "None", ""],
 ]
 
@@ -302,6 +304,7 @@ options = [
     ["no-cache", "", "None", ""],
     ["only-exported", "X", "None", ""],
     ["only-enabled", "E", "None", ""],
+    ["no-perms", "P", "None", ""],
     ["json", "j", "None", ""],
     ["name", "n", "GraphMethod", ""],
     ["signature", "s", "GraphSignature", ""],

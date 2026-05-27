@@ -84,6 +84,11 @@ pub fn is_cachebust(ctx: &dyn Context) -> bool {
     ctx.has_env("DTU_CACHEBUST")
 }
 
+pub fn tostringshash<T: ToString + ?Sized>(sha: &mut Sha256, s: &T) {
+    let string = s.to_string();
+    return shash(sha, string.as_str());
+}
+
 pub fn shash<T: AsRef<str> + ?Sized>(sha: &mut Sha256, s: &T) {
     let as_str = s.as_ref();
     let bytes = as_str.as_bytes();
