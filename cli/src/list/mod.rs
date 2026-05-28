@@ -7,7 +7,7 @@ use clap::{self, Args, Subcommand};
 
 use dtu::db::device::models::{self, Activity, Apk, DiffSource, Provider, Receiver, Service};
 use dtu::db::meta::get_default_metadb;
-use dtu::db::{ApkIPC, DeviceDatabase};
+use dtu::db::{ApkIPC, DeviceDatabase, PermissionMode, PermissionProtected};
 use dtu::prereqs::Prereq;
 use dtu::utils::{ensure_prereq, ClassName};
 use dtu::DefaultContext;
@@ -250,13 +250,15 @@ impl List {
                     class = class.with_new_package(&package);
                 }
 
+                let permission = it.get_generic_permission();
+
                 Some(JsonOutput {
                     id: it.get_id(),
                     class,
                     package,
                     enabled: it.is_enabled(),
                     exported: it.is_exported(),
-                    permission: it.get_generic_permission().map(String::from),
+                    permission: permission.map(String::from),
                     apk: &apk.name,
                     meta,
                     source,
@@ -376,9 +378,32 @@ impl List {
                 })
             },
             Some(&|prov: &Provider| {
-                prov.get_authorities()
+                #[derive(serde::Serialize)]
+                struct MetaData {
+                    authorities: Vec<String>,
+                    permission: Option<String>,
+                    read_permission: Option<String>,
+                    write_permission: Option<String>,
+                }
+
+                let authorities = prov
+                    .get_authorities()
                     .map(String::from)
-                    .collect::<Vec<String>>()
+                    .collect::<Vec<String>>();
+                let permission = prov.get_generic_permission().map(String::from);
+                let read_permission = prov
+                    .get_permission_for_mode(PermissionMode::Read)
+                    .map(String::from);
+                let write_permission = prov
+                    .get_permission_for_mode(PermissionMode::Write)
+                    .map(String::from);
+
+                MetaData {
+                    authorities,
+                    permission,
+                    read_permission,
+                    write_permission,
+                }
             }),
         )
     }

@@ -136,23 +136,20 @@ pub enum PermissionMode {
     Read,
     /// Separate permission for Write operations
     Write,
+    /// Get the first of any of the above permissions
+    Any,
 }
 
 pub trait PermissionProtected {
     /// Return true if at least one permission mode is required
     fn requires_permission(&self) -> bool {
-        self.get_permission_for_mode(PermissionMode::Generic)
-            .is_some()
-            || self.get_permission_for_mode(PermissionMode::Read).is_some()
-            || self
-                .get_permission_for_mode(PermissionMode::Write)
-                .is_some()
+        self.get_permission_for_mode(PermissionMode::Any).is_some()
     }
 
     /// Gets the permission for the given [PermissionMode]
     fn get_permission_for_mode(&self, mode: PermissionMode) -> Option<&str> {
         match mode {
-            PermissionMode::Generic => self.get_generic_permission(),
+            PermissionMode::Generic | PermissionMode::Any => self.get_generic_permission(),
             _ => None,
         }
     }

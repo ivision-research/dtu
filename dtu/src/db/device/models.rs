@@ -597,6 +597,10 @@ impl PermissionProtected for Provider {
             PermissionMode::Read => self.read_permission.as_ref().map(|it| it.as_str()),
             PermissionMode::Write => self.write_permission.as_ref().map(|it| it.as_str()),
             PermissionMode::Generic => self.get_generic_permission(),
+            PermissionMode::Any => self
+                .get_generic_permission()
+                .or_else(|| self.get_permission_for_mode(PermissionMode::Read))
+                .or_else(|| self.get_permission_for_mode(PermissionMode::Write)),
         }
     }
 }
