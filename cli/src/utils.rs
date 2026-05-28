@@ -290,6 +290,16 @@ pub fn find_smali_file(
 
     let mut exists = smali_file.exists();
 
+    if !exists && apk.is_some() {
+        log::debug!("APK was specified but file doesn't exist, checking framework");
+        // If the above didn't fail this won't either, but meh
+        smali_file = match find_smali_file_for_class(ctx, class, None) {
+            Some(f) => f,
+            None => bail!("couldn't find smali file for {} (framework search)", class),
+        };
+        exists = smali_file.exists();
+    }
+
     if !exists {
         if !class.has_pkg() && apk.is_some() {
             log::debug!("trying to use the APK name as the package");
