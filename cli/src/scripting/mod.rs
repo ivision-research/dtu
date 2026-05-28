@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::fs::create_dir_all;
+use std::io;
 use std::path::{Component, Components, PathBuf};
 
 use anyhow::bail;
@@ -132,6 +133,9 @@ impl Unsquash {
 struct SmaliPathMeta {
     #[arg()]
     path: PathBuf,
+
+    #[arg(short, long)]
+    json: bool,
 }
 
 impl SmaliPathMeta {
@@ -159,10 +163,14 @@ impl SmaliPathMeta {
 
         let next = self.must_component(&mut parts)?;
 
+        let mut apk_name: Option<String> = None;
+
         let source = if next == "framework" {
             Cow::Borrowed("framework")
         } else if next == "apks" {
             let apk = self.must_component(&mut parts)?;
+            let p = DevicePath::from_squashed(apk);
+            apk_name = Some(String::from(p.device_file_name()));
             Cow::Owned(String::from(apk))
         } else {
             return Err(self.invalid_path("not in smali/framework or smali/apks"));
@@ -182,7 +190,31 @@ impl SmaliPathMeta {
         }
 
         let class = format!("L{};", class_parts.join("/"));
+
+        #[derive(serde::Serialize)]
+        struct JsonOutput<'a> {
+            source: &'a str,
+            class: String,
+            apk: Option<String>,
+        }
+
+        if self.json {
+            serde_json::to_writer(
+                io::stdout(),
+                &JsonOutput {
+                    source: &source,
+                    class,
+                    apk: apk_name,
+                },
+            )?;
+            return Ok(());
+        }
+
         println!("{source}\n{class}");
+        match &apk_name {
+            Some(v) => println!("{v}"),
+            None => print!("\n"),
+        }
         Ok(())
     }
 
