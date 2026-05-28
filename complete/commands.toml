@@ -245,7 +245,8 @@ options = [
 
 [find.permission]
 options = [
-    ["containing", "c", "Uncompletable", ""]
+    ["containing", "c", "Uncompletable", ""],
+    ["json", "j", "None", ""]
 ]
 
 

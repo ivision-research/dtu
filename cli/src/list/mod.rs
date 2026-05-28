@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::io;
@@ -207,7 +208,7 @@ impl List {
         struct JsonOutput<'a, MD: serde::Serialize> {
             id: i32,
             class: ClassName,
-            package: String,
+            package: Cow<'a, str>,
             enabled: bool,
             exported: bool,
             permission: Option<String>,
@@ -234,10 +235,25 @@ impl List {
                     None
                 };
 
+                let mut class = it.get_class_name();
+                let mut package: Cow<'_, str> = Cow::Owned(it.get_package().to_string());
+
+                if package.is_empty() {
+                    if class.has_pkg() {
+                        package = Cow::Owned(class.pkg_as_java().to_string());
+                    } else {
+                        package = Cow::Borrowed(apk.app_name.as_str());
+                    }
+                }
+
+                if !class.has_pkg() {
+                    class = class.with_new_package(&package);
+                }
+
                 Some(JsonOutput {
                     id: it.get_id(),
-                    class: it.get_class_name(),
-                    package: it.get_package().to_string(),
+                    class,
+                    package,
                     enabled: it.is_enabled(),
                     exported: it.is_exported(),
                     permission: it.get_generic_permission().map(String::from),
