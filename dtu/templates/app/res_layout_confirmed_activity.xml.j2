@@ -7,21 +7,25 @@
     android:id="@+id/confirmedScrollView"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:fitsSystemWindows="true"
+    android:clipToPadding="false"
     tools:context=".TestAppConfirmedActivity">
 
     <LinearLayout
         android:id="@+id/confirmedScrollViewInnerLayout"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:orientation="vertical">
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="8dp">
 
         {% for button in buttons %}
         <Button
             android:id="@+id/{{ button.id }}"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginVertical="4dp"
             android:text="{{ button.txt }}" />
         {% endfor %}
 
-        </LinearLayout>
+    </LinearLayout>
 </ScrollView>

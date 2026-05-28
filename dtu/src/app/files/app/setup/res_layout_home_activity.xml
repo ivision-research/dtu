@@ -8,13 +8,16 @@
     android:layout_height="match_parent"
     android:gravity="center_vertical"
     android:orientation="vertical"
-    tools:context=".TestAppHomeActivity">
+    android:fitsSystemWindows="true"
+    tools:context=".TestAppHomeActivity"
+    android:padding="8dp">
 
     <Button
         android:id="@+id/gotoExperimentingBtn"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_weight="1.0"
+        android:layout_marginVertical="4dp"
         android:text="Experimenting" />
 
     <Button
@@ -22,6 +25,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_weight="1.0"
+        android:layout_marginVertical="4dp"
         android:text="Confirmed" />
 
     <Button
@@ -29,6 +33,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_weight="1.0"
+        android:layout_marginVertical="4dp"
         android:text="Failed" />
 
 </LinearLayout>
