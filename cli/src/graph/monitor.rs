@@ -186,6 +186,14 @@ impl ImportPrintMonitor {
             SetupEvent::ImportDone { .. } => {
                 self.printer.println("done");
             }
+            SetupEvent::Finalizing => {
+                self.printer.update_status_line_styled(
+                    "Finalizing database",
+                    ContentStyle::default().with(color::YELLOW),
+                );
+                self.printer
+                    .println("finalizing database setup, this make take a bit as indices are likely being created");
+            }
         }
     }
 }

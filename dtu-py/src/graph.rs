@@ -57,6 +57,26 @@ impl GraphDB {
         Ok(self.0.get_all_sources()?)
     }
 
+    /// Find all methods that contain the given constant string
+    fn get_methods_for_string(&self, string: &str) -> Result<Vec<PyMethodSpec>> {
+        Ok(self
+            .0
+            .get_methods_for_string(string)?
+            .into_iter()
+            .map(PyMethodSpec::from)
+            .collect())
+    }
+
+    /// Find all strings in a given source
+    fn get_strings_for_source(&self, source: &str) -> Result<Vec<String>> {
+        Ok(self.0.get_strings_for_source(source)?)
+    }
+
+    /// Find all strings in a given method
+    fn get_strings_for_method(&self, method: i32) -> Result<Vec<String>> {
+        Ok(self.0.get_strings_for_method(method)?)
+    }
+
     /// Find all child classes of the given parent class
     #[pyo3(signature = (parent, *, parent_source = None, child_source = None))]
     fn find_child_classes_of(
@@ -162,6 +182,30 @@ impl GraphDB {
             .into_iter()
             .map(PyMethodSpec::from)
             .collect())
+    }
+
+    /// Find all classes matching the given parameters
+    ///
+    /// At least one of `class_` or `name` is required for this search
+    #[pyo3(signature = (*, class_ = None, name = None, signature = None, source = None))]
+    fn get_methods(
+        &self,
+        class_: Option<&str>,
+        name: Option<&str>,
+        signature: Option<&str>,
+        source: Option<&str>,
+    ) -> PyResult<Vec<PyMethodSpec>> {
+        let cn = class_.map(ClassName::from);
+        let search = MethodSearch::new_from_opts(cn.as_ref(), name, signature, source)
+            .map_err(|_| DtuError::new_err("at least one of `class_` or `name` required"))?;
+        Ok(self
+            .0
+            .get_methods(&search)
+            .map_err(GraphError)?
+            .into_iter()
+            .map(PyMethodSpec::from)
+            .collect::<Vec<_>>()
+            .into())
     }
 
     /// Get all classes defining the given method

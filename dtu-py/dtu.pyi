@@ -22,7 +22,7 @@ def get_smali_file_for_class(
     class_name: "ClassName",
     *,
     apk_path: Optional["DevicePath"] = None,
-    ctx: Optional["Context"] = None
+    ctx: Optional["Context"] = None,
 ) -> Optional[Path]:
     """Return the smali implementation file path for a given class.
     None is returned if file was not found.
@@ -30,7 +30,6 @@ def get_smali_file_for_class(
     If apk_path is None, the smali file is resolved within the framework.
     If ctx is None, the default context is used.
     """
-
 
 
 class Context:
@@ -294,6 +293,19 @@ class GraphDB:
         iface_source: Optional[str] = ...,
         impl_source: Optional[str] = ...,
     ) -> list[ClassSpec]: ...
+
+    def get_methods(
+        self,
+        /,
+        class_: Optional[str] = ...,
+        name: Optional[str] = ...,
+        signature: Optional[str] = ...,
+        source: Optional[str] = ...,
+    ) -> list[MethodSpec]: ...
+
+    def get_strings_for_method(self, method: int) -> list[str]: ...
+    def get_methods_for_string(self, string: str) -> list[MethodSpec]: ...
+    def get_strings_for_source(self, source: str) -> list[str]: ...
 
     def find_callers(
         self,

@@ -200,9 +200,10 @@ pub fn exec_open_file(ctx: &dyn Context, file_name: &str) -> anyhow::Result<()> 
 
 /// Given an apk name (Test.apk) find the fully qualified APK name
 ///
-/// We store APKs as squashed paths (@system@priv-app@Test.apk) instead of
+/// We store APKs as squashed paths (%system%priv-app%Test.apk) instead of
 /// just Test.apk. This way they're always unique, but these paths aren't
-/// very ergonomic, so this function helps find APKs.
+/// very ergonomic, so this function helps find APKs by just the APK file name,
+/// which is often unique enough.
 pub fn find_fully_qualified_apk(
     ctx: &dyn Context,
     apk_name: &str,

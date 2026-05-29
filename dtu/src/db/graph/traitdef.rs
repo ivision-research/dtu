@@ -16,6 +16,13 @@ pub trait GraphDatabase: Sync + Send {
     /// Get all source names in the database
     fn get_all_sources(&self) -> Result<HashSet<String>>;
 
+    /// Find all methods matching the given search critera
+    fn get_methods(&self, search: &MethodSearch) -> Result<Vec<MethodSpec>>;
+
+    /// Find all methods returning on the database IDs
+    fn get_method_ids(&self, search: &MethodSearch) -> Result<Vec<i32>>;
+
+
     /// Find all child classes of the given parent class
     ///
     /// The source is for the source in which the relationship was discovered,
@@ -57,12 +64,22 @@ pub trait GraphDatabase: Sync + Send {
     fn find_outgoing_calls(&self, from: &MethodSearch, depth: usize)
         -> Result<Vec<MethodCallPath>>;
 
+    /// Find all classes with the given method
     fn find_classes_with_method(
         &self,
         name: &str,
         args: Option<&str>,
         source: Option<&str>,
     ) -> Result<Vec<ClassSpec>>;
+
+    /// Get all constant strings discovered in the method
+    fn get_strings_for_method(&self, method: i32) -> Result<Vec<String>>;
+
+    /// Get all constant strings discovered in the given source
+    fn get_strings_for_source(&self, source: &str) -> Result<Vec<String>>;
+
+    /// Get all methods that contain the given string
+    fn get_methods_for_string(&self, string: &str) -> Result<Vec<MethodSpec>>;
 
     /// Get all classes defined by the given source
     fn get_classes_for(&self, source: &str) -> Result<Vec<ClassName>>;

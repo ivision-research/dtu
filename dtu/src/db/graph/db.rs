@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::iter::repeat;
 
+use diesel::backend::Backend;
 use diesel::connection::SimpleConnection;
 use diesel::sql_query;
 use diesel::sql_types::{BigInt, Integer, Text};
@@ -93,7 +94,10 @@ impl GraphSqliteDatabase {
     impl_delete_by!(delete_source_by_name, &str, sources, name.eq);
 
     #[inline]
-    fn get_method_ids(conn: &mut SqliteConnection, search: &MethodSearch) -> Result<Vec<i32>> {
+    fn get_method_ids_with_conn(
+        conn: &mut SqliteConnection,
+        search: &MethodSearch,
+    ) -> Result<Vec<i32>> {
         search.param.get_sql(conn, search.source)
     }
 
@@ -117,7 +121,7 @@ impl GraphSqliteDatabase {
         };
 
         Ok(self.with_connection(|c| -> Result<Vec<MethodCallPath>> {
-            let method_ids = Self::get_method_ids(c, method)?;
+            let method_ids = Self::get_method_ids_with_conn(c, method)?;
 
             if method_ids.is_empty() {
                 return Ok(Vec::new());
@@ -205,6 +209,29 @@ enum CallDirection {
 }
 
 impl<'a> MethodSearchParams<'a> {
+    fn get_spec_sql(
+        &self,
+        conn: &mut SqliteConnection,
+        source: Option<&str>,
+    ) -> Result<Vec<MethodSpec>> {
+        match self {
+            Self::ByName { name } => self.spec_sql_by_name(conn, name, source),
+            Self::ByClass { class } => {
+                self.spec_sql_by_class(conn, &class.get_smali_name(), source)
+            }
+            Self::ByClassAndName { class, name } => {
+                self.spec_sql_by_class_and_name(conn, &class.get_smali_name(), name, source)
+            }
+            Self::ByNameAndSignature { name, signature } => {
+                self.spec_sql_by_name_and_sig(conn, name, signature, source)
+            }
+            Self::ByFullSpec {
+                class,
+                name,
+                signature,
+            } => self.spec_sql_by_full_spec(conn, &class.get_smali_name(), name, signature, source),
+        }
+    }
     fn get_sql(&self, conn: &mut SqliteConnection, source: Option<&str>) -> Result<Vec<i32>> {
         match self {
             Self::ByName { name } => self.sql_by_name(conn, name, source),
@@ -340,6 +367,148 @@ impl<'a> MethodSearchParams<'a> {
             .load::<i32>(conn),
         }?)
     }
+
+    fn spec_sql_by_full_spec(
+        &self,
+        conn: &mut SqliteConnection,
+        class: &str,
+        name: &str,
+        sig: &str,
+        source: Option<&str>,
+    ) -> Result<Vec<MethodSpec>> {
+        Ok(match source {
+            Some(v) => query!(methods::table
+                .inner_join(sources::table)
+                .inner_join(classes::table)
+                .filter(sources::name.eq(v))
+                .filter(classes::name.eq(class))
+                .filter(methods::args.eq(sig))
+                .filter(methods::name.eq(name))
+                .select(MethodSpecRow::as_select()))
+            .load::<MethodSpecRow>(conn)?,
+            None => query!(methods::table
+                .inner_join(classes::table)
+                .inner_join(sources::table)
+                .filter(methods::args.eq(sig))
+                .filter(classes::name.eq(class))
+                .filter(methods::name.eq(name))
+                .select(MethodSpecRow::as_select()))
+            .load::<MethodSpecRow>(conn)?,
+        }
+        .into_iter()
+        .map(MethodSpec::from)
+        .collect())
+    }
+
+    fn spec_sql_by_name_and_sig(
+        &self,
+        conn: &mut SqliteConnection,
+        name: &str,
+        sig: &str,
+        source: Option<&str>,
+    ) -> Result<Vec<MethodSpec>> {
+        Ok(match source {
+            Some(v) => query!(methods::table
+                .inner_join(sources::table)
+                .inner_join(classes::table)
+                .filter(sources::name.eq(v))
+                .filter(methods::args.eq(sig))
+                .filter(methods::name.eq(name))
+                .select(MethodSpecRow::as_select()))
+            .load::<MethodSpecRow>(conn)?,
+            None => query!(methods::table
+                .inner_join(classes::table)
+                .inner_join(sources::table)
+                .filter(methods::args.eq(sig))
+                .filter(methods::name.eq(name))
+                .select(MethodSpecRow::as_select()))
+            .load::<MethodSpecRow>(conn)?,
+        }
+        .into_iter()
+        .map(MethodSpec::from)
+        .collect())
+    }
+
+    fn spec_sql_by_class_and_name(
+        &self,
+        conn: &mut SqliteConnection,
+        class: &str,
+        name: &str,
+        source: Option<&str>,
+    ) -> Result<Vec<MethodSpec>> {
+        Ok(match source {
+            Some(v) => query!(methods::table
+                .inner_join(sources::table)
+                .inner_join(classes::table)
+                .filter(sources::name.eq(v))
+                .filter(classes::name.eq(class))
+                .filter(methods::name.eq(name))
+                .select(MethodSpecRow::as_select()))
+            .load::<MethodSpecRow>(conn)?,
+            None => query!(methods::table
+                .inner_join(classes::table)
+                .inner_join(sources::table)
+                .filter(classes::name.eq(class))
+                .filter(methods::name.eq(name))
+                .select(MethodSpecRow::as_select()))
+            .load::<MethodSpecRow>(conn)?,
+        }
+        .into_iter()
+        .map(MethodSpec::from)
+        .collect())
+    }
+
+    fn spec_sql_by_class(
+        &self,
+        conn: &mut SqliteConnection,
+        class: &str,
+        source: Option<&str>,
+    ) -> Result<Vec<MethodSpec>> {
+        Ok(match source {
+            Some(v) => query!(methods::table
+                .inner_join(sources::table)
+                .inner_join(classes::table)
+                .filter(sources::name.eq(v))
+                .filter(classes::name.eq(class))
+                .select(MethodSpecRow::as_select()))
+            .load::<MethodSpecRow>(conn)?,
+            None => query!(methods::table
+                .inner_join(classes::table)
+                .inner_join(sources::table)
+                .filter(classes::name.eq(class))
+                .select(MethodSpecRow::as_select()))
+            .load::<MethodSpecRow>(conn)?,
+        }
+        .into_iter()
+        .map(MethodSpec::from)
+        .collect())
+    }
+
+    fn spec_sql_by_name(
+        &self,
+        conn: &mut SqliteConnection,
+        name: &str,
+        source: Option<&str>,
+    ) -> Result<Vec<MethodSpec>> {
+        Ok(match source {
+            Some(v) => query!(methods::table
+                .inner_join(sources::table)
+                .inner_join(classes::table)
+                .filter(sources::name.eq(v))
+                .filter(methods::name.eq(name))
+                .select(MethodSpecRow::as_select()))
+            .load::<MethodSpecRow>(conn)?,
+            None => query!(methods::table
+                .inner_join(classes::table)
+                .inner_join(sources::table)
+                .filter(methods::name.eq(name))
+                .select(MethodSpecRow::as_select()))
+            .load::<MethodSpecRow>(conn)?,
+        }
+        .into_iter()
+        .map(MethodSpec::from)
+        .collect())
+    }
 }
 
 fn conn_find_classes_with_method(
@@ -410,6 +579,46 @@ impl GraphDatabase for GraphSqliteDatabase {
         Ok(self.delete_source_by_name(source)?)
     }
 
+    fn get_method_ids(&self, search: &MethodSearch) -> Result<Vec<i32>> {
+        self.with_connection(|c| Self::get_method_ids_with_conn(c, search))
+    }
+
+    fn get_methods(&self, search: &MethodSearch) -> Result<Vec<MethodSpec>> {
+        self.with_connection(|c| search.param.get_spec_sql(c, search.source))
+    }
+
+    fn get_strings_for_method(&self, method: i32) -> Result<Vec<String>> {
+        self.with_connection(|c| -> Result<Vec<String>> {
+            Ok(query!(method_strings::table
+                .select(method_strings::string)
+                .filter(method_strings::method.eq(method)))
+            .load::<String>(c)?)
+        })
+    }
+
+    fn get_strings_for_source(&self, source: &str) -> Result<Vec<String>> {
+        self.with_connection(|c| -> Result<Vec<String>> {
+            Ok(query!(method_strings::table
+                .inner_join(sources::table)
+                .filter(sources::name.eq(source))
+                .select(method_strings::string))
+            .load::<String>(c)?)
+        })
+    }
+
+    fn get_methods_for_string(&self, string: &str) -> Result<Vec<MethodSpec>> {
+        self.with_connection(|c| -> Result<Vec<MethodSpec>> {
+            let rows = query!(methods::table
+                .inner_join(classes::table)
+                .inner_join(method_strings::table)
+                .inner_join(sources::table)
+                .filter(method_strings::string.eq(string))
+                .select(MethodSpecRow::as_select()))
+            .load::<MethodSpecRow>(c)?;
+            Ok(rows.into_iter().map(MethodSpec::from).collect())
+        })
+    }
+
     fn get_all_sources(&self) -> Result<HashSet<String>> {
         let sources = self.get_sources()?;
         let mut m = HashSet::with_capacity(sources.len());
@@ -438,34 +647,15 @@ impl GraphDatabase for GraphSqliteDatabase {
 
     fn get_methods_for(&self, source: &str) -> Result<Vec<MethodSpec>> {
         self.with_connection(|c| -> Result<Vec<MethodSpec>> {
-            let rows = query!(methods::table
+            Ok(query!(methods::table
                 .inner_join(sources::table)
                 .inner_join(classes::table)
                 .filter(sources::name.eq(source))
-                .select((
-                    classes::name,
-                    methods::id,
-                    methods::name,
-                    methods::args,
-                    methods::ret,
-                    methods::access_flags,
-                    sources::name,
-                )))
-            .load::<(String, i32, String, String, String, i64, String)>(c)?;
-            Ok(rows
-                .into_iter()
-                .map(
-                    |(class, id, name, signature, ret, flags, source)| MethodSpec {
-                        class: class.into(),
-                        name,
-                        id,
-                        signature,
-                        ret,
-                        access_flags: AccessFlag::from_bits_truncate(flags as u64),
-                        source,
-                    },
-                )
-                .collect())
+                .select(MethodSpecRow::as_select()))
+            .load::<MethodSpecRow>(c)?
+            .into_iter()
+            .map(MethodSpec::from)
+            .collect())
         })
     }
 
@@ -617,6 +807,62 @@ SELECT DISTINCT source, name, access_flags from class_specs"#
 
             Ok(rows.into_iter().map(ClassSpec::from).collect())
         })
+    }
+}
+
+#[derive(Queryable, Debug)]
+struct MethodSpecRow {
+    #[diesel(sql_type = Text)]
+    class: String,
+    #[diesel(sql_type = Integer)]
+    id: i32,
+    #[diesel(sql_type = Text)]
+    name: String,
+    #[diesel(sql_type = Text)]
+    args: String,
+    #[diesel(sql_type = Text)]
+    ret: String,
+    #[diesel(sql_type = BigInt)]
+    access_flags: i64,
+    #[diesel(sql_type = Text)]
+    source: String,
+}
+
+impl<DB: Backend> Selectable<DB> for MethodSpecRow {
+    type SelectExpression = (
+        classes::name,
+        methods::id,
+        methods::name,
+        methods::args,
+        methods::ret,
+        methods::access_flags,
+        sources::name,
+    );
+
+    fn construct_selection() -> Self::SelectExpression {
+        (
+            classes::name,
+            methods::id,
+            methods::name,
+            methods::args,
+            methods::ret,
+            methods::access_flags,
+            sources::name,
+        )
+    }
+}
+
+impl From<MethodSpecRow> for MethodSpec {
+    fn from(value: MethodSpecRow) -> Self {
+        MethodSpec {
+            class: value.class.into(),
+            name: value.name,
+            id: value.id,
+            signature: value.args,
+            ret: value.ret,
+            access_flags: AccessFlag::from_bits_truncate(value.access_flags as u64),
+            source: value.source,
+        }
     }
 }
 
@@ -965,7 +1211,7 @@ mod test {
 
                 ($sel:ident { $($name:ident: $val:expr),+ }, [$($expected:expr),*], $src:expr) => {
                     let mids: Vec<i32> = db.with_connection(|c| {
-                        GraphSqliteDatabase::get_method_ids(c, &MethodSearch::new(MethodSearchParams::$sel { $($name: $val),+ }, $src))
+                        GraphSqliteDatabase::get_method_ids_with_conn(c, &MethodSearch::new(MethodSearchParams::$sel { $($name: $val),+ }, $src))
 
                     }).expect("get_method_ids call failed");
                     for id in [$($expected as i32),*] {

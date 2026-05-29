@@ -1,0 +1,11 @@
+CREATE TABLE method_strings
+(
+    id      INTEGER NOT NULL,
+    string  TEXT NOT NULL,
+    method  INTEGER NOT NULL,
+    source  INTEGER NOT NULL,
+
+    PRIMARY KEY (id),
+    FOREIGN KEY (id) REFERENCES methods (id) ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (source) REFERENCES sources (id) ON DELETE CASCADE ON UPDATE CASCADE
+);

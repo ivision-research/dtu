@@ -5,7 +5,7 @@ use dtu::db::device::models::Apk;
 use dtu::db::{DeviceDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::utils::DevicePath;
-use dtu::DefaultContext;
+use dtu::{DefaultContext, REPLACED_DEVICE_PATH_SEP};
 
 #[derive(Clone)]
 pub struct DevicePathValueParser;
@@ -21,6 +21,11 @@ impl TypedValueParser for DevicePathValueParser {
     ) -> Result<Self::Value, clap::Error> {
         let parser = NonEmptyStringValueParser::new();
         let val = parser.parse_ref(cmd, arg, value)?;
+
+        // This is already valid, just use it
+        if val.starts_with(REPLACED_DEVICE_PATH_SEP) {
+            return Ok(DevicePath::from_squashed(val));
+        }
 
         let ctx = DefaultContext::new();
         let apks = find_fully_qualified_apk(&ctx, &val).map_err(simple_error)?;

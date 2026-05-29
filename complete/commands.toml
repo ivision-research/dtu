@@ -203,6 +203,38 @@ options = [
 
 [find]
 
+
+[find.methods]
+
+[find.methods.by-string]
+[find.methods.by-name]
+options = [
+    ["name", "n", "GraphMethod", ""]
+]
+[find.methods.by-class]
+options = [
+    ["class", "c", "GraphClass", ""]
+]
+[find.methods.by-source]
+options = [
+    ["source", "S", "GraphSource", ""]
+]
+
+[find.strings]
+
+[find.strings.by-method]
+options = [
+    ["name", "n", "GraphMethod", ""],
+    ["signature", "s", "GraphSignature", ""],
+    ["class", "c", "GraphClass", ""],
+    ["source", "S", "GraphSource", ""]
+]
+
+[find.strings.by-source]
+options = [
+    ["apk", "a", "Apk", ""]
+]
+
 [find.class]
 options = [
     ["class", "c", "GraphClass", ""],

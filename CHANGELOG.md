@@ -1,10 +1,14 @@
-# 5.0.2
+# 6.0.0
 
+- **BREAKING** No longer output `strings.txt` with smalisa output. This has been reworked to include strings in the graph database so they can be queried alongside the graph. It is still possible to get all strings for a given source, but this file no longer exists
+- **BREAKING** Updated the GraphDatabase trait to include string related methods
 - Major bugfixes:
     - Permissions were UNIQUE(name), updated to UNIQUE(name, source_apk_id)
     - Missing index on a graph query made it take very long
 - Surface method IDs in graph queries
-- Added `meta` to the `dtu list IPC` command
+- Added `find strings` to find strings by various criteria
+- Added `find methods` to find methods by various criteria
+- Added `meta` to the `dtu list IPC` command output JSON
 - Added a few more `-j/--json`s
 - Started adding a hidden `_scripting`/`_s` command that does some metadata related tasks for making shell scripts easier to write
 - Test app look updated

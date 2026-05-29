@@ -30,6 +30,8 @@ pub enum SetupEvent {
     ImportDone {
         path: String,
     },
+
+    Finalizing,
 }
 
 pub struct AddDirectoryOptions<'a> {
@@ -220,6 +222,20 @@ where
         Ok(())
     }
 
+    fn import_strings(&self, import_dir_name: &str) -> SetupResult<()> {
+        let csv = format!("{}{}method_strings.csv", import_dir_name, fs::OS_PATH_SEP);
+        if !self.should_load(LoadCSVKind::Strings) {
+            return Ok(());
+        }
+        log::info!("Adding strings...");
+        self.monitor
+            .on_event(SetupEvent::ImportStarted { path: csv.clone() });
+        self.graph
+            .load_csv(self.ctx, &csv, &self.opts.name, LoadCSVKind::Strings)?;
+        self.monitor.on_event(SetupEvent::ImportDone { path: csv });
+        Ok(())
+    }
+
     fn import_calls(&self, import_dir_name: &str) -> SetupResult<()> {
         let csv = format!("{}{}calls.csv", import_dir_name, fs::OS_PATH_SEP);
         if !self.should_load(LoadCSVKind::Calls) {
@@ -275,6 +291,9 @@ where
         self.import_methods(import_dir_name)?;
 
         self.check_cancel()?;
+        self.import_strings(import_dir_name)?;
+
+        self.check_cancel()?;
         self.import_calls(import_dir_name)?;
         Ok(())
     }
@@ -293,6 +312,7 @@ pub enum LoadCSVKind {
     Impls,
     Methods,
     Calls,
+    Strings,
 }
 
 impl fmt::Display for LoadCSVKind {
@@ -306,6 +326,7 @@ impl fmt::Display for LoadCSVKind {
                 LoadCSVKind::Supers => "Supers",
                 LoadCSVKind::Methods => "Methods",
                 LoadCSVKind::Calls => "Calls",
+                LoadCSVKind::Strings => "Strings",
             }
         )
     }

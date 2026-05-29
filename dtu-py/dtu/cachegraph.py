@@ -41,12 +41,12 @@ class CachingGraphDB:
         self,
         /,
         *,
-        class_=None,
-        name=None,
-        signature=None,
-        method_source=None,
-        call_source=None,
-        depth=5,
+        class_: Optional[str] = None,
+        name: Optional[str] = None,
+        signature: Optional[str] = None,
+        method_source: Optional[str] = None,
+        call_source: Optional[str] = None,
+        depth: int = 5,
     ) -> List[MethodCallPath]:
         """
         Find all callers of the given class up to a certain depth.
@@ -64,8 +64,52 @@ class CachingGraphDB:
             depth=depth,
         )
 
+    def get_strings_for_method(self, method: int) -> List[str]:
+        """
+        Find all strings in the given method
+        """
+        return self._maybe_cached(self.wrapped.get_strings_for_method, method)
+
+    def get_strings_for_source(self, source: str) -> List[str]:
+        """
+        Find all strings in the given source
+        """
+        return self._maybe_cached(self.wrapped.get_strings_for_source, source)
+
+    def get_methods_for_string(self, string: str) -> List[MethodSpec]:
+        """
+        Find all methods that contain the given constant string
+        """
+        return self._maybe_cached(self.wrapped.get_methods_for_string, string)
+
+    def get_methods(
+        self,
+        /,
+        class_: Optional[str] = None,
+        name: Optional[str] = None,
+        signature: Optional[str] = None,
+        source: Optional[str] = None,
+    ) -> List[MethodSpec]:
+        """
+        Find all methods matching the given search criteria
+
+        At least one of `class_` or `name` is required
+        """
+        return self._maybe_cached(
+            self.wrapped.get_methods,
+            class_=class_,
+            name=name,
+            signature=signature,
+            source=source,
+        )
+
     def find_classes_implementing(
-        self, /, iface, *, iface_source=None, impl_source=None
+        self,
+        /,
+        iface,
+        *,
+        iface_source: Optional[str] = None,
+        impl_source: Optional[str] = None,
     ) -> List[ClassSpec]:
         """
         Find all classes that implement the given interface
@@ -78,7 +122,14 @@ class CachingGraphDB:
         )
 
     def find_outgoing_calls(
-        self, /, *, class_=None, name=None, signature=None, source=None, depth=5
+        self,
+        /,
+        *,
+        class_: Optional[str] = None,
+        name: Optional[str] = None,
+        signature: Optional[str] = None,
+        source: Optional[str] = None,
+        depth: int = 5,
     ) -> List[MethodCallPath]:
         """
         Find all calls leaving the given method up to a given depth.
@@ -93,7 +144,7 @@ class CachingGraphDB:
         )
 
     def find_classes_with_method(
-        self, name, *, args=None, source=None
+        self, name, *, args: Optional[str] = None, source: Optional[str] = None
     ) -> List[ClassSpec]:
         """
         Find all classes defining the specified method
@@ -108,13 +159,13 @@ class CachingGraphDB:
         """
         return self._maybe_cached(self.wrapped.get_all_sources)
 
-    def get_classes_for(self, /, src) -> List[ClassName]:
+    def get_classes_for(self, /, src: str) -> List[ClassName]:
         """
         Get all classes defined by the given source
         """
         return self._maybe_cached(self.wrapped.get_classes_for, src)
 
-    def get_methods_for(self, /, source) -> List[MethodSpec]:
+    def get_methods_for(self, /, source: str) -> List[MethodSpec]:
         """
         Get all methods defined by the given soruce
         """

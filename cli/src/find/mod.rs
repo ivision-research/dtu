@@ -32,6 +32,12 @@ use class::FindClass;
 mod class_with_method;
 use class_with_method::FindClassWithMethod;
 
+mod strings;
+use strings::Strings;
+
+mod methods;
+use methods::Methods;
+
 mod apk_graph;
 use apk_graph::{ApkIPCCallsGeneric, FindIPCCalls, FindIntentActivities, FindParseUri};
 #[derive(Args)]
@@ -49,6 +55,14 @@ enum Command {
     /// Find a protected broadcast
     #[command()]
     ProtectedBroadcast(ProtectedBroadcast),
+
+    /// Various ways to find strings
+    #[command()]
+    Strings(Strings),
+
+    /// Various ways to find methods
+    #[command()]
+    Methods(Methods),
 
     /// Find a permission
     #[command()]
@@ -102,11 +116,13 @@ impl Find {
         let ctx = DefaultContext::new();
         match self.command {
             Command::ServiceFile(c) => c.run(&ctx),
+            Command::Methods(c) => c.run(&ctx),
             Command::Permission(c) => c.run(&ctx),
             Command::ProtectedBroadcast(c) => c.run(&ctx),
             Command::SmaliFile(c) => c.run(&ctx),
             Command::Manifest(c) => c.run(&ctx),
             Command::Class(c) => c.run(&ctx),
+            Command::Strings(c) => c.run(&ctx),
 
             Command::OutgoingCalls(c) => {
                 let db = graph_db(&ctx)?;

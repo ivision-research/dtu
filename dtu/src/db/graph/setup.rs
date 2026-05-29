@@ -32,6 +32,7 @@ impl LoadCSVKind {
             LoadCSVKind::Supers => 3,
             LoadCSVKind::Impls => 4,
             LoadCSVKind::Calls => 5,
+            LoadCSVKind::Strings => 6,
         }
     }
 }
@@ -66,6 +67,26 @@ impl<'a> SetupContext<'a> {
             .execute(c)?;
             Ok(())
         })
+    }
+
+    fn stage_strings(self) -> Result<()> {
+        self.do_load(|c, record| {
+            let rp = RecordParser::new(record, "method_strings.csv");
+            let string = rp.get(0)?;
+            let method = rp.get(1)?;
+            let method_args = rp.get(2)?;
+            let class = rp.get(3)?;
+            query!(
+                sql_query(r#"INSERT INTO named_method_strings(string, method, method_args, class) VALUES(?, ?, ?, ?)"#)
+                    .bind::<Text, _>(string)
+                    .bind::<Text, _>(method)
+                    .bind::<Text, _>(method_args)
+                    .bind::<Text, _>(class)
+            )
+            .execute(c)?;
+            Ok(())
+        })?;
+        Ok(())
     }
 
     fn load_classes(self) -> Result<()> {
@@ -245,6 +266,21 @@ JOIN classes AS interface
         Ok(())
     }
 
+    fn load_staged_strings_with_conn(&self, conn: &mut SqliteConnection, src: i32) -> Result<()> {
+        query!(sql_query(
+            r#"INSERT INTO method_strings(string, method, source)
+    SELECT nms.string, m.id, ?1
+    FROM named_method_strings AS nms
+    JOIN classes AS c
+        ON c.name = nms.class AND c.source = ?1
+    JOIN methods AS m
+        ON m.class = c.id AND m.name = nms.method AND m.args = nms.method_args AND m.source = ?1"#
+        )
+        .bind::<Integer, _>(src))
+        .execute(conn)?;
+        Ok(())
+    }
+
     fn load_staged_calls_with_conn(&self, conn: &mut SqliteConnection, src: i32) -> Result<()> {
         // The callee class might not exist. When that happens, we should add the class to the
         // database as part of the FRAMEWORK not as part of our current source. If it was part of
@@ -331,6 +367,10 @@ WHERE dst.id != src.id"#
         Ok(self.transaction(|c| self.load_staged_impls_with_conn(c, src))?)
     }
 
+    fn load_staged_strings(&self, src: i32) -> Result<()> {
+        Ok(self.transaction(|c| self.load_staged_strings_with_conn(c, src))?)
+    }
+
     fn load_staged_supers(&self, src: i32) -> Result<()> {
         Ok(self.transaction(|c| self.load_staged_supers_with_conn(c, src))?)
     }
@@ -350,6 +390,7 @@ WHERE dst.id != src.id"#
                 CREATE INDEX IF NOT EXISTS source ON sources(name);
 
                 CREATE INDEX IF NOT EXISTS class_source ON classes(source);
+                CREATE INDEX IF NOT EXISTS methods_class ON methods(class);
                 CREATE INDEX IF NOT EXISTS methods_source ON methods(source);
                 CREATE INDEX IF NOT EXISTS methods_name ON methods(name);
 
@@ -361,6 +402,10 @@ WHERE dst.id != src.id"#
 
                 CREATE INDEX IF NOT EXISTS interfaces_parent_source ON interfaces(interface, source);
                 CREATE INDEX IF NOT EXISTS interfaces_child_source ON interfaces(class, source);
+
+                CREATE INDEX IF NOT EXISTS method_strings_method ON method_strings(method);
+                CREATE INDEX IF NOT EXISTS method_strings_strings_source ON method_strings(string, source);
+                CREATE INDEX IF NOT EXISTS method_strings_source ON method_strings(source);
                 "#,
         )?)
     }
@@ -400,6 +445,8 @@ impl GraphDatabaseSetup for GraphSqliteDatabase {
             let add_opts = AddDirectoryOptions::new(device_path.get_squashed_string(), &apk);
             self.add_directory(ctx, add_opts, monitor, cancel)?;
         }
+
+        monitor.on_event(SetupEvent::Finalizing);
 
         self.finalize(ctx)?;
 
@@ -474,6 +521,10 @@ impl GraphDatabaseSetup for GraphSqliteDatabase {
             LoadCSVKind::Classes => {
                 setup.load_classes()?;
             }
+            LoadCSVKind::Strings => {
+                setup.stage_strings()?;
+                self.load_staged_strings(src)?;
+            }
         }
 
         Ok(self.with_connection(|c| Self::update_load_status(c, src, kind))?)
@@ -488,6 +539,14 @@ impl GraphDatabaseSetup for GraphSqliteDatabase {
                 r#"PRAGMA synchronous=NORMAL;
 PRAGMA temp_store=MEMORY;
 PRAGMA foreign_keys=OFF;
+
+CREATE TEMPORARY TABLE IF NOT EXISTS named_method_strings(
+    string TEXT NOT NULL,
+    method TEXT NOT NULL,
+    method_args TEXT NOT NULL,
+    class TEXT NOT NULL
+);
+
 
 CREATE TEMPORARY TABLE IF NOT EXISTS named_methods(
     class TEXT NOT NULL,
@@ -526,6 +585,7 @@ CREATE TEMPORARY TABLE IF NOT EXISTS named_interfaces(
         self.with_connection(|c| {
             c.batch_execute(
                 r#"
+            DELETE FROM named_method_strings;
             DELETE FROM named_calls;
             DELETE FROM named_methods;
             DELETE FROM named_supers;

@@ -36,6 +36,15 @@ diesel::table! {
 }
 
 diesel::table! {
+    method_strings (id) {
+        id -> Integer,
+        string -> Text,
+        method -> Integer,
+        source -> Integer,
+    }
+}
+
+diesel::table! {
     methods (id) {
         id -> Integer,
         class -> Integer,
@@ -67,6 +76,8 @@ diesel::joinable!(_load_status -> sources (source));
 diesel::joinable!(calls -> sources (source));
 diesel::joinable!(classes -> sources (source));
 diesel::joinable!(interfaces -> sources (source));
+diesel::joinable!(method_strings -> methods (id));
+diesel::joinable!(method_strings -> sources (source));
 diesel::joinable!(methods -> classes (class));
 diesel::joinable!(methods -> sources (source));
 diesel::joinable!(supers -> sources (source));
@@ -76,6 +87,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     calls,
     classes,
     interfaces,
+    method_strings,
     methods,
     sources,
     supers,

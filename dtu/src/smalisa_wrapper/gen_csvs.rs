@@ -12,7 +12,7 @@ use smalisa::{AccessFlag, Lexer, Line, LineParse, Parser, Primitive, RawLiteral}
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufWriter, Write};
+use std::io::BufWriter;
 use std::iter::Iterator;
 use std::path::Path;
 use std::sync::Arc;
@@ -88,13 +88,21 @@ struct CallInfo {
     target_args: String,
 }
 
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct MethodString {
+    method: String,
+    method_args: String,
+    string: String,
+    class: String,
+}
+
 struct Channels {
     classes: Sender<ClassInfo>,
     supers: Sender<SuperInfo>,
     ifaces: Sender<InterfaceInfo>,
     methods: Sender<MethodInfo>,
     calls: Sender<CallInfo>,
-    strings: Sender<String>,
+    strings: Sender<MethodString>,
 }
 
 impl Channels {
@@ -155,8 +163,13 @@ impl Channels {
         });
     }
 
-    fn send_string(&self, s: &str) {
-        let _ = self.strings.send(s.into());
+    fn send_method_string(&self, string: &str, method: &str, method_args: &str, class: &str) {
+        let _ = self.strings.send(MethodString {
+            string: string.into(),
+            method: method.into(),
+            method_args: method_args.into(),
+            class: class.into(),
+        });
     }
 }
 
@@ -167,24 +180,16 @@ fn launch_writers(
     ifaces: Receiver<InterfaceInfo>,
     methods: Receiver<MethodInfo>,
     calls: Receiver<CallInfo>,
-    strings: Receiver<String>,
+    strings: Receiver<MethodString>,
 ) -> Result<Vec<JoinHandle<()>>> {
-    let mut handles = Vec::with_capacity(5);
+    let mut handles = Vec::with_capacity(6);
 
     let mut classes_file = get_csv_writer_file(out_dir, "classes.csv")?;
     let mut supers_file = get_csv_writer_file(out_dir, "supers.csv")?;
     let mut iface_file = get_csv_writer_file(out_dir, "interfaces.csv")?;
     let mut methods_file = get_csv_writer_file(out_dir, "methods.csv")?;
     let mut calls_file = get_csv_writer_file(out_dir, "calls.csv")?;
-
-    let strings_path = out_dir.join("strings.txt");
-    let strings_file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(&strings_path)?;
-
-    let mut strings_writer = BufWriter::new(strings_file);
+    let mut method_strings_file = get_csv_writer_file(out_dir, "method_strings.csv")?;
 
     let mut handle = std::thread::spawn(move || {
         for class in classes.iter().unique() {
@@ -199,14 +204,18 @@ fn launch_writers(
     handles.push(handle);
 
     handle = std::thread::spawn(move || {
-        for string in strings.iter().unique() {
-            if let Err(e) = strings_writer.write(string.as_bytes()) {
+        for ms in strings.iter().unique() {
+            if let Err(e) = method_strings_file.write_record(&[
+                &ms.string,
+                &ms.method,
+                &ms.method_args,
+                &ms.class,
+            ]) {
                 log::error!("failed to write string: {}", e);
             }
-            let _ = strings_writer.write(&[b'\n']);
         }
 
-        if let Err(e) = strings_writer.flush() {
+        if let Err(e) = method_strings_file.flush() {
             log::error!("failed to flush strings writer: {}", e);
         }
     });
@@ -405,7 +414,7 @@ where
             "interfaces.csv",
             "methods.csv",
             "calls.csv",
-            "strings.txt",
+            "method_strings.csv",
         ] {
             let path = out_dir.join(f);
             if path.exists() {
@@ -423,6 +432,13 @@ where
 
 fn direntry_is_smali_file(ent: &DirEntry) -> bool {
     ent.file_type().is_file() && ent.path().extension().map_or(false, |ext| ext == "smali")
+}
+
+#[derive(PartialEq, Eq, Hash)]
+struct SeenMethodString<'a> {
+    method: &'a str,
+    method_args: &'a str,
+    string: &'a str,
 }
 
 #[derive(PartialEq, Eq, Hash)]
@@ -459,7 +475,27 @@ where
     // It's worth doing some deduping in this method since there are often duplicates and it makes
     // things a little easier on the global deduplication
     let mut seen_calls: HashSet<SeenCall> = HashSet::new();
-    let mut seen_strings: HashSet<&str> = HashSet::new();
+    let mut seen_strings: HashSet<SeenMethodString> = HashSet::new();
+
+    macro_rules! send_str {
+        ($s:expr) => {
+            if !calling_method_args.is_empty() {
+                let seen = SeenMethodString {
+                    method: calling_method_name,
+                    method_args: calling_method_args,
+                    string: $s,
+                };
+                if seen_strings.insert(seen) {
+                    channels.send_method_string(
+                        $s,
+                        calling_method_name,
+                        calling_method_args,
+                        class,
+                    );
+                }
+            }
+        };
+    }
 
     loop {
         let res = parser.parse_line_into(&mut line);
@@ -487,9 +523,7 @@ where
             }
             Line::Field(ref field) => {
                 if let RawLiteral::String(s) = field.raw_value {
-                    if seen_strings.insert(s) {
-                        channels.send_string(s);
-                    }
+                    send_str!(s);
                 }
             }
             Line::MethodHeader(ref mh) => {
@@ -541,9 +575,7 @@ where
                         );
                     }
                 } else if let InvArgs::RegStr(_, s) = inv.args() {
-                    if seen_strings.insert(s) {
-                        channels.send_string(s);
-                    }
+                    send_str!(s);
                 }
             }
             _ => {}
