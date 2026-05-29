@@ -537,8 +537,10 @@ impl CompleteContext {
             |c, pinc| {
                 let inc = if pinc.starts_with('L') {
                     Cow::Borrowed(pinc)
-                } else {
+                } else if pinc.contains('.') {
                     Cow::Owned(format!("L{}", pinc.replace('.', "/")))
+                } else {
+                    Cow::Owned(format!("%{pinc}"))
                 };
 
                 classes::table
