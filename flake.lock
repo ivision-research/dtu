@@ -109,15 +109,16 @@
     "selinux": {
       "flake": false,
       "locked": {
-        "lastModified": 1746555000,
-        "narHash": "sha256-Ty33jHkzSdXylZV8LH5/B3Emd5NB3sIxoa42sXoALuk=",
+        "lastModified": 1769997676,
+        "narHash": "sha256-W+iAM4tgF/uQE2lz24krptIFU8OAEXeQvtSgvJF+N0Q=",
         "owner": "SELinuxProject",
         "repo": "selinux",
-        "rev": "50bafc3d9c08cf26c3b0f61e29157a0ea8efbf4a",
+        "rev": "ca10fc4204ed60540d41d2499127c18ad0643f9e",
         "type": "github"
       },
       "original": {
         "owner": "SELinuxProject",
+        "ref": "secilc-3.10",
         "repo": "selinux",
         "type": "github"
       }

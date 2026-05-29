@@ -31,7 +31,7 @@
     };
 
     selinux = {
-      url = "github:SELinuxProject/selinux";
+      url = "github:SELinuxProject/selinux/secilc-3.10";
       flake = false;
     };
 
