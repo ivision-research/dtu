@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::fs;
 
 use crate::utils::get_adb;
@@ -72,11 +73,17 @@ impl Setup {
         log::trace!("setting up meta database");
         let device_db = DeviceDatabase::new(&ctx)?;
         let perms = device_db.get_normal_permissions()?;
+        let mut seen = HashSet::new();
         let app_perms = perms
             .iter()
-            .map(|it| InsertAppPermission {
-                permission: it.name.as_str(),
-                usable: true,
+            .filter_map(|it| {
+                if !seen.insert(it.name.as_str()) {
+                    return None;
+                }
+                Some(InsertAppPermission {
+                    permission: it.name.as_str(),
+                    usable: true,
+                })
             })
             .collect::<Vec<InsertAppPermission>>();
         db.add_app_permissions(app_perms.as_slice())?;
