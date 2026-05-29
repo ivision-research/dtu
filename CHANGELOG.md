@@ -4,7 +4,10 @@
     - Permissions were UNIQUE(name), updated to UNIQUE(name, source_apk_id)
     - Missing index on a graph query made it take very long
 - Surface method IDs in graph queries
+- Added `meta` to the `dtu list IPC` command
+- Added a few more `-j/--json`s
 - Started adding a hidden `_scripting`/`_s` command that does some metadata related tasks for making shell scripts easier to write
+- Test app look updated
 
 # 5.0.0
 

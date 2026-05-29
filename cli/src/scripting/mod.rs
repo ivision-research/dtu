@@ -20,6 +20,9 @@ enum Command {
     /// Extract metadata from a path to a smali file and print to stdout
     SmaliPathMeta(SmaliPathMeta),
 
+    /// Attempt to extract DTU_PROJECT_HOME from a path based on heuristics
+    ExtractProjectHome(ExtractProjectHome),
+
     /// Unsquash a squashed path
     #[command()]
     Unsquash(Unsquash),
@@ -50,7 +53,31 @@ impl Scripting {
             Command::SmaliClass(c) => c.run(),
             Command::JavaClass(c) => c.run(),
             Command::CacheDir(c) => c.run(),
+            Command::ExtractProjectHome(c) => c.run(),
         }
+    }
+}
+
+#[derive(Args)]
+struct ExtractProjectHome {
+    #[arg()]
+    path: String,
+}
+
+impl ExtractProjectHome {
+    fn run(self) -> anyhow::Result<()> {
+        if let Some((pre, _)) = self.path.split_once("dtu_out") {
+            println!("{pre}");
+            return Ok(());
+        }
+
+        let pb = PathBuf::from(&self.path);
+        // First check if we have a directory and dtu_out is in it before bailing
+        if !pb.is_dir() || !pb.join("dtu_out").exists() {
+            bail!("can't deduce DTU_PROJECT_HOME from {}", self.path);
+        }
+        println!("{}", self.path);
+        return Ok(());
     }
 }
 
