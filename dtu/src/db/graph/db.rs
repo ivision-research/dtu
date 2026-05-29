@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::fs;
 use std::iter::repeat;
 
 use diesel::connection::SimpleConnection;
@@ -16,7 +17,7 @@ use crate::db::graph::models::{
     ClassSearch, MethodCallPath, MethodSearch, MethodSearchParams, MethodSpec,
 };
 use crate::db::graph::{ClassSpec, GraphDatabase};
-use crate::utils::ClassName;
+use crate::utils::{path_must_name, path_must_str, ClassName};
 use crate::Context;
 use diesel::prelude::*;
 
@@ -393,8 +394,16 @@ impl GraphDatabase for GraphSqliteDatabase {
         self.get_calls(CallDirection::Into, method, call_source, depth)
     }
     fn wipe(&self, ctx: &dyn Context) -> Result<()> {
-        let path = ctx.get_sqlite_dir()?.join(GRAPH_DATABASE_FILE_NAME);
-        std::fs::remove_file(&path)?;
+        let path = ctx.get_sqlite_dir()?;
+        for elem in walkdir::WalkDir::new(path) {
+            let Ok(elem) = elem else { continue };
+            let path = elem.path();
+            let fname = path_must_name(path);
+            if fname.starts_with(GRAPH_DATABASE_FILE_NAME) {
+                log::info!("removing {}", path_must_str(path));
+                fs::remove_file(path)?;
+            }
+        }
         Ok(())
     }
     fn remove_source(&self, source: &str) -> Result<()> {

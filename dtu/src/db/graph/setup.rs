@@ -5,6 +5,7 @@ use csv::StringRecord;
 use diesel::connection::SimpleConnection;
 use diesel::sql_types::{BigInt, Integer, Text};
 use diesel::{insert_into, prelude::*, sql_query, SqliteConnection};
+use itertools::Itertools;
 use smalisa::AccessFlag;
 
 use super::common::*;
@@ -561,7 +562,12 @@ impl<'a> RecordParser<'a> {
     }
     fn get(&self, idx: usize) -> Result<&'a str> {
         self.record.get(idx).ok_or_else(|| {
-            Error::Generic(format!("invalid {}, missing string at {}", self.name, idx))
+            Error::Generic(format!(
+                "invalid {}, missing string at {} - line = {}",
+                self.name,
+                idx,
+                self.record.iter().join(" | ")
+            ))
         })
     }
     fn get_parsable<T>(&self, idx: usize) -> Result<T>
