@@ -24,9 +24,6 @@ enum Command {
 
     #[command()]
     ByMethod(ByMethod),
-
-    #[command()]
-    MethodsByStr(MethodsByString),
 }
 
 impl Strings {
@@ -34,24 +31,7 @@ impl Strings {
         match self.command {
             Command::BySource(c) => c.run(ctx),
             Command::ByMethod(c) => c.run(ctx),
-            Command::MethodsByStr(c) => c.run(ctx),
         }
-    }
-}
-
-#[derive(Args)]
-struct MethodsByString {
-    #[arg()]
-    string: String,
-}
-
-impl MethodsByString {
-    fn run(self, ctx: &dyn Context) -> anyhow::Result<()> {
-        ensure_prereq(ctx, Prereq::GraphDatabaseSetup)?;
-        let db = get_default_graphdb(ctx)?;
-        let result = db.get_methods_for_string(&self.string)?;
-        serde_json::to_writer(io::stdout(), &result)?;
-        Ok(())
     }
 }
 
