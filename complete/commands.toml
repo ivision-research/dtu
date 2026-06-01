@@ -594,7 +594,7 @@ options = [
 
 [call.app-service]
 options = [
-    ["apk", "a", "Apk", ""],
+    ["apk", "A", "Apk", ""],
     ["class", "c", "GraphClass", ""],
     ["interface", "I", "Uncompletable", ""],
     ["action", "a", "Uncompletable", ""],
