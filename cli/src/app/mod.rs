@@ -276,7 +276,7 @@ impl RemoveTest {
         let pkg = meta.get_key_value(APP_PKG_KEY)?;
         let template = TemplateRenderer::new(ctx, meta, &pkg);
         template.update()?;
-        let path = format!("app/src/main/c/arve/{}.kt", self.activity.name);
+        let path = format!("app/src/main/kotlin/c/arve/{}.kt", self.activity.name);
         let path = ctx.get_test_app_dir()?.join(path.as_str());
         fs::remove_file(&path)?;
         Ok(())
