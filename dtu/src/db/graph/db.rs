@@ -732,38 +732,20 @@ fn conn_find_classes_with_method(
     args: Option<&str>,
     source: Option<&str>,
 ) -> Result<Vec<ClassSpec>> {
-    let mut where_clause = format!("m.name = ?");
+    let mut q = classes::table
+        .inner_join(sources::table.on(classes::source.eq(sources::id)))
+        .inner_join(methods::table.on(methods::class.eq(classes::id)))
+        .select(ChildClassRow::as_select())
+        .filter(methods::name.eq(name))
+        .into_boxed();
 
-    if args.is_some() {
-        where_clause.push_str(&format!(" AND m.args = ?"));
-    }
-
-    if source.is_some() {
-        where_clause.push_str(&format!(" AND s.source = ?"));
-    }
-
-    let raw_q = format!(
-        r#"SELECT s.name AS source, c.name, c.access_flags
-FROM classes AS c
-JOIN sources AS s
-    ON c.source = s.id
-JOIN methods AS m
-    ON m.class = c.id
-WHERE {where_clause}
-"#
-    );
-
-    let mut q = sql_query(raw_q).into_boxed();
-    q = q.bind::<Text, _>(name);
-
-    if let Some(a) = args {
-        q = q.bind::<Text, _>(a);
+    if let Some(v) = args {
+        q = q.filter(methods::args.eq(v));
     }
 
     if let Some(s) = source {
-        q = q.bind::<Text, _>(s);
+        q = q.filter(sources::name.eq(s));
     }
-
     let rows: Vec<ChildClassRow> = query!(q).get_results(conn)?;
     Ok(rows.into_iter().map(ClassSpec::from).collect())
 }
@@ -1236,7 +1218,7 @@ impl Indexable for MethodCallRow {
     }
 }
 
-#[derive(QueryableByName, Debug)]
+#[derive(Queryable, QueryableByName, Debug)]
 struct ChildClassRow {
     #[diesel(sql_type = Text)]
     source: String,
@@ -1244,6 +1226,14 @@ struct ChildClassRow {
     name: String,
     #[diesel(sql_type = BigInt)]
     access_flags: i64,
+}
+
+impl<DB: Backend> Selectable<DB> for ChildClassRow {
+    type SelectExpression = (sources::name, classes::name, classes::access_flags);
+
+    fn construct_selection() -> Self::SelectExpression {
+        (sources::name, classes::name, classes::access_flags)
+    }
 }
 
 impl From<ChildClassRow> for ClassSpec {
