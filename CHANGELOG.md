@@ -8,6 +8,7 @@
 - Surface method IDs in graph queries
 - Added `find strings` to find strings by various criteria
 - Added `find methods` to find methods by various criteria
+- Added `find fields` to find fields by various criteria
 - Added `meta` to the `dtu list IPC` command output JSON
 - Added a few more `-j/--json`s
 - Started adding a hidden `_scripting`/`_s` command that does some metadata related tasks for making shell scripts easier to write
