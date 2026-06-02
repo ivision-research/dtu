@@ -730,7 +730,7 @@ where
     macro_rules! send_str {
         ($s:expr) => {
             channels.send_string($s);
-            if !calling_method_args.is_empty() {
+            if !calling_method_name.is_empty() {
                 let seen = SeenMethodString {
                     method: calling_method_name,
                     method_args: calling_method_args,
@@ -795,6 +795,7 @@ where
             }
             Line::MethodEnd => {
                 seen_calls.clear();
+                seen_method_strings.clear();
             }
             Line::InstructionInvocation(ref inv) => {
                 if inv.sets_field() || inv.gets_field() {
