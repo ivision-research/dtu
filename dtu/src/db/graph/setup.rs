@@ -4,7 +4,7 @@ use std::str::FromStr;
 use csv::StringRecord;
 use diesel::connection::SimpleConnection;
 use diesel::sql_types::{BigInt, Integer, Text};
-use diesel::{insert_into, prelude::*, sql_query, SqliteConnection};
+use diesel::{insert_into, insert_or_ignore_into, prelude::*, sql_query, SqliteConnection};
 use itertools::Itertools;
 use smalisa::AccessFlag;
 
@@ -13,7 +13,10 @@ use super::models::{InsertClass, InsertLoadStatus, InsertSource};
 use super::schema::{_load_status, classes, sources};
 use super::setup_task::{AddDirTask, GraphDatabaseSetup, InitialImportOptions};
 use super::FRAMEWORK_SOURCE;
-use super::{setup::SetupResult, AddDirectoryOptions, LoadCSVKind, SetupEvent};
+use super::{setup::SetupResult, AddDirectoryOptions, SetupEvent};
+use crate::db::graph::models::InsertDiscoveredString;
+use crate::db::graph::schema::strings;
+use crate::smalisa_wrapper::CSV;
 use crate::utils::DevicePath;
 use crate::{
     tasks::{EventMonitor, TaskCancelCheck},
@@ -24,16 +27,9 @@ use super::common::Error;
 use super::db::GraphSqliteDatabase;
 use super::setup_task::*;
 
-impl LoadCSVKind {
+impl CSV {
     fn to_kind(self) -> i32 {
-        match self {
-            LoadCSVKind::Classes => 1,
-            LoadCSVKind::Methods => 2,
-            LoadCSVKind::Supers => 3,
-            LoadCSVKind::Impls => 4,
-            LoadCSVKind::Calls => 5,
-            LoadCSVKind::Strings => 6,
-        }
+        (self as u8) as i32
     }
 }
 
@@ -50,7 +46,7 @@ impl<'a> SetupContext<'a> {
 
     fn stage_methods(self) -> Result<()> {
         self.do_load(|c, record| -> Result<()> {
-            let rp = RecordParser::new(record, "methods.csv");
+            let rp = RecordParser::new(record, CSV::Methods);
             let class = rp.get(0)?;
             let name = rp.get(1)?;
             let args = rp.get(2)?;
@@ -69,9 +65,56 @@ impl<'a> SetupContext<'a> {
         })
     }
 
-    fn stage_strings(self) -> Result<()> {
+    fn stage_method_field_access(self) -> Result<()> {
         self.do_load(|c, record| {
-            let rp = RecordParser::new(record, "method_strings.csv");
+            let rp = RecordParser::new(record, CSV::MethodFieldAccess);
+            let field_class = rp.get(0)?;
+            let field_name = rp.get(1)?;
+            let field_ty = rp.get(2)?;
+            let method_class = rp.get(3)?;
+            let method_name = rp.get(4)?;
+            let method_args = rp.get(5)?;
+            let op: i32 = rp.get_parsable(6)?;
+            query!(sql_query(
+                r#"INSERT INTO named_method_field_access(field_class, field_name, field_ty, method_class, method_name, method_args, action) VALUES(?, ?, ?, ?, ?, ?, ?)"#
+            )
+            .bind::<Text, _>(field_class)
+            .bind::<Text, _>(field_name)
+            .bind::<Text, _>(field_ty)
+            .bind::<Text, _>(method_class)
+            .bind::<Text, _>(method_name)
+            .bind::<Text, _>(method_args)
+            .bind::<Integer, _>(op))
+            .execute(c)?;
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+
+    fn stage_class_fields(self) -> Result<()> {
+        self.do_load(|c, record| {
+            let rp = RecordParser::new(record, CSV::ClassFields);
+            let  class = rp.get(0)?;
+            let name = rp.get(1)?;
+            let ty = rp.get(2)?;
+            let access_flags: u64 = rp.get_parsable(3)?;
+            query!(
+                sql_query(r#"INSERT INTO named_class_fields(class, name, ty, access_flags) VALUES(?, ?, ?, ?)"#)
+                    .bind::<Text, _>(class)
+                    .bind::<Text, _>(name)
+                    .bind::<Text, _>(ty)
+                    .bind::<BigInt, _>(access_flags as i64)
+            )
+            .execute(c)?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    fn stage_method_strings(self) -> Result<()> {
+        self.do_load(|c, record| {
+            let rp = RecordParser::new(record, CSV::MethodStrings);
             let string = rp.get(0)?;
             let method = rp.get(1)?;
             let method_args = rp.get(2)?;
@@ -98,9 +141,20 @@ impl<'a> SetupContext<'a> {
         })
     }
 
+    fn load_strings(self) -> Result<()> {
+        let src = self.source;
+        self.do_load(|c, record| -> Result<()> {
+            let ins = InsertDiscoveredString::from_record(record, src)?;
+            // We deduplicate over in gen_csvs but I dunno go ahead and do this so no funny
+            // business?
+            query!(insert_or_ignore_into(strings::table).values(&ins)).execute(c)?;
+            Ok(())
+        })
+    }
+
     fn stage_calls(self) -> Result<()> {
         self.do_load(|c, record| -> Result<()> {
-            let rp = RecordParser::new(record, "calls.csv");
+            let rp = RecordParser::new(record, CSV::Calls);
             let caller_class = rp.get(0)?;
             let caller_method = rp.get(1)?;
             let caller_args = rp.get(2)?;
@@ -125,7 +179,7 @@ impl<'a> SetupContext<'a> {
 
     fn stage_supers(self) -> Result<()> {
         self.do_load(|c, record| -> Result<()> {
-            let rp = RecordParser::new(record, "supers.csv");
+            let rp = RecordParser::new(record, CSV::Supers);
             let child = rp.get(0)?;
             let parent = rp.get(1)?;
             let sql = "INSERT INTO named_supers(parent, child) VALUES(?, ?)";
@@ -139,7 +193,7 @@ impl<'a> SetupContext<'a> {
 
     fn stage_impls(self) -> Result<()> {
         self.do_load(|c, record| -> Result<()> {
-            let rp = RecordParser::new(record, "impls.csv");
+            let rp = RecordParser::new(record, CSV::Interfaces);
             let class = rp.get(0)?;
             let iface = rp.get(1)?;
             let sql = "INSERT INTO named_interfaces(interface, class) VALUES(?, ?)";
@@ -188,6 +242,65 @@ impl GraphSqliteDatabase {
         })?)
     }
 
+    fn load_staged_method_field_access_with_conn(
+        &self,
+        conn: &mut SqliteConnection,
+        src: i32,
+    ) -> Result<()> {
+        // A few separate parts to this query
+        //
+        // Use the staged raw string based values and do essentially two separate joins:
+        //
+        //  (1) Joining to get the field id from the `class_fields` table. This uses the string
+        //      class name, field name, and field type to resolve the ID.
+        //  (2) Joining to get the method id from the `methods` table. This uses the string method
+        //      class name, method name, and method args to resolve the ID.
+        query!(sql_query(
+            r#"INSERT INTO method_field_access(field, method, action)
+SELECT cf.id, m.id, acc.action
+FROM named_method_field_access AS acc
+
+JOIN classes AS field_classes
+    ON field_classes.id = COALESCE(
+        (SELECT id FROM classes WHERE name = acc.field_class AND source = ?1),
+        (SELECT id FROM classes WHERE name = acc.field_class AND source = 1)
+    )
+
+JOIN class_fields AS cf
+    ON cf.class = field_classes.id AND cf.name = acc.field_name AND cf.ty = acc.field_ty
+
+JOIN classes AS method_classes
+    ON method_classes.name = acc.method_class AND method_classes.source = ?1
+
+JOIN methods AS m
+    ON m.class = method_classes.id AND m.name = acc.method_name AND m.args = acc.method_args
+"#
+        )
+        .bind::<Integer, _>(src))
+        .execute(conn)?;
+        Ok(())
+    }
+
+    fn load_staged_class_fields_with_conn(
+        &self,
+        conn: &mut SqliteConnection,
+        src: i32,
+    ) -> Result<()> {
+        // We can only discover class fields inside the source, so c.source should always give us
+        // something unless some funny business has happened.
+        query!(sql_query(
+            r#"INSERT INTO class_fields(class, name, ty, access_flags)
+SELECT c.id, ncf.name, ncf.ty, ncf.access_flags
+FROM named_class_fields AS ncf
+JOIN classes AS c
+    ON c.name = ncf.class AND c.source = ?
+"#
+        )
+        .bind::<Integer, _>(src))
+        .execute(conn)?;
+        Ok(())
+    }
+
     fn load_staged_supers_with_conn(&self, conn: &mut SqliteConnection, src: i32) -> Result<()> {
         // The `child` will already exist in the database, but the `parent` might not. If the parent
         // doesn't exist, add it to the framework, not the current source.
@@ -210,8 +323,10 @@ JOIN classes as child
     ON  child.name = ns.child
     AND child.source = ?1
 JOIN classes AS parent
-    ON  parent.name = ns.parent
-    AND (parent.source = ?1 OR parent.source = 1)"#
+    ON parent.id = COALESCE(
+        (SELECT id FROM classes WHERE name = ns.parent AND source = ?1),
+        (SELECT id FROM classes WHERE name = ns.parent AND source = 1)
+    )"#
         )
         .bind::<Integer, _>(src))
         .execute(conn)?;
@@ -245,8 +360,10 @@ JOIN classes as class
     ON  class.name = ni.class
     AND class.source = ?1
 JOIN classes AS interface
-    ON  interface.name = ni.interface
-    AND (interface.source = ?1 OR interface.source = 1)"#
+    ON interface.id = COALESCE(
+        (SELECT id FROM classes WHERE name = ni.interface AND source = ?1),
+        (SELECT id FROM classes WHERE name = ni.interface AND source = 1)
+    )"#
         )
         .bind::<Integer, _>(src))
         .execute(conn)?;
@@ -266,15 +383,24 @@ JOIN classes AS interface
         Ok(())
     }
 
-    fn load_staged_strings_with_conn(&self, conn: &mut SqliteConnection, src: i32) -> Result<()> {
+    fn load_staged_method_strings_with_conn(
+        &self,
+        conn: &mut SqliteConnection,
+        src: i32,
+    ) -> Result<()> {
+        // Since we allow duplicates of strings between sources, we can be sure the string is
+        // available in this source: it can't possibly not be in the DB if a method in a given
+        // source references it.
         query!(sql_query(
-            r#"INSERT INTO method_strings(string, method, source)
-    SELECT nms.string, m.id, ?1
+            r#"INSERT INTO method_strings(string, method)
+    SELECT s.id, m.id
     FROM named_method_strings AS nms
+    JOIN strings AS s
+        ON s.string = nms.string AND s.source = ?1
     JOIN classes AS c
         ON c.name = nms.class AND c.source = ?1
     JOIN methods AS m
-        ON m.class = c.id AND m.name = nms.method AND m.args = nms.method_args AND m.source = ?1"#
+        ON m.class = c.id AND m.name = nms.method AND m.args = nms.method_args"#
         )
         .bind::<Integer, _>(src))
         .execute(conn)?;
@@ -309,7 +435,10 @@ JOIN classes AS interface
     SELECT DISTINCT c.id, nc.callee_method, nc.callee_args, 'V', ?1
     FROM named_calls AS nc
     JOIN classes AS c
-        ON nc.callee_class = c.name AND (c.source = ?1 OR c.source = 1)
+        ON c.id = COALESCE(
+            (SELECT id FROM classes WHERE name = nc.callee_class AND source = ?1),
+            (SELECT id FROM classes WHERE name = nc.callee_class AND source = 1)
+        )
     LEFT JOIN methods AS m
         ON m.class = c.id AND m.name = nc.callee_method AND m.args = nc.callee_args
     WHERE m.name IS NULL"#
@@ -347,8 +476,10 @@ JOIN methods AS src
     AND src.args = nc.caller_args
 
 JOIN classes AS dc
-    on dc.name = nc.callee_class
-    AND (dc.source = ?1 OR dc.source = 1)
+    ON dc.id = COALESCE(
+        (SELECT id FROM classes WHERE name = nc.callee_class AND source = ?1),
+        (SELECT id FROM classes WHERE name = nc.callee_class AND source = 1)
+    )
 
 JOIN methods AS dst
     ON  dst.class = dc.id
@@ -367,8 +498,16 @@ WHERE dst.id != src.id"#
         Ok(self.transaction(|c| self.load_staged_impls_with_conn(c, src))?)
     }
 
-    fn load_staged_strings(&self, src: i32) -> Result<()> {
-        Ok(self.transaction(|c| self.load_staged_strings_with_conn(c, src))?)
+    fn load_staged_method_strings(&self, src: i32) -> Result<()> {
+        Ok(self.transaction(|c| self.load_staged_method_strings_with_conn(c, src))?)
+    }
+
+    fn load_staged_method_field_access(&self, src: i32) -> Result<()> {
+        Ok(self.transaction(|c| self.load_staged_method_field_access_with_conn(c, src))?)
+    }
+
+    fn load_staged_class_fields(&self, src: i32) -> Result<()> {
+        Ok(self.transaction(|c| self.load_staged_class_fields_with_conn(c, src))?)
     }
 
     fn load_staged_supers(&self, src: i32) -> Result<()> {
@@ -404,17 +543,16 @@ WHERE dst.id != src.id"#
                 CREATE INDEX IF NOT EXISTS interfaces_child_source ON interfaces(class, source);
 
                 CREATE INDEX IF NOT EXISTS method_strings_method ON method_strings(method);
-                CREATE INDEX IF NOT EXISTS method_strings_strings_source ON method_strings(string, source);
-                CREATE INDEX IF NOT EXISTS method_strings_source ON method_strings(source);
+                CREATE INDEX IF NOT EXISTS method_strings_strings ON method_strings(string);
+
+                CREATE INDEX IF NOT EXISTS method_field_access_method ON method_field_access(method);
+
+                CREATE INDEX IF NOT EXISTS class_fields_class ON class_fields(class);
                 "#,
         )?)
     }
 
-    fn update_load_status(
-        conn: &mut SqliteConnection,
-        src: i32,
-        status: LoadCSVKind,
-    ) -> Result<()> {
+    fn update_load_status(conn: &mut SqliteConnection, src: i32, status: CSV) -> Result<()> {
         let ls = InsertLoadStatus::new(src, status.to_kind());
         _ = query!(insert_into(_load_status::table).values(&ls)).execute(conn)?;
         Ok(())
@@ -481,13 +619,7 @@ impl GraphDatabaseSetup for GraphSqliteDatabase {
         Ok(())
     }
 
-    fn load_csv(
-        &self,
-        _ctx: &dyn Context,
-        path: &str,
-        source: &str,
-        kind: LoadCSVKind,
-    ) -> Result<()> {
+    fn load_csv(&self, _ctx: &dyn Context, path: &str, source: &str, kind: CSV) -> Result<()> {
         let mut reader = csv::ReaderBuilder::new()
             .has_headers(false)
             .from_path(path)
@@ -502,28 +634,39 @@ impl GraphDatabaseSetup for GraphSqliteDatabase {
         let setup = SetupContext::new(self, src, &mut reader);
 
         match kind {
-            LoadCSVKind::Impls => {
+            CSV::Interfaces => {
                 setup.stage_impls()?;
                 self.load_staged_impls(src)?;
             }
-            LoadCSVKind::Supers => {
+            CSV::Supers => {
                 setup.stage_supers()?;
                 self.load_staged_supers(src)?;
             }
-            LoadCSVKind::Calls => {
+            CSV::Calls => {
                 setup.stage_calls()?;
                 self.load_staged_calls(src)?;
             }
-            LoadCSVKind::Methods => {
+            CSV::Methods => {
                 setup.stage_methods()?;
                 self.load_staged_methods(src)?;
             }
-            LoadCSVKind::Classes => {
+            CSV::Classes => {
                 setup.load_classes()?;
             }
-            LoadCSVKind::Strings => {
-                setup.stage_strings()?;
-                self.load_staged_strings(src)?;
+            CSV::Strings => {
+                setup.load_strings()?;
+            }
+            CSV::ClassFields => {
+                setup.stage_class_fields()?;
+                self.load_staged_class_fields(src)?;
+            }
+            CSV::MethodFieldAccess => {
+                setup.stage_method_field_access()?;
+                self.load_staged_method_field_access(src)?;
+            }
+            CSV::MethodStrings => {
+                setup.stage_method_strings()?;
+                self.load_staged_method_strings(src)?;
             }
         }
 
@@ -540,13 +683,29 @@ impl GraphDatabaseSetup for GraphSqliteDatabase {
 PRAGMA temp_store=MEMORY;
 PRAGMA foreign_keys=OFF;
 
+CREATE TEMPORARY TABLE IF NOT EXISTS named_method_field_access(
+    field_class TEXT NOT NULL,
+    field_name TEXT NOT NULL,
+    field_ty TEXT NOT NULL,
+    method_class TEXT NOT NULL,
+    method_name TEXT NOT NULL,
+    method_args TEXT NOT NULL,
+    action INTEGER NOT NULL
+);
+
+CREATE TEMPORARY TABLE IF NOT EXISTS named_class_fields(
+    class TEXT NOT NULL,
+    name TEXT NOT NULL,
+    ty TEXT NOT NULL,
+    access_flags BIGINT NOT NULL
+);
+
 CREATE TEMPORARY TABLE IF NOT EXISTS named_method_strings(
     string TEXT NOT NULL,
     method TEXT NOT NULL,
     method_args TEXT NOT NULL,
     class TEXT NOT NULL
 );
-
 
 CREATE TEMPORARY TABLE IF NOT EXISTS named_methods(
     class TEXT NOT NULL,
@@ -585,6 +744,8 @@ CREATE TEMPORARY TABLE IF NOT EXISTS named_interfaces(
         self.with_connection(|c| {
             c.batch_execute(
                 r#"
+            DELETE FROM named_method_field_access;
+            DELETE FROM named_class_fields;
             DELETE FROM named_method_strings;
             DELETE FROM named_calls;
             DELETE FROM named_methods;
@@ -596,7 +757,7 @@ CREATE TEMPORARY TABLE IF NOT EXISTS named_interfaces(
         })
     }
 
-    fn should_load_csv(&self, source: &str, csv: LoadCSVKind) -> bool {
+    fn should_load_csv(&self, source: &str, csv: CSV) -> bool {
         let kind = csv.to_kind();
         self.with_connection(|c| {
             query!(_load_status::table
@@ -613,18 +774,18 @@ CREATE TEMPORARY TABLE IF NOT EXISTS named_interfaces(
 
 struct RecordParser<'a> {
     record: &'a StringRecord,
-    name: &'a str,
+    kind: CSV,
 }
 
 impl<'a> RecordParser<'a> {
-    fn new(record: &'a StringRecord, name: &'a str) -> Self {
-        Self { record, name }
+    fn new(record: &'a StringRecord, kind: CSV) -> Self {
+        Self { record, kind }
     }
     fn get(&self, idx: usize) -> Result<&'a str> {
         self.record.get(idx).ok_or_else(|| {
             Error::Generic(format!(
                 "invalid {}, missing string at {} - line = {}",
-                self.name,
+                self.kind.file_name(),
                 idx,
                 self.record.iter().join(" | ")
             ))
@@ -638,15 +799,25 @@ impl<'a> RecordParser<'a> {
         str::parse::<T>(val).map_err(|_| {
             Error::Generic(format!(
                 "invalid {}, failed to parse value `{}` at {}",
-                self.name, val, idx
+                self.kind.file_name(),
+                val,
+                idx
             ))
         })
     }
 }
 
+impl<'a> InsertDiscoveredString<'a> {
+    fn from_record(record: &'a StringRecord, src: i32) -> Result<Self> {
+        let rp = RecordParser::new(record, CSV::Strings);
+        let s = rp.get(0)?;
+        Ok(Self::new(s, src))
+    }
+}
+
 impl<'a> InsertClass<'a> {
     fn from_record(record: &'a StringRecord, src: i32) -> Result<Self> {
-        let rp = RecordParser::new(record, "classes.csv");
+        let rp = RecordParser::new(record, CSV::Classes);
         let name = rp.get(0)?;
         let raw_flags = rp.get_parsable::<u64>(1)?;
         let flags = AccessFlag::from_bits_truncate(raw_flags);

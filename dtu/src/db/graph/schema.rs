@@ -18,6 +18,16 @@ diesel::table! {
 }
 
 diesel::table! {
+    class_fields (id) {
+        id -> Integer,
+        class -> Integer,
+        name -> Text,
+        ty -> Text,
+        access_flags -> BigInt,
+    }
+}
+
+diesel::table! {
     classes (id) {
         id -> Integer,
         name -> Text,
@@ -36,11 +46,17 @@ diesel::table! {
 }
 
 diesel::table! {
-    method_strings (id) {
-        id -> Integer,
-        string -> Text,
+    method_field_access (field, method, action) {
+        field -> Integer,
         method -> Integer,
-        source -> Integer,
+        action -> Integer,
+    }
+}
+
+diesel::table! {
+    method_strings (string, method) {
+        string -> Integer,
+        method -> Integer,
     }
 }
 
@@ -64,6 +80,14 @@ diesel::table! {
 }
 
 diesel::table! {
+    strings (id) {
+        id -> Integer,
+        string -> Text,
+        source -> Integer,
+    }
+}
+
+diesel::table! {
     supers (rowid) {
         rowid -> Integer,
         parent -> Integer,
@@ -74,21 +98,28 @@ diesel::table! {
 
 diesel::joinable!(_load_status -> sources (source));
 diesel::joinable!(calls -> sources (source));
+diesel::joinable!(class_fields -> classes (class));
 diesel::joinable!(classes -> sources (source));
 diesel::joinable!(interfaces -> sources (source));
-diesel::joinable!(method_strings -> methods (id));
-diesel::joinable!(method_strings -> sources (source));
+diesel::joinable!(method_field_access -> class_fields (field));
+diesel::joinable!(method_field_access -> methods (method));
+diesel::joinable!(method_strings -> methods (method));
+diesel::joinable!(method_strings -> strings (string));
 diesel::joinable!(methods -> classes (class));
 diesel::joinable!(methods -> sources (source));
+diesel::joinable!(strings -> sources (source));
 diesel::joinable!(supers -> sources (source));
 
 diesel::allow_tables_to_appear_in_same_query!(
     _load_status,
     calls,
+    class_fields,
     classes,
     interfaces,
+    method_field_access,
     method_strings,
     methods,
     sources,
+    strings,
     supers,
 );

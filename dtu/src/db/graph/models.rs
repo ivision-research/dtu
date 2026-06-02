@@ -1,4 +1,4 @@
-use std::{fmt::Display, hash::Hash};
+use std::{fmt::Display, hash::Hash, str::FromStr};
 
 use diesel::prelude::*;
 use dtu_proc_macro::sql_db_row;
@@ -8,6 +8,55 @@ use smalisa::AccessFlag;
 use crate::utils::ClassName;
 
 use super::schema::*;
+
+#[derive(
+    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, serde::Serialize, serde::Deserialize,
+)]
+#[repr(u8)]
+pub enum FieldAccessOp {
+    Read = 0,
+    Write = 1,
+}
+
+impl FieldAccessOp {
+    pub fn is_read(self) -> bool {
+        matches!(self, Self::Read)
+    }
+
+    pub fn is_write(self) -> bool {
+        matches!(self, Self::Write)
+    }
+
+    pub fn maybe_from_literal(val: u8) -> Option<Self> {
+        Some(if val == Self::Read as u8 {
+            Self::Read
+        } else if val == Self::Write as u8 {
+            Self::Write
+        } else {
+            return None;
+        })
+    }
+}
+
+impl FromStr for FieldAccessOp {
+    type Err = ();
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "0" => Ok(Self::Read),
+            "1" => Ok(Self::Write),
+            _ => Err(()),
+        }
+    }
+}
+
+impl AsRef<str> for FieldAccessOp {
+    fn as_ref(&self) -> &'static str {
+        match self {
+            Self::Read => "0",
+            Self::Write => "1",
+        }
+    }
+}
 
 #[sql_db_row]
 #[diesel(table_name = calls)]
@@ -39,6 +88,40 @@ pub struct Method {
     pub args: String,
     pub ret: String,
     pub access_flags: i64,
+    pub source: i32,
+}
+
+#[sql_db_row]
+#[diesel(table_name = class_fields)]
+pub struct ClassField {
+    pub id: i32,
+    pub class: i32,
+    pub name: String,
+    pub ty: String,
+    pub access_flags: i64,
+}
+
+#[sql_db_row]
+#[diesel(table_name = method_field_access)]
+pub struct MethodFieldAccess {
+    pub id: i32,
+    pub field: i32,
+    pub method: i32,
+    pub action: i32,
+}
+
+#[sql_db_row]
+#[diesel(table_name = method_strings)]
+pub struct MethodString {
+    pub string: i32,
+    pub method: i32,
+}
+
+#[sql_db_row]
+#[diesel(table_name = strings)]
+pub struct DiscoveredString {
+    pub id: i32,
+    pub string: String,
     pub source: i32,
 }
 
@@ -163,6 +246,53 @@ where
     Ok(AccessFlag::from_bits_truncate(
         <u64 as Deserialize>::deserialize(deser)?,
     ))
+}
+
+#[derive(Eq, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(test, derive(Debug, PartialOrd, Ord))]
+pub struct FieldSpec {
+    pub id: i32,
+    pub class: ClassName,
+    pub name: String,
+    pub ty: String,
+    pub source: String,
+    #[serde(
+        serialize_with = "serialize_flags",
+        deserialize_with = "deserialize_flags"
+    )]
+    pub access_flags: AccessFlag,
+}
+
+impl Display for FieldSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{};->{}:{}",
+            self.class.get_smali_name(),
+            self.name,
+            self.ty
+        )
+    }
+}
+
+impl Hash for FieldSpec {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Intentionally leaving out access_flags here
+        self.class.hash(state);
+        self.name.hash(state);
+        self.ty.hash(state);
+        self.source.hash(state);
+    }
+}
+
+impl PartialEq for FieldSpec {
+    fn eq(&self, other: &Self) -> bool {
+        // Intentionally leaving out access_flags here
+        self.source == other.source
+            && self.class == other.class
+            && self.name == other.name
+            && self.ty == other.ty
+    }
 }
 
 #[derive(Eq, Clone, serde::Serialize, serde::Deserialize)]
@@ -298,6 +428,74 @@ impl<'a> ClassSearch<'a> {
     }
 }
 
+pub enum FieldSearchParams<'a> {
+    /// Search for the field by owning class
+    ByClass { class: &'a ClassName },
+
+    /// Search for the field by class and name
+    ByClassAndName { class: &'a ClassName, name: &'a str },
+
+    /// Search for a fully specified field
+    ByFullSpec {
+        class: &'a ClassName,
+        name: &'a str,
+        ty: &'a str,
+    },
+}
+
+impl<'a> FieldSearchParams<'a> {
+    pub fn new(
+        class: &'a ClassName,
+        name: Option<&'a str>,
+        ty: Option<&'a str>,
+    ) -> Result<Self, &'static str> {
+        if name.is_none() && ty.is_some() {
+            return Err("class and type only currently unsupported");
+        }
+
+        Ok(match name {
+            Some(name) => match ty {
+                Some(ty) => Self::ByFullSpec { class, name, ty },
+                None => Self::ByClassAndName { class, name },
+            },
+            None => Self::ByClass { class },
+        })
+    }
+}
+
+pub struct FieldSearch<'a> {
+    pub param: FieldSearchParams<'a>,
+    pub source: Option<&'a str>,
+}
+
+impl<'a> From<FieldSearchParams<'a>> for FieldSearch<'a> {
+    fn from(value: FieldSearchParams<'a>) -> Self {
+        Self::new(value, None)
+    }
+}
+
+impl<'a> FieldSearch<'a> {
+    #[inline]
+    pub fn with_source(mut self, source: &'a str) -> Self {
+        self.source = Some(source);
+        self
+    }
+
+    pub fn new(param: FieldSearchParams<'a>, source: Option<&'a str>) -> Self {
+        Self { param, source }
+    }
+
+    pub fn new_from_opts(
+        class: &'a ClassName,
+        name: Option<&'a str>,
+        ty: Option<&'a str>,
+        source: Option<&'a str>,
+    ) -> Result<Self, &'static str> {
+        let param = FieldSearchParams::new(class, name, ty)?;
+        Ok(Self { param, source })
+    }
+}
+
 /// Specify a method to search for
 pub struct MethodSearch<'a> {
     pub param: MethodSearchParams<'a>,
@@ -330,4 +528,11 @@ impl<'a> MethodSearch<'a> {
         let param = MethodSearchParams::new(name, class, signature)?;
         Ok(Self { param, source })
     }
+}
+
+#[derive(PartialEq, Eq, Clone, Hash, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(test, derive(Debug, PartialOrd, Ord))]
+pub struct FieldRef {
+    pub field: FieldSpec,
+    pub op: FieldAccessOp,
 }

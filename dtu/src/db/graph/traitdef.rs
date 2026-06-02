@@ -19,9 +19,26 @@ pub trait GraphDatabase: Sync + Send {
     /// Find all methods matching the given search critera
     fn get_methods(&self, search: &MethodSearch) -> Result<Vec<MethodSpec>>;
 
-    /// Find all methods returning on the database IDs
-    fn get_method_ids(&self, search: &MethodSearch) -> Result<Vec<i32>>;
+    /// Find all methods matching the given search criteria returning only the database IDs
+    fn get_method_ids(&self, search: &MethodSearch) -> Result<Vec<i32>> {
+        Ok(self
+            .get_methods(search)?
+            .into_iter()
+            .map(|it| it.id)
+            .collect::<Vec<_>>())
+    }
 
+    /// Get all fields matching the given search criteria
+    fn get_fields(&self, search: &FieldSearch) -> Result<Vec<FieldSpec>>;
+
+    /// Get all fields matching the given search criteria returning only the database IDs
+    fn get_field_ids(&self, search: &FieldSearch) -> Result<Vec<i32>> {
+        Ok(self
+            .get_fields(search)?
+            .into_iter()
+            .map(|it| it.id)
+            .collect::<Vec<_>>())
+    }
 
     /// Find all child classes of the given parent class
     ///
@@ -71,6 +88,16 @@ pub trait GraphDatabase: Sync + Send {
         args: Option<&str>,
         source: Option<&str>,
     ) -> Result<Vec<ClassSpec>>;
+
+    /// Get all methods referencing the given field
+    fn get_methods_referencing_field(
+        &self,
+        field: i32,
+        action: Option<FieldAccessOp>,
+    ) -> Result<Vec<MethodSpec>>;
+
+    /// Get all fields referenced by the given method
+    fn get_method_field_refs(&self, method: i32) -> Result<Vec<FieldRef>>;
 
     /// Get all constant strings discovered in the method
     fn get_strings_for_method(&self, method: i32) -> Result<Vec<String>>;

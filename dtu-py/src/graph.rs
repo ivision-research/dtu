@@ -6,7 +6,10 @@ use std::{
 use dtu::{
     db::graph::{
         get_default_graphdb,
-        models::{ClassSearch, MethodCallPath, MethodSearch, MethodSpec},
+        models::{
+            ClassSearch, FieldAccessOp, FieldRef, FieldSearch, FieldSpec, MethodCallPath,
+            MethodSearch, MethodSpec,
+        },
         ClassSpec, DefaultGraphDatabase, GraphDatabase,
     },
     utils::ClassName,
@@ -55,6 +58,40 @@ impl GraphDB {
     /// Get a set of all sources in the database
     fn get_all_sources(&self) -> Result<HashSet<String>> {
         Ok(self.0.get_all_sources()?)
+    }
+
+    /// Get all methods referencing the given field
+    #[pyo3(signature = (field, *, only_read = false, only_write = false))]
+    fn get_methods_referencing_field(
+        &self,
+        field: i32,
+        only_read: bool,
+        only_write: bool,
+    ) -> Result<Vec<PyMethodSpec>> {
+        let action = if only_write {
+            Some(FieldAccessOp::Write)
+        } else if only_read {
+            Some(FieldAccessOp::Read)
+        } else {
+            None
+        };
+
+        Ok(self
+            .0
+            .get_methods_referencing_field(field, action)?
+            .into_iter()
+            .map(PyMethodSpec::from)
+            .collect())
+    }
+
+    /// Get all fields referenced by the given method
+    fn get_method_field_refs(&self, method: i32) -> Result<Vec<PyFieldRef>> {
+        Ok(self
+            .0
+            .get_method_field_refs(method)?
+            .into_iter()
+            .map(PyFieldRef::from)
+            .collect())
     }
 
     /// Find all methods that contain the given constant string
@@ -184,7 +221,29 @@ impl GraphDB {
             .collect())
     }
 
-    /// Find all classes matching the given parameters
+    /// Find all fields matching the given parameters
+    #[pyo3(signature = (class_, *, name = None, type_ = None, source = None))]
+    fn get_fields(
+        &self,
+        class_: &str,
+        name: Option<&str>,
+        type_: Option<&str>,
+        source: Option<&str>,
+    ) -> PyResult<Vec<PyFieldSpec>> {
+        let cn = ClassName::from(class_);
+        let search = FieldSearch::new_from_opts(&cn, name, type_, source)
+            .map_err(|_| DtuError::new_err("invalid field search"))?;
+        Ok(self
+            .0
+            .get_fields(&search)
+            .map_err(GraphError)?
+            .into_iter()
+            .map(PyFieldSpec::from)
+            .collect::<Vec<_>>()
+            .into())
+    }
+
+    /// Find all methods matching the given parameters
     ///
     /// At least one of `class_` or `name` is required for this search
     #[pyo3(signature = (*, class_ = None, name = None, signature = None, source = None))]
@@ -287,6 +346,115 @@ impl PyClassSpec {
 impl From<ClassSpec> for PyClassSpec {
     fn from(value: ClassSpec) -> Self {
         Self(value)
+    }
+}
+
+#[pyclass(module = "dtu", frozen, name = "FieldRef")]
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct PyFieldRef(pub(crate) FieldRef);
+
+impl AsRef<FieldRef> for PyFieldRef {
+    fn as_ref(&self) -> &FieldRef {
+        &self.0
+    }
+}
+
+#[pymethods]
+impl PyFieldRef {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<FieldRef, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, FieldRef>(self, py)
+    }
+
+    #[getter]
+    fn field(&self) -> PyFieldSpec {
+        self.0.field.clone().into()
+    }
+
+    #[getter]
+    fn is_read(&self) -> bool {
+        self.0.op.is_read()
+    }
+
+    #[getter]
+    fn is_write(&self) -> bool {
+        self.0.op.is_write()
+    }
+}
+
+impl From<FieldRef> for PyFieldRef {
+    fn from(v: FieldRef) -> Self {
+        Self(v)
+    }
+}
+
+impl From<PyFieldRef> for FieldRef {
+    fn from(v: PyFieldRef) -> Self {
+        v.0
+    }
+}
+
+#[pyclass(module = "dtu", frozen, name = "FieldSpec")]
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct PyFieldSpec(pub(crate) FieldSpec);
+
+impl AsRef<FieldSpec> for PyFieldSpec {
+    fn as_ref(&self) -> &FieldSpec {
+        &self.0
+    }
+}
+
+#[pymethods]
+impl PyFieldSpec {
+    #[staticmethod]
+    fn __unpickle(value: &[u8]) -> PyResult<Self> {
+        unpickle::<FieldSpec, _>(value)
+    }
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        reduce::<_, FieldSpec>(self, py)
+    }
+    #[getter]
+    fn id(&self) -> i32 {
+        self.0.id
+    }
+
+    #[getter]
+    fn class_(&self) -> PyClassName {
+        self.0.class.clone().into()
+    }
+
+    #[getter]
+    fn name(&self) -> &str {
+        &self.0.name
+    }
+
+    #[getter]
+    fn ty(&self) -> &str {
+        &self.0.ty
+    }
+
+    #[getter]
+    fn source(&self) -> &str {
+        &self.0.source
+    }
+
+    fn __str__(&self) -> String {
+        self.0.to_string()
+    }
+}
+
+impl From<FieldSpec> for PyFieldSpec {
+    fn from(v: FieldSpec) -> Self {
+        Self(v)
+    }
+}
+
+impl From<PyFieldSpec> for FieldSpec {
+    fn from(v: PyFieldSpec) -> Self {
+        v.0
     }
 }
 

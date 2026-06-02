@@ -1,20 +1,22 @@
 // This could use a custom allocator or maybe some sort of mem slab class for
 // the backing storage for Strings, but we don't have that yet
 
+use crate::db::graph::models::FieldAccessOp;
 use crate::tasks::{EventMonitor, TaskCancelCheck};
-use crate::utils::{ensure_dir_exists, open_file};
+use crate::utils::{ensure_dir_exists, open_file, OS_PATH_SEP_CHAR};
 use crossbeam::channel::{bounded, Receiver, Sender};
 use csv;
 use itertools::Itertools;
 use rayon::prelude::*;
-use smalisa::instructions::InvArgs;
-use smalisa::{AccessFlag, Lexer, Line, LineParse, Parser, Primitive, RawLiteral};
+use smalisa::instructions::{InvArgs, Invocation};
+use smalisa::{AccessFlag, Field, Lexer, Line, LineParse, Parser, Primitive, RawLiteral};
 use std::borrow::Cow;
 use std::collections::HashSet;
+use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::BufWriter;
 use std::iter::Iterator;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use walkdir::{DirEntry, WalkDir};
@@ -32,8 +34,8 @@ pub enum Event {
     Done { success: bool },
 }
 
-fn get_csv_writer_file(out_dir: &Path, path: &str) -> Result<csv::Writer<BufWriter<File>>> {
-    let full_path = out_dir.join(path);
+fn get_csv_writer_file(out_dir: &Path, kind: CSV) -> Result<csv::Writer<BufWriter<File>>> {
+    let full_path = kind.in_path(out_dir);
     let file = OpenOptions::new()
         .create(true)
         .truncate(true)
@@ -48,6 +50,80 @@ fn get_csv_writer_file(out_dir: &Path, path: &str) -> Result<csv::Writer<BufWrit
 impl From<csv::Error> for Error {
     fn from(value: csv::Error) -> Self {
         Self::Generic(value.to_string())
+    }
+}
+
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+#[repr(u8)]
+pub enum CSV {
+    Classes,
+    Methods,
+    Supers,
+    Interfaces,
+    Calls,
+    ClassFields,
+    MethodFieldAccess,
+    Strings,
+    MethodStrings,
+}
+
+impl CSV {
+    pub const fn all() -> &'static [CSV] {
+        // This is a big cheesey, but the order matters here because we use this for the database
+        // loading code. I could just make the order matter _there_, but meh I like this function
+        // because it's obvious to me when it needs to change.
+        &[
+            CSV::Classes,
+            // These requre Classes
+            CSV::Supers,
+            CSV::Interfaces,
+            CSV::ClassFields,
+            CSV::Methods,
+            // This requires Methods
+            CSV::Calls,
+            // This requires Methods and ClassFields
+            CSV::MethodFieldAccess,
+            CSV::Strings,
+            // This requires Strings
+            CSV::MethodStrings,
+        ]
+    }
+
+    pub const fn file_name(self) -> &'static str {
+        match self {
+            Self::Classes => "classes.csv",
+            Self::Methods => "methods.csv",
+            Self::Supers => "supers.csv",
+            Self::Interfaces => "interfaces.csv",
+            Self::Calls => "calls.csv",
+            Self::ClassFields => "class_fields.csv",
+            Self::MethodFieldAccess => "method_field_access.csv",
+            Self::Strings => "strings.csv",
+            Self::MethodStrings => "method_strings.csv",
+        }
+    }
+
+    pub fn in_path(self, dir: &Path) -> PathBuf {
+        dir.join(self.file_name())
+    }
+
+    pub fn in_dir(self, dir: &str) -> String {
+        let mut s = String::from(dir);
+        s.push(OS_PATH_SEP_CHAR);
+        s.push_str(self.file_name());
+        s
+    }
+}
+
+impl fmt::Display for CSV {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.file_name())
+    }
+}
+
+impl AsRef<str> for CSV {
+    fn as_ref(&self) -> &str {
+        (*self).file_name()
     }
 }
 
@@ -79,6 +155,25 @@ struct MethodInfo {
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
+struct ClassField {
+    class: String,
+    name: String,
+    ty: String,
+    access_flags: u64,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct MethodFieldAccess {
+    class: String,
+    name: String,
+    ty: String,
+    method_class: String,
+    method: String,
+    method_args: String,
+    op: FieldAccessOp,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct CallInfo {
     source_class: String,
     source_method: String,
@@ -96,20 +191,43 @@ struct MethodString {
     class: String,
 }
 
-struct Channels {
+struct SendChannels {
     classes: Sender<ClassInfo>,
     supers: Sender<SuperInfo>,
     ifaces: Sender<InterfaceInfo>,
     methods: Sender<MethodInfo>,
     calls: Sender<CallInfo>,
-    strings: Sender<MethodString>,
+    strings: Sender<String>,
+    method_strings: Sender<MethodString>,
+    class_fields: Sender<ClassField>,
+    method_field_access: Sender<MethodFieldAccess>,
 }
 
-impl Channels {
+impl SendChannels {
     fn send_class(&self, class: &str, access_flags: AccessFlag) {
         let _ = self.classes.send(ClassInfo {
             name: class.to_string(),
             access_flags: access_flags.bits(),
+        });
+    }
+
+    fn send_string(&self, s: &str) {
+        let _ = self.strings.send(s.into());
+    }
+
+    fn send_field(&self, class: &str, field: &Field) {
+        let ty = match field.ty.as_smali_str() {
+            // If we can't get a smali format for any reason we don't really want to go forward.
+            // This really shouldn't happen so I don't think it's a big deal.
+            None => return,
+            Some(v) => v.as_ref().into(),
+        };
+
+        let _ = self.class_fields.send(ClassField {
+            class: class.into(),
+            name: field.name.into(),
+            ty,
+            access_flags: field.access.bits(),
         });
     }
 
@@ -164,7 +282,7 @@ impl Channels {
     }
 
     fn send_method_string(&self, string: &str, method: &str, method_args: &str, class: &str) {
-        let _ = self.strings.send(MethodString {
+        let _ = self.method_strings.send(MethodString {
             string: string.into(),
             method: method.into(),
             method_args: method_args.into(),
@@ -180,49 +298,99 @@ fn launch_writers(
     ifaces: Receiver<InterfaceInfo>,
     methods: Receiver<MethodInfo>,
     calls: Receiver<CallInfo>,
-    strings: Receiver<MethodString>,
+    strings: Receiver<String>,
+    method_strings: Receiver<MethodString>,
+    class_fields: Receiver<ClassField>,
+    method_field_access: Receiver<MethodFieldAccess>,
 ) -> Result<Vec<JoinHandle<()>>> {
-    let mut handles = Vec::with_capacity(6);
+    let mut handles = Vec::with_capacity(CSV::all().len());
 
-    let mut classes_file = get_csv_writer_file(out_dir, "classes.csv")?;
-    let mut supers_file = get_csv_writer_file(out_dir, "supers.csv")?;
-    let mut iface_file = get_csv_writer_file(out_dir, "interfaces.csv")?;
-    let mut methods_file = get_csv_writer_file(out_dir, "methods.csv")?;
-    let mut calls_file = get_csv_writer_file(out_dir, "calls.csv")?;
-    let mut method_strings_file = get_csv_writer_file(out_dir, "method_strings.csv")?;
+    let mut classes_file = get_csv_writer_file(out_dir, CSV::Classes)?;
+    let mut supers_file = get_csv_writer_file(out_dir, CSV::Supers)?;
+    let mut iface_file = get_csv_writer_file(out_dir, CSV::Interfaces)?;
+    let mut methods_file = get_csv_writer_file(out_dir, CSV::Methods)?;
+    let mut calls_file = get_csv_writer_file(out_dir, CSV::Calls)?;
+    let mut fields_file = get_csv_writer_file(out_dir, CSV::ClassFields)?;
+    let mut field_access_file = get_csv_writer_file(out_dir, CSV::MethodFieldAccess)?;
+    let mut strings_file = get_csv_writer_file(out_dir, CSV::Strings)?;
+    let mut method_strings_file = get_csv_writer_file(out_dir, CSV::MethodStrings)?;
 
     let mut handle = std::thread::spawn(move || {
-        for class in classes.iter().unique() {
+        // No need to deduplicate, we only send classes via the `.class` smali directive and we're
+        // assuming our own directory structure meaning there can only ever be one class of a given
+        // name per source.
+        for class in classes {
             if let Err(e) =
                 classes_file.write_record(&[&class.name, &class.access_flags.to_string()])
             {
                 log::error!("failed to write class {} to csv: {}", class.name, e);
             }
         }
-        let _ = classes_file.flush();
     });
     handles.push(handle);
 
     handle = std::thread::spawn(move || {
-        for ms in strings.iter().unique() {
+        // No need to deduplicate here because field names must be unique and classes are
+        // already unique
+        for field in class_fields {
+            if let Err(e) = fields_file.write_record(&[
+                &field.class,
+                &field.name,
+                &field.ty,
+                &field.access_flags.to_string(),
+            ]) {
+                log::error!("failed to write field: {}", e);
+            }
+        }
+    });
+    handles.push(handle);
+
+    handle = std::thread::spawn(move || {
+        // Worth deduplicating here because the same method can access a field multiple times
+        for access in method_field_access.iter().unique() {
+            if let Err(e) = field_access_file.write_record(&[
+                &access.class,
+                &access.name,
+                &access.ty,
+                &access.method_class,
+                &access.method,
+                &access.method_args,
+                access.op.as_ref(),
+            ]) {
+                log::error!("failed to write field access: {}", e);
+            }
+        }
+    });
+    handles.push(handle);
+
+    handle = std::thread::spawn(move || {
+        // Worth deduplicating here because the same string can appear a ton in the same source
+        for s in strings.iter().unique() {
+            if let Err(e) = strings_file.write_record(&[&s]) {
+                log::error!("failed to write string: {}", e);
+            }
+        }
+    });
+    handles.push(handle);
+
+    handle = std::thread::spawn(move || {
+        // Worth deduplicating here because the same method can use the same string multiple times
+        for ms in method_strings.iter().unique() {
             if let Err(e) = method_strings_file.write_record(&[
                 &ms.string,
                 &ms.method,
                 &ms.method_args,
                 &ms.class,
             ]) {
-                log::error!("failed to write string: {}", e);
+                log::error!("failed to write method string reference: {}", e);
             }
-        }
-
-        if let Err(e) = method_strings_file.flush() {
-            log::error!("failed to flush strings writer: {}", e);
         }
     });
     handles.push(handle);
 
     handle = std::thread::spawn(move || {
-        for sup in supers.iter().unique() {
+        // No need to deduplicate here because Java only allows a single super for a class
+        for sup in supers {
             if let Err(e) = supers_file.write_record(&[&sup.child, &sup.parent]) {
                 log::error!(
                     "failed to write super relation {} : {} to csv: {}",
@@ -232,12 +400,13 @@ fn launch_writers(
                 );
             }
         }
-        let _ = supers_file.flush();
     });
     handles.push(handle);
 
     handle = std::thread::spawn(move || {
-        for iface in ifaces.iter().unique() {
+        // No need to deduplicate here because smali wouldn't include the same interface for the
+        // same class multiple times
+        for iface in ifaces {
             if let Err(e) = iface_file.write_record(&[&iface.class, &iface.interface]) {
                 log::error!(
                     "failed to write interface relation {} : {} to csv: {}",
@@ -247,12 +416,13 @@ fn launch_writers(
                 );
             }
         }
-        let _ = iface_file.flush();
     });
     handles.push(handle);
 
     handle = std::thread::spawn(move || {
-        for m in methods.iter().unique() {
+        // No need to deduplicate here because we're storing all the info needed to uniquely
+        // identify a method
+        for m in methods {
             if let Err(e) = methods_file.write_record(&[
                 &m.class,
                 &m.name,
@@ -269,11 +439,12 @@ fn launch_writers(
                 );
             }
         }
-        let _ = methods_file.flush();
     });
     handles.push(handle);
 
     handle = std::thread::spawn(move || {
+        // Worth deduplicating here because the same method may call the another method multiple
+        // times
         for c in calls.iter().unique() {
             if let Err(e) = calls_file.write_record(&[
                 &c.source_class,
@@ -295,7 +466,6 @@ fn launch_writers(
                 );
             }
         }
-        let _ = calls_file.flush();
     });
     handles.push(handle);
 
@@ -321,18 +491,33 @@ where
     let (method_tx, method_rx) = bounded(128);
     let (call_tx, call_rx) = bounded(128);
     let (string_tx, string_rx) = bounded(128);
+    let (method_string_tx, method_string_rx) = bounded(128);
+    let (fields_tx, fields_rx) = bounded(128);
+    let (field_access_tx, field_access_rx) = bounded(128);
 
-    let channels = Arc::new(Channels {
+    let channels = Arc::new(SendChannels {
         classes: class_tx,
         supers: super_tx,
         ifaces: iface_tx,
         methods: method_tx,
         calls: call_tx,
         strings: string_tx,
+        method_strings: method_string_tx,
+        class_fields: fields_tx,
+        method_field_access: field_access_tx,
     });
 
     let handles = launch_writers(
-        out_dir, class_rx, super_rx, iface_rx, method_rx, call_rx, string_rx,
+        out_dir,
+        class_rx,
+        super_rx,
+        iface_rx,
+        method_rx,
+        call_rx,
+        string_rx,
+        method_string_rx,
+        fields_rx,
+        field_access_rx,
     )?;
 
     let entry_filter = |e: &walkdir::Result<DirEntry>| -> bool {
@@ -408,15 +593,8 @@ where
     );
 
     if res.is_err() {
-        for f in [
-            "classes.csv",
-            "supers.csv",
-            "interfaces.csv",
-            "methods.csv",
-            "calls.csv",
-            "method_strings.csv",
-        ] {
-            let path = out_dir.join(f);
+        for csv in CSV::all() {
+            let path = csv.in_path(out_dir);
             if path.exists() {
                 let _ = fs::remove_file(&path);
             }
@@ -459,7 +637,52 @@ fn should_ignore_super(name: &str) -> bool {
     false
 }
 
-fn handle_entry<F>(channels: Arc<Channels>, ent: &DirEntry, class_ignore_func: &F) -> Result<()>
+fn on_field_access<F>(
+    chan: &Sender<MethodFieldAccess>,
+    class_ignore_func: &F,
+    class: &str,
+    method: &str,
+    method_args: &str,
+    inv: &Invocation,
+) where
+    F: Fn(&str) -> bool + Send + Sync,
+{
+    let fref = match inv.args() {
+        InvArgs::OneRegField(_, v) => v,
+        InvArgs::TwoRegField(_, _, v) => v,
+        _ => return,
+    };
+
+    if class_ignore_func(fref.class) {
+        return;
+    }
+
+    let op = if inv.sets_field() {
+        FieldAccessOp::Write
+    } else {
+        FieldAccessOp::Read
+    };
+
+    let ty = match fref.ty.as_smali_str() {
+        // Match the behavior in send_field
+        None => return,
+        Some(v) => v.as_ref().into(),
+    };
+
+    let it = MethodFieldAccess {
+        class: fref.class.into(),
+        name: fref.name.into(),
+        method_class: class.into(),
+        method: method.into(),
+        method_args: method_args.into(),
+        ty,
+        op,
+    };
+
+    _ = chan.send(it);
+}
+
+fn handle_entry<F>(channels: Arc<SendChannels>, ent: &DirEntry, class_ignore_func: &F) -> Result<()>
 where
     F: Fn(&str) -> bool + Send + Sync,
 {
@@ -475,17 +698,18 @@ where
     // It's worth doing some deduping in this method since there are often duplicates and it makes
     // things a little easier on the global deduplication
     let mut seen_calls: HashSet<SeenCall> = HashSet::new();
-    let mut seen_strings: HashSet<SeenMethodString> = HashSet::new();
+    let mut seen_method_strings: HashSet<SeenMethodString> = HashSet::new();
 
     macro_rules! send_str {
         ($s:expr) => {
+            channels.send_string($s);
             if !calling_method_args.is_empty() {
                 let seen = SeenMethodString {
                     method: calling_method_name,
                     method_args: calling_method_args,
                     string: $s,
                 };
-                if seen_strings.insert(seen) {
+                if seen_method_strings.insert(seen) {
                     channels.send_method_string(
                         $s,
                         calling_method_name,
@@ -513,6 +737,7 @@ where
                 class = clazz;
                 channels.send_class(clazz, flags);
             }
+
             Line::Super(sup) => {
                 if !should_ignore_super(sup) {
                     channels.send_super(class, sup);
@@ -525,6 +750,8 @@ where
                 if let RawLiteral::String(s) = field.raw_value {
                     send_str!(s);
                 }
+
+                channels.send_field(class, field);
             }
             Line::MethodHeader(ref mh) => {
                 calling_method_name = mh.name;
@@ -543,7 +770,16 @@ where
                 seen_calls.clear();
             }
             Line::InstructionInvocation(ref inv) => {
-                if inv.is_call() {
+                if inv.sets_field() || inv.gets_field() {
+                    on_field_access(
+                        &channels.method_field_access,
+                        class_ignore_func,
+                        class,
+                        calling_method_name,
+                        calling_method_args,
+                        inv,
+                    );
+                } else if inv.is_call() {
                     if let InvArgs::VarRegMethod(_, mref) = inv.args() {
                         let target_class = mref.full_class_str();
 

@@ -2,7 +2,7 @@ use mockall::mock;
 use rstest::fixture;
 
 use dtu;
-use dtu::config::Config;
+use dtu::config::{ProjectConfig, GlobalConfig};
 
 #[fixture]
 pub fn mock_context() -> MockContext {
@@ -18,6 +18,7 @@ mock! {
         fn get_target_api_level(&self) -> u32;
         fn maybe_get_env(&self, key: &str) -> Option<String>;
         fn maybe_get_bin(&self, bin: &str) -> Option<String>;
-        fn get_project_config<'a>(&'a self) -> dtu::Result<Option<&'a Config>>;
+        fn get_project_config<'a>(&'a self) -> dtu::Result<&'a ProjectConfig>;
+        fn get_global_config<'a>(&'a self) -> dtu::Result<&'a GlobalConfig>;
     }
 }

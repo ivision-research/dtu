@@ -6,6 +6,7 @@ mod context;
 mod devicefs;
 mod exception;
 mod filestore;
+mod funcs;
 mod graph;
 mod intent_string;
 mod parcel_string;
@@ -13,7 +14,6 @@ mod sql;
 mod types;
 mod utils;
 mod version;
-mod funcs;
 
 #[pymodule(name = "dtu")]
 mod pydtu {
@@ -36,7 +36,9 @@ mod pydtu {
     };
 
     #[pymodule_export]
-    use super::graph::{GraphDB, PyClassSpec, PyMethodCallPath, PyMethodSpec};
+    use super::graph::{
+        GraphDB, PyClassSpec, PyFieldRef, PyFieldSpec, PyMethodCallPath, PyMethodSpec,
+    };
 
     #[pymodule_export]
     use super::parcel_string::ParcelValue;
@@ -66,5 +68,5 @@ mod pydtu {
     use super::devicefs::{PyDeviceFS, PyFindLimits, PyFindName, PyFindType};
 
     #[pymodule_export]
-    use super::funcs::{split_smali_args, find_smali_files_for_class, get_smali_file_for_class};
+    use super::funcs::{find_smali_files_for_class, get_smali_file_for_class, split_smali_args};
 }

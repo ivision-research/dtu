@@ -1,10 +1,10 @@
-use core::fmt;
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use crate::db;
+use crate::smalisa_wrapper::CSV;
 use crate::tasks::{EventMonitor, TaskCancelCheck};
-use crate::utils::{fs, opt_deny, path_must_name, path_must_str, DevicePath, OptDenylist};
+use crate::utils::{opt_deny, path_must_name, path_must_str, DevicePath, OptDenylist};
 use crate::Context;
 use dtu_proc_macro::wraps_base_error;
 
@@ -162,91 +162,23 @@ where
         Ok(self.ctx.get_graph_import_dir()?.join(&self.opts.name))
     }
 
-    fn should_load(&self, kind: LoadCSVKind) -> bool {
+    fn should_load(&self, kind: CSV) -> bool {
         self.graph.should_load_csv(&self.opts.name, kind)
     }
 
-    fn import_classes(&self, import_dir_name: &str) -> SetupResult<()> {
-        let csv = format!("{}{}classes.csv", import_dir_name, fs::OS_PATH_SEP);
-        if !self.should_load(LoadCSVKind::Classes) {
+    fn import_csv(&self, import_dir_name: &str, csv: CSV) -> SetupResult<()> {
+        let csv_file = csv.in_dir(import_dir_name);
+        if !self.should_load(csv) {
             return Ok(());
         }
         log::info!("Adding classes...");
-        self.monitor
-            .on_event(SetupEvent::ImportStarted { path: csv.clone() });
+        self.monitor.on_event(SetupEvent::ImportStarted {
+            path: csv_file.clone(),
+        });
         self.graph
-            .load_csv(self.ctx, &csv, &self.opts.name, LoadCSVKind::Classes)?;
-        self.monitor.on_event(SetupEvent::ImportDone { path: csv });
-        Ok(())
-    }
-
-    fn import_supers(&self, import_dir_name: &str) -> SetupResult<()> {
-        let csv = format!("{}{}supers.csv", import_dir_name, fs::OS_PATH_SEP);
-        if !self.should_load(LoadCSVKind::Supers) {
-            return Ok(());
-        }
-        log::info!("Adding supers...");
+            .load_csv(self.ctx, &csv_file, &self.opts.name, csv)?;
         self.monitor
-            .on_event(SetupEvent::ImportStarted { path: csv.clone() });
-        self.graph
-            .load_csv(self.ctx, &csv, &self.opts.name, LoadCSVKind::Supers)?;
-        self.monitor.on_event(SetupEvent::ImportDone { path: csv });
-        Ok(())
-    }
-
-    fn import_interfaces(&self, import_dir_name: &str) -> SetupResult<()> {
-        let csv = format!("{}{}interfaces.csv", import_dir_name, fs::OS_PATH_SEP);
-        if !self.should_load(LoadCSVKind::Impls) {
-            return Ok(());
-        }
-        log::info!("Adding interfaces...");
-        self.monitor
-            .on_event(SetupEvent::ImportStarted { path: csv.clone() });
-        self.graph
-            .load_csv(self.ctx, &csv, &self.opts.name, LoadCSVKind::Impls)?;
-        self.monitor.on_event(SetupEvent::ImportDone { path: csv });
-        Ok(())
-    }
-
-    fn import_methods(&self, import_dir_name: &str) -> SetupResult<()> {
-        let csv = format!("{}{}methods.csv", import_dir_name, fs::OS_PATH_SEP);
-        if !self.should_load(LoadCSVKind::Methods) {
-            return Ok(());
-        }
-        log::info!("Adding methods...");
-        self.monitor
-            .on_event(SetupEvent::ImportStarted { path: csv.clone() });
-        self.graph
-            .load_csv(self.ctx, &csv, &self.opts.name, LoadCSVKind::Methods)?;
-        self.monitor.on_event(SetupEvent::ImportDone { path: csv });
-        Ok(())
-    }
-
-    fn import_strings(&self, import_dir_name: &str) -> SetupResult<()> {
-        let csv = format!("{}{}method_strings.csv", import_dir_name, fs::OS_PATH_SEP);
-        if !self.should_load(LoadCSVKind::Strings) {
-            return Ok(());
-        }
-        log::info!("Adding strings...");
-        self.monitor
-            .on_event(SetupEvent::ImportStarted { path: csv.clone() });
-        self.graph
-            .load_csv(self.ctx, &csv, &self.opts.name, LoadCSVKind::Strings)?;
-        self.monitor.on_event(SetupEvent::ImportDone { path: csv });
-        Ok(())
-    }
-
-    fn import_calls(&self, import_dir_name: &str) -> SetupResult<()> {
-        let csv = format!("{}{}calls.csv", import_dir_name, fs::OS_PATH_SEP);
-        if !self.should_load(LoadCSVKind::Calls) {
-            return Ok(());
-        }
-        log::info!("Adding calls...");
-        self.monitor
-            .on_event(SetupEvent::ImportStarted { path: csv.clone() });
-        self.graph
-            .load_csv(self.ctx, &csv, &self.opts.name, LoadCSVKind::Calls)?;
-        self.monitor.on_event(SetupEvent::ImportDone { path: csv });
+            .on_event(SetupEvent::ImportDone { path: csv_file });
         Ok(())
     }
 
@@ -278,57 +210,17 @@ where
     }
 
     fn do_smalisa_imports(&self, import_dir_name: &str) -> SetupResult<()> {
-        self.check_cancel()?;
-        self.import_classes(import_dir_name)?;
+        for csv in CSV::all() {
+            self.check_cancel()?;
+            self.import_csv(import_dir_name, *csv)?;
+        }
 
-        self.check_cancel()?;
-        self.import_interfaces(import_dir_name)?;
-
-        self.check_cancel()?;
-        self.import_supers(import_dir_name)?;
-
-        self.check_cancel()?;
-        self.import_methods(import_dir_name)?;
-
-        self.check_cancel()?;
-        self.import_strings(import_dir_name)?;
-
-        self.check_cancel()?;
-        self.import_calls(import_dir_name)?;
         Ok(())
     }
 
     #[inline]
     fn check_cancel(&self) -> SetupResult<()> {
         self.cancel.check(SetupError::Cancelled)
-    }
-}
-
-/// Type of CSV file to be loaded
-#[derive(PartialEq, Eq, Clone, Copy)]
-pub enum LoadCSVKind {
-    Classes,
-    Supers,
-    Impls,
-    Methods,
-    Calls,
-    Strings,
-}
-
-impl fmt::Display for LoadCSVKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                LoadCSVKind::Impls => "Impls",
-                LoadCSVKind::Classes => "Classes",
-                LoadCSVKind::Supers => "Supers",
-                LoadCSVKind::Methods => "Methods",
-                LoadCSVKind::Calls => "Calls",
-                LoadCSVKind::Strings => "Strings",
-            }
-        )
     }
 }
 
@@ -360,19 +252,13 @@ pub trait GraphDatabaseSetup: Sync + Send + GraphDatabase {
     /// Check whether the given CSV kind should be loaded for the given source
     ///
     /// This is used for restarting loads on failures. Ideally, the graph database would
-    /// ensure either a given LoadCSVKind is entirely loaded or at all, so that we can
+    /// ensure either a given CSV is entirely loaded or at all, so that we can
     /// restart after fixing the file manually if needed.
-    fn should_load_csv(&self, source: &str, csv: LoadCSVKind) -> bool;
+    fn should_load_csv(&self, source: &str, csv: CSV) -> bool;
 
     /// Load the CSV into the database. This should be an all or nothing operation: if the
     /// CSV load fails there should be no partial data from that CSV in the database.
-    fn load_csv(
-        &self,
-        ctx: &dyn Context,
-        path: &str,
-        source: &str,
-        csv: LoadCSVKind,
-    ) -> db::Result<()>;
+    fn load_csv(&self, ctx: &dyn Context, path: &str, source: &str, csv: CSV) -> db::Result<()>;
 
     /// Called when all loading begins
     fn load_begin(&self, ctx: &dyn Context) -> db::Result<()> {

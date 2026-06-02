@@ -2,7 +2,16 @@ import hashlib
 import pickle
 from typing import Optional, List
 
-from dtu import Context, GraphDB, MethodCallPath, ClassSpec, ClassName, MethodSpec
+from dtu import (
+    Context,
+    GraphDB,
+    MethodCallPath,
+    ClassSpec,
+    ClassName,
+    MethodSpec,
+    FieldRef,
+    FieldSpec,
+)
 
 
 def _key(*args, **kwargs):
@@ -36,6 +45,40 @@ class CachingGraphDB:
         with cache_file.open("wb") as f:
             pickle.dump(res, f)
         return res
+
+    def get_fields(
+        self,
+        class_,
+        *,
+        name: Optional[str] = None,
+        type_: Optional[str] = None,
+        source: Optional[str] = None,
+    ) -> List[FieldSpec]:
+        """
+        Find all fields matching the given parameters
+        """
+        return self._maybe_cached(
+            self.wrapped.get_fields, class_, name=name, type_=type_, source=source
+        )
+
+    def get_methods_referencing_field(
+        self, field: int, only_read: bool = False, only_write: bool = False
+    ) -> List[MethodSpec]:
+        """
+        Get all methods referencing the given field
+        """
+        return self._maybe_cached(
+            self.wrapped.get_methods_referencing_field,
+            field,
+            only_read=only_read,
+            only_write=only_write,
+        )
+
+    def get_method_field_refs(self, method: int) -> List[FieldRef]:
+        """
+        Get all fields referenced by the given method
+        """
+        return self._maybe_cached(self.wrapped.get_method_field_refs, method)
 
     def find_callers(
         self,
