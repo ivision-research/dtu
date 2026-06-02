@@ -1,3 +1,5 @@
+use std::io;
+
 use clap::{self, Args};
 use dtu::Context;
 use sha2::{Digest, Sha256};
@@ -30,6 +32,10 @@ pub struct FindCallers {
     #[arg(short, long)]
     class: Option<ClassName>,
 
+    /// Show json
+    #[arg(short, long)]
+    json: bool,
+
     /// Depth to search
     #[arg(short, long, default_value_t = 3)]
     depth: usize,
@@ -50,6 +56,12 @@ impl FindCallers {
         let digest = hasher.finalize();
         let cache = format!("find-callers-{}-{}", hex::bytes_to_hex(&digest), self.depth);
         let mpaths = project_cacheable(&ctx, &cache, self.no_cache, || self.go(db))?;
+
+        if self.json {
+            serde_json::to_writer(io::stdout(), &mpaths)?;
+            return Ok(());
+        }
+
         // If the name isn't provided we have to show it
         let take_offset = if self.name.is_some() { 1 } else { 0 };
         // If they didn't provide a source, we have to show it
@@ -114,6 +126,10 @@ pub struct FindOutgoingCalls {
     #[arg(short, long)]
     class: Option<ClassName>,
 
+    /// JSON output
+    #[arg(short, long)]
+    json: bool,
+
     /// Depth to search
     #[arg(short, long, default_value_t = 3)]
     depth: usize,
@@ -140,6 +156,11 @@ impl FindOutgoingCalls {
             self.depth
         );
         let mpaths = project_cacheable(&ctx, &cache, self.no_cache, || self.go(db))?;
+
+        if self.json {
+            serde_json::to_writer(io::stdout(), &mpaths)?;
+            return Ok(());
+        }
 
         // If the name isn't provided we have to show it :)
         let take_offset = if self.name.is_some() { 1 } else { 0 };

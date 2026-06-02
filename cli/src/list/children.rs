@@ -1,7 +1,9 @@
+use std::io;
+
 use anyhow::bail;
 use clap::Args;
-use dtu::db::graph::FRAMEWORK_SOURCE;
 use dtu::db::graph::models::ClassSearch;
+use dtu::db::graph::FRAMEWORK_SOURCE;
 use dtu::db::graph::{get_default_graphdb, ClassSpec, GraphDatabase};
 use dtu::prereqs::Prereq;
 use dtu::utils::{ensure_prereq, ClassName, DevicePath};
@@ -22,6 +24,10 @@ pub struct Children {
     /// all APKs will be searched
     #[arg(short, long, value_parser = DevicePathValueParser)]
     apk: Option<DevicePath>,
+
+    /// JSON output
+    #[arg(short, long)]
+    json: bool,
 
     /// Don't fall back to searching for APKs if `--apk` isn't set
     #[arg(long)]
@@ -48,7 +54,7 @@ impl Children {
         let search = ClassSearch::new(&self.class, Some(source));
         let children = gdb.find_child_classes_of(&search, None)?;
         if children.len() > 0 {
-            self.show_children(&children);
+            self.show_children(&children)?;
             return Ok(());
         }
 
@@ -61,11 +67,16 @@ impl Children {
         if children.len() == 0 {
             bail!("no child classes found");
         }
-        self.show_children(&children);
+        self.show_children(&children)?;
         Ok(())
     }
 
-    fn show_children(&self, children: &Vec<ClassSpec>) {
+    fn show_children(&self, children: &Vec<ClassSpec>) -> anyhow::Result<()> {
+        if self.json {
+            serde_json::to_writer(io::stdout(), children)?;
+            return Ok(());
+        }
+
         for imp in children {
             if self.show_source {
                 println!("{}|{}", imp.name, imp.source);
@@ -73,5 +84,6 @@ impl Children {
                 println!("{}", imp.name);
             }
         }
+        Ok(())
     }
 }

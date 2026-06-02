@@ -1,7 +1,9 @@
+use std::io;
+
 use anyhow::bail;
 use clap::Args;
-use dtu::db::graph::FRAMEWORK_SOURCE;
 use dtu::db::graph::models::ClassSearch;
+use dtu::db::graph::FRAMEWORK_SOURCE;
 use dtu::db::graph::{get_default_graphdb, ClassSpec, GraphDatabase};
 use dtu::prereqs::Prereq;
 use dtu::utils::{ensure_prereq, ClassName, DevicePath};
@@ -22,6 +24,9 @@ pub struct InterfaceImpl {
     /// all APKs will be searched
     #[arg(short, long, value_parser = DevicePathValueParser)]
     apk: Option<DevicePath>,
+
+    #[arg(short, long)]
+    json: bool,
 
     /// Don't fall back to searching for APKs if `--apk` isn't set
     #[arg(long)]
@@ -48,7 +53,7 @@ impl InterfaceImpl {
 
         let impls = gdb.find_classes_implementing(&search, None)?;
         if impls.len() > 0 {
-            self.show_impls(&impls);
+            self.show_impls(&impls)?;
             return Ok(());
         }
         if !is_framework || self.no_fallback {
@@ -61,11 +66,15 @@ impl InterfaceImpl {
         if impls.len() == 0 {
             bail!("no implementations found");
         }
-        self.show_impls(&impls);
+        self.show_impls(&impls)?;
         return Ok(());
     }
 
-    fn show_impls(&self, impls: &Vec<ClassSpec>) {
+    fn show_impls(&self, impls: &Vec<ClassSpec>) -> anyhow::Result<()> {
+        if self.json {
+            serde_json::to_writer(io::stdout(), impls)?;
+            return Ok(());
+        }
         for imp in impls {
             if self.show_source {
                 println!("{}|{}", imp.name, imp.source);
@@ -73,5 +82,6 @@ impl InterfaceImpl {
                 println!("{}", imp.name);
             }
         }
+        Ok(())
     }
 }
