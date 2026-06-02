@@ -203,10 +203,36 @@ options = [
 
 [find]
 
+[find.fields.by-method]
+options = [
+    ["class", "c", "GraphClass", ""],
+    ["name", "n", "GraphMethod", ""],
+    ["signature", "s", "GraphSignature", ""],
+    ["only-read", "R", "None", ""],
+    ["only-write", "W", "None", ""],
+    ["source", "S", "GraphSource", ""]
+]
+
+[find.fields.by-spec]
+options = [
+    ["class", "c", "GraphClass", ""],
+    ["source", "S", "GraphSource", ""],
+    ["name", "n", "Uncompletable", ""]
+]
+
 
 [find.methods]
 
 [find.methods.by-string]
+[find.methods.by-field]
+options = [
+    ["class", "c", "GraphClass", ""],
+    ["source", "S", "GraphSource", ""],
+    ["name", "n", "Uncompletable", ""],
+    ["only-read", "R", "None", ""],
+    ["only-write", "W", "None", ""]
+]
+
 [find.methods.by-name]
 options = [
     ["name", "n", "GraphMethod", ""]

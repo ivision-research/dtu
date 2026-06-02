@@ -38,6 +38,9 @@ use strings::Strings;
 mod methods;
 use methods::Methods;
 
+mod fields;
+use fields::Fields;
+
 mod apk_graph;
 use apk_graph::{ApkIPCCallsGeneric, FindIPCCalls, FindIntentActivities, FindParseUri};
 #[derive(Args)]
@@ -59,6 +62,10 @@ enum Command {
     /// Various ways to find strings
     #[command()]
     Strings(Strings),
+
+    /// Various ways to find fields
+    #[command()]
+    Fields(Fields),
 
     /// Various ways to find methods
     #[command()]
@@ -117,6 +124,7 @@ impl Find {
         match self.command {
             Command::ServiceFile(c) => c.run(&ctx),
             Command::Methods(c) => c.run(&ctx),
+            Command::Fields(c) => c.run(&ctx),
             Command::Permission(c) => c.run(&ctx),
             Command::ProtectedBroadcast(c) => c.run(&ctx),
             Command::SmaliFile(c) => c.run(&ctx),
