@@ -49,6 +49,19 @@ impl GraphSqliteDatabase {
         Ok(db)
     }
 
+    pub fn new_from_path<S: AsRef<str> + ?Sized>(path: &S) -> Result<Self> {
+        let db = Self {
+            db_thread: DBThread::new_from_path(
+                path,
+                MIGRATIONS,
+                #[cfg(test)]
+                TEST_MIGRATIONS,
+            )?,
+        };
+        db.with_connection(|c| c.batch_execute("PRAGMA journal_mode=WAL"))?;
+        Ok(db)
+    }
+
     #[cfg(test)]
     fn new_from_url(url: &String) -> Result<Self> {
         Ok(Self {
