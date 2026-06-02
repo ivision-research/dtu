@@ -342,6 +342,10 @@ fn launch_writers(
                 log::error!("failed to write field: {}", e);
             }
         }
+
+        if let Err(e) = fields_file.flush() {
+            log::error!("failed toflush field file: {e}");
+        }
     });
     handles.push(handle);
 
@@ -360,6 +364,10 @@ fn launch_writers(
                 log::error!("failed to write field access: {}", e);
             }
         }
+
+        if let Err(e) = field_access_file.flush() {
+            log::error!("failed to flush field_access_file: {e}");
+        }
     });
     handles.push(handle);
 
@@ -369,6 +377,9 @@ fn launch_writers(
             if let Err(e) = strings_file.write_record(&[&s]) {
                 log::error!("failed to write string: {}", e);
             }
+        }
+        if let Err(e) = strings_file.flush() {
+            log::error!("failed to flush strings_file: {e}");
         }
     });
     handles.push(handle);
@@ -385,6 +396,9 @@ fn launch_writers(
                 log::error!("failed to write method string reference: {}", e);
             }
         }
+        if let Err(e) = method_strings_file.flush() {
+            log::error!("failed to flush method_strings_file: {e}");
+        }
     });
     handles.push(handle);
 
@@ -399,6 +413,9 @@ fn launch_writers(
                     e
                 );
             }
+        }
+        if let Err(e) = supers_file.flush() {
+            log::error!("failed to flush supers_file: {e}");
         }
     });
     handles.push(handle);
@@ -415,6 +432,9 @@ fn launch_writers(
                     e
                 );
             }
+        }
+        if let Err(e) = iface_file.flush() {
+            log::error!("failed to flush iface_file: {e}");
         }
     });
     handles.push(handle);
@@ -438,6 +458,9 @@ fn launch_writers(
                     e
                 );
             }
+        }
+        if let Err(e) = methods_file.flush() {
+            log::error!("failed to flush methods_file: {e}");
         }
     });
     handles.push(handle);
@@ -465,6 +488,10 @@ fn launch_writers(
                     e
                 );
             }
+        }
+
+        if let Err(e) = calls_file.flush() {
+            log::error!("failed to flush calls_file: {e}");
         }
     });
     handles.push(handle);
