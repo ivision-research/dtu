@@ -3,25 +3,25 @@
     "apktool": {
       "flake": false,
       "locked": {
-        "narHash": "sha256-sEJOK0lduQ0/vW/a63Bh5KTiHtgJrZ/4AA/iO3Rs5vY=",
+        "narHash": "sha256-PCTg4kyvsTY7J+qJ1Ty/LcCTbOzwG636M9L4daRYd7E=",
         "type": "file",
-        "url": "https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.12.0.jar"
+        "url": "https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_3.0.2.jar"
       },
       "original": {
         "type": "file",
-        "url": "https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.12.0.jar"
+        "url": "https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_3.0.2.jar"
       }
     },
     "baksmali": {
       "flake": false,
       "locked": {
-        "narHash": "sha256-9FhWBJGEA8d1fDdGAFb3N+BmiLBFceYbGvnQOEbd7vk=",
+        "narHash": "sha256-S4eqjyVZvYssSv7EMdHA0m1C8ToF4F9pwHZNi0U/J8Q=",
         "type": "file",
-        "url": "https://dtu-public-nix-xdapadghy1vsvipd2t50hfvg56fv.s3.us-west-2.amazonaws.com/baksmali-3.0.7-5320adf0-dirty-fat.jar"
+        "url": "https://github.com/baksmali/smali/releases/download/3.0.9/baksmali-3.0.9-fat-release.jar"
       },
       "original": {
         "type": "file",
-        "url": "https://dtu-public-nix-xdapadghy1vsvipd2t50hfvg56fv.s3.us-west-2.amazonaws.com/baksmali-3.0.7-5320adf0-dirty-fat.jar"
+        "url": "https://github.com/baksmali/smali/releases/download/3.0.9/baksmali-3.0.9-fat-release.jar"
       }
     },
     "crane": {
@@ -57,6 +57,19 @@
         "type": "github"
       }
     },
+    "jadx": {
+      "flake": false,
+      "locked": {
+        "lastModified": 318236400,
+        "narHash": "sha256-94vLQmmCsE7P7JFLAgFLnnUvdDv9H5uZyeOFAtuWd1k=",
+        "type": "tarball",
+        "url": "https://github.com/skylot/jadx/releases/download/v1.5.5/jadx-1.5.5.zip"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/skylot/jadx/releases/download/v1.5.5/jadx-1.5.5.zip"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1764521362,
@@ -79,6 +92,7 @@
         "baksmali": "baksmali",
         "crane": "crane",
         "flake-utils": "flake-utils",
+        "jadx": "jadx",
         "nixpkgs": "nixpkgs",
         "rust-overlay": "rust-overlay",
         "selinux": "selinux",
@@ -126,13 +140,13 @@
     "smali": {
       "flake": false,
       "locked": {
-        "narHash": "sha256-pDRsTF92o8VsBCCAV1tgpQCl0fysq69NwJpTpb3GvgE=",
+        "narHash": "sha256-7rxf1/FkP1NlkrbWVp2Q5rTom7hMdJc1pBSIFaga++0=",
         "type": "file",
-        "url": "https://dtu-public-nix-xdapadghy1vsvipd2t50hfvg56fv.s3.us-west-2.amazonaws.com/smali-3.0.7-5320adf0-dirty-fat.jar"
+        "url": "https://github.com/baksmali/smali/releases/download/3.0.9/smali-3.0.9-fat-release.jar"
       },
       "original": {
         "type": "file",
-        "url": "https://dtu-public-nix-xdapadghy1vsvipd2t50hfvg56fv.s3.us-west-2.amazonaws.com/smali-3.0.7-5320adf0-dirty-fat.jar"
+        "url": "https://github.com/baksmali/smali/releases/download/3.0.9/smali-3.0.9-fat-release.jar"
       }
     },
     "systems": {

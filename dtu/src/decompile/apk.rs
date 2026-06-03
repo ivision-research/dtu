@@ -77,15 +77,21 @@ impl<'a> Decompile for ApkFile<'a> {
 impl<'a> ApkFile<'a> {
     fn decompile_with_apktool(&self, ctx: &dyn Context, out: &Path) -> DecompileResult<bool> {
         let apktool = ctx.get_bin("apktool")?;
-        let api_level = ctx.get_target_api_level().to_string();
         let dest = out.to_string_lossy();
-        let mut args = vec!["-api", &api_level, "d", self.source, "-o", &dest];
+        let mut args = vec![
+            "d",
+            "--no-debug-info",
+            "-o",
+            &dest,
+        ];
         if self.force {
             args.push("-f")
         }
         if let Some(path) = self.frameworks_path {
             args.extend(&["-p", path])
         }
+
+        args.push(self.source);
         let res = run_cmd(&apktool, &args)?;
         Ok(res.ok())
     }
@@ -272,7 +278,16 @@ impl<'a> ApkFile<'a> {
 
         Ok(spawn_cmd(
             baksmali,
-            &["d", "--api", api_level, "-o", out_arg, name],
+            &[
+                "d",
+                "--api",
+                api_level,
+                "--debug-info=false",
+                "--accessor-comments=false",
+                "-o",
+                out_arg,
+                name,
+            ],
         )?)
     }
 }

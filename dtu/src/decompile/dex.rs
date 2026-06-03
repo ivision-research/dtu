@@ -19,7 +19,16 @@ impl<'a> DexFile<'a> {
         out: &P,
     ) -> DecompileResult<bool> {
         let out_str = out.as_ref().to_string_lossy();
-        let args = ["d", "--api", api_level, self.source, "-o", &out_str];
+        let args = [
+            "d",
+            "--api",
+            api_level,
+            "--debug-info=false",
+            "--accessor-comments=false",
+            "-o",
+            &out_str,
+            self.source,
+        ];
         let res = run_cmd(&baksmali, &args)?;
         let ok = res.ok();
         if !ok {

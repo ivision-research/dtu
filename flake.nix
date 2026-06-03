@@ -15,18 +15,23 @@
       };
     };
 
+    jadx = {
+        url = "https://github.com/skylot/jadx/releases/download/v1.5.5/jadx-1.5.5.zip";
+        flake = false;
+    };
+
     apktool = {
-      url = "https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.12.0.jar";
+      url = "https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_3.0.2.jar";
       flake = false;
     };
 
     smali = {
-      url = "file+https://dtu-public-nix-xdapadghy1vsvipd2t50hfvg56fv.s3.us-west-2.amazonaws.com/smali-3.0.7-5320adf0-dirty-fat.jar";
+      url = "https://github.com/baksmali/smali/releases/download/3.0.9/smali-3.0.9-fat-release.jar";
       flake = false;
     };
 
     baksmali = {
-      url = "file+https://dtu-public-nix-xdapadghy1vsvipd2t50hfvg56fv.s3.us-west-2.amazonaws.com/baksmali-3.0.7-5320adf0-dirty-fat.jar";
+      url = "https://github.com/baksmali/smali/releases/download/3.0.9/baksmali-3.0.9-fat-release.jar";
       flake = false;
     };
 
@@ -41,7 +46,20 @@
     };
   };
 
-  outputs = { self, nixpkgs, crane, flake-utils, rust-overlay, smali, baksmali, selinux, vdexExtractorSrc, apktool, ... }:
+  outputs = { 
+    self,
+    nixpkgs,
+    crane,
+    flake-utils,
+    rust-overlay,
+    smali,
+    baksmali,
+    selinux,
+    vdexExtractorSrc,
+    apktool,
+    jadx,
+    ...
+  }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -124,23 +142,35 @@
           sourceRoot = ".";
         };
 
+        jadxPkg = pkgs.stdenv.mkDerivation (jarCommon // rec {
+            pname = "jadx";
+            version = "1.5.5";
+            src = jadx;
+            dontUnpack = false;
+            postUnpack = 
+            ''
+                mv source/lib/jadx-${version}-all.jar jadx.jar
+            '';
+            installPhase = jarInstall pname "jadx.jar";
+        });
+
         apktoolPkg = pkgs.stdenv.mkDerivation (jarCommon // rec {
           pname = "apktool";
-          version = "2.12.0";
+          version = "3.0.2";
           src = apktool;
           installPhase = jarInstall pname src;
         });
 
         smaliPkg = pkgs.stdenv.mkDerivation (jarCommon // rec {
           pname = "smali";
-          version = "2.5.2";
+          version = "3.0.9";
           src = smali;
           installPhase = jarInstall pname src;
         });
 
         baksmaliPkg = pkgs.stdenv.mkDerivation (jarCommon // rec {
           pname = "baksmali";
-          version = "2.5.2";
+          version = "3.0.9";
           src = baksmali;
           installPhase = jarInstall pname src;
         });
@@ -208,7 +238,7 @@
         envInputs = with pkgs; [
           android-tools
           gradle_9
-          jadx
+          jadxPkg
           awscli2
           smaliPkg
           apktoolPkg
@@ -221,7 +251,8 @@
       in
       {
         packages = rec {
-          inherit dtuFs dtuDecompile dtuComplete;
+          inherit dtuFs dtuDecompile dtuComplete secilc
+                  jadxPkg apktoolPkg smaliPkg baksmaliPkg;
           dtu = dtuCli;
           default = dtu;
 
