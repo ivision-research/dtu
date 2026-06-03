@@ -59,9 +59,9 @@ struct CommonParams {
 }
 
 impl CommonParams {
-    fn get_diff_id(&self, ctx: &DefaultContext) -> anyhow::Result<i32> {
+    fn get_diff_id(&self, ctx: &DefaultContext, db: &DeviceDatabase) -> anyhow::Result<i32> {
         let meta = get_default_metadb(ctx)?;
-        Ok(get_diff_source(ctx, &meta, &self.diff_source)?.id)
+        Ok(get_diff_source(ctx, &meta, db, &self.diff_source)?.id)
     }
 }
 
@@ -302,7 +302,7 @@ impl List {
             p,
             |ctx, db| {
                 Ok(if p.only_new {
-                    db.get_receiver_diffs_by_diff_id(p.get_diff_id(ctx)?)?
+                    db.get_receiver_diffs_by_diff_id(p.get_diff_id(ctx, db)?)?
                         .into_iter()
                         .map(|it| it.receiver)
                         .collect::<Vec<Receiver>>()
@@ -326,7 +326,7 @@ impl List {
             &c,
             |ctx, db| {
                 let services = if p.only_new {
-                    db.get_service_diffs_by_diff_id(c.get_diff_id(ctx)?)?
+                    db.get_service_diffs_by_diff_id(c.get_diff_id(ctx, db)?)?
                         .into_iter()
                         .map(|it| it.service)
                         .collect::<Vec<Service>>()
@@ -352,7 +352,7 @@ impl List {
             p,
             |ctx, db| {
                 Ok(if p.only_new {
-                    db.get_activity_diffs_by_diff_id(p.get_diff_id(ctx)?)?
+                    db.get_activity_diffs_by_diff_id(p.get_diff_id(ctx, db)?)?
                         .into_iter()
                         .map(|it| it.activity)
                         .collect::<Vec<Activity>>()
@@ -369,7 +369,7 @@ impl List {
             p,
             |ctx, db| {
                 Ok(if p.only_new {
-                    db.get_provider_diffs_by_diff_id(p.get_diff_id(ctx)?)?
+                    db.get_provider_diffs_by_diff_id(p.get_diff_id(ctx, db)?)?
                         .into_iter()
                         .map(|it| it.provider)
                         .collect::<Vec<Provider>>()

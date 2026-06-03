@@ -45,24 +45,36 @@ impl Diff {
     }
 }
 
+/// Retrieve a diff source to use
+///
+/// The source is resolved in this order:
+///
+///     (1) If the provided src is Some it is returned
+///     (2) The DTU_DIFF_SOURCE env var is checked and used as the default diff source if it exists
+///     (3) The EMULATOR_DIFF_SOURCE is returned after ensuring the emulator diff is available
 pub fn get_diff_source(
     ctx: &dyn Context,
     meta: &dyn MetaDatabase,
+    db: &DeviceDatabase,
     src: &Option<DiffSource>,
 ) -> anyhow::Result<DiffSource> {
     let diff_source = match src {
-        Some(it) => {
-            if it.name == EMULATOR_DIFF_SOURCE {
-                meta.ensure_prereq(Prereq::EmulatorDiff)?;
+        Some(it) => (*it).clone(),
+        None => match ctx.maybe_get_env("DTU_DIFF_SOURCE") {
+            Some(v) => {
+                log::info!("Using DTU_DIFF_SOURCE {v}");
+                db.get_diff_source_by_name(&v)?
             }
-            (*it).clone()
-        }
-        None => {
-            meta.ensure_prereq(Prereq::EmulatorDiff)?;
-            let db = DeviceDatabase::new(ctx)?;
-            db.get_diff_source_by_name(EMULATOR_DIFF_SOURCE)?
-        }
+            None => {
+                meta.ensure_prereq(Prereq::EmulatorDiff)?;
+                return Ok(db.get_diff_source_by_name(EMULATOR_DIFF_SOURCE)?);
+            }
+        },
     };
+
+    if diff_source.name == EMULATOR_DIFF_SOURCE {
+        meta.ensure_prereq(Prereq::EmulatorDiff)?;
+    }
     Ok(diff_source)
 }
 

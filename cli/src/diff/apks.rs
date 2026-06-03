@@ -68,7 +68,7 @@ macro_rules! simple_ipc {
                 meta: &dyn MetaDatabase,
                 db: &DeviceDatabase,
             ) -> anyhow::Result<()> {
-                let diff_source = get_diff_source(ctx, meta, &self.diff_source)?.id;
+                let diff_source = get_diff_source(ctx, meta, db, &self.diff_source)?.id;
 
                 let (mut apk_id, items) = match self.apk.as_ref() {
                     None => {
@@ -180,7 +180,7 @@ impl Providers {
         meta: &dyn MetaDatabase,
         db: &DeviceDatabase,
     ) -> anyhow::Result<()> {
-        let diff_source = get_diff_source(ctx, meta, &self.diff_source)?.id;
+        let diff_source = get_diff_source(ctx, meta, db, &self.diff_source)?.id;
 
         let (mut apk_id, providers) = match self.apk.as_ref() {
             None => {
@@ -298,7 +298,7 @@ impl Apks {
         db: &DeviceDatabase,
     ) -> anyhow::Result<()> {
         let printer = Printer::new();
-        let diff_id = get_diff_source(ctx, meta, &self.diff_source)?.id;
+        let diff_id = get_diff_source(ctx, meta, db, &self.diff_source)?.id;
         let apks = db.get_apk_diffs_by_diff_id(diff_id)?;
 
         let filtered = apks.iter().filter(|it| !it.exists_in_diff);

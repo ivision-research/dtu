@@ -32,7 +32,7 @@ impl SystemServices {
         if ran_cmd {
             return Ok(());
         }
-        let diff_source = get_diff_source(ctx, meta, &self.diff_source)?.id;
+        let diff_source = get_diff_source(ctx, meta, &db, &self.diff_source)?.id;
         let services = db.get_system_service_diffs_by_diff_id(diff_source)?;
         for s in services {
             if s.exists_in_diff {
@@ -118,7 +118,7 @@ impl Methods {
         meta: &dyn MetaDatabase,
         db: &DeviceDatabase,
     ) -> anyhow::Result<()> {
-        let diff_source = get_diff_source(ctx, meta, &self.diff_source)?.id;
+        let diff_source = get_diff_source(ctx, meta, &db, &self.diff_source)?.id;
         let printer = Printer::new();
         let mut methods = match self.service.as_ref() {
             None => db.get_system_service_method_diffs_by_diff_id(diff_source)?,
