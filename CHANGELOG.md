@@ -3,6 +3,7 @@
 - **BREAKING** No longer output `strings.txt` with smalisa output. This has been reworked to include strings in the graph database so they can be queried alongside the graph. It is still possible to get all strings for a given source, but this file no longer exists
 - **BREAKING** Updated the GraphDatabase trait to include string and field related methods
 - **BREAKING** Update to apktool v3.0.2 -- this is breaking because the new apktool doesn't allow specifying `-api`
+- **BREAKING** Changed the way `list system-services/system-service-methods/apks` works to take a diff source similar to other commands
 - Major bugfixes:
     - Permissions were UNIQUE(name), updated to UNIQUE(name, source_apk_id)
     - Missing index on a graph query made it take very long

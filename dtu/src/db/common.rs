@@ -455,9 +455,7 @@ macro_rules! impl_delete_by {
                      super::schema::$table::dsl::$table.filter(
                         super::schema::$table::dsl::$($filter)+(sel)
                     ));
-                #[cfg(feature = "trace_db")]
-                ::log::trace!("{}", diesel::debug_query::<::diesel::sqlite::Sqlite, _>(&__query));
-                __query.execute(conn)?;
+                query!(__query).execute(conn)?;
                 Ok(())
             })
         }
@@ -472,9 +470,7 @@ macro_rules! impl_get_by {
                 let __query = super::schema::$ty::dsl::$ty.filter(
                     super::schema::$ty::dsl::$($filter)+(sel)
                 );
-                #[cfg(feature = "trace_db")]
-                log::trace!("{}", diesel::debug_query::<::diesel::sqlite::Sqlite, _>(&__query));
-                Ok(__query.$retrieve(conn)?)
+                Ok(query!(__query).$retrieve(conn)?)
             })
         }
     }
@@ -486,9 +482,9 @@ macro_rules! impl_get {
         $vis fn $name(&self) -> Result<$ret> {
             self.with_connection(|conn| {
                 Ok(
-                    super::schema::$ty::dsl::$ty.filter(
+                    query!(super::schema::$ty::dsl::$ty.filter(
                         super::schema::$ty::dsl::$($filter)+
-                    ).$retrieve(conn)?
+                    )).$retrieve(conn)?
                 )
             })
         }
@@ -528,7 +524,7 @@ macro_rules! impl_get_multi_by {
 macro_rules! impl_get_all {
     ($vis:vis $name:ident, $ret:ty, $ty:ident) => {
         $vis fn $name(&self) -> Result<Vec<$ret>> {
-            self.with_connection(|conn| Ok(super::schema::$ty::dsl::$ty.load(conn)?))
+            self.with_connection(|conn| Ok(query!(super::schema::$ty::dsl::$ty).load(conn)?))
         }
     };
 }
@@ -539,12 +535,7 @@ macro_rules! impl_update_one {
         $vis fn $name(&self, value: &$ty) -> Result<()> {
             self.with_connection(|conn| {
                 let __query = ::diesel::update(value).set(value);
-                #[cfg(feature = "trace_db")]
-                ::log::trace!(
-                    "{}",
-                    diesel::debug_query::<::diesel::sqlite::Sqlite, _>(&__query)
-                );
-                __query.execute(conn)?;
+                query!(__query).execute(conn)?;
                 Ok(())
             })
         }
@@ -559,12 +550,7 @@ macro_rules! impl_insert_one {
                 let __query = ::diesel::insert_into(super::schema::$dsl::dsl::$dsl)
                     .values(values)
                     .returning(super::schema::$dsl::id);
-                #[cfg(feature = "trace_db")]
-                ::log::trace!(
-                    "{}",
-                    diesel::debug_query::<::diesel::sqlite::Sqlite, _>(&__query)
-                );
-                Ok(__query.get_result(conn)?)
+                Ok(query!(__query).get_result(conn)?)
             })
         }
     };
@@ -576,7 +562,7 @@ macro_rules! impl_insert_multi {
         $vis fn $name(&self, values: &[$ty]) -> Result<()> {
             self.with_connection(|conn| {
                 let __query = ::diesel::insert_into(super::schema::$dsl::dsl::$dsl).values(values);
-                __query.execute(conn)?;
+                query!(__query).execute(conn)?;
                 Ok(())
             })
         }

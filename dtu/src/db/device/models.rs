@@ -781,6 +781,28 @@ impl SystemServiceMethod {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct SimpleSystemServiceMethod {
+    pub txn_id: i32,
+    pub name: String,
+    pub args: String,
+    pub ret: String,
+}
+
+impl From<SystemServiceMethod> for SimpleSystemServiceMethod {
+    fn from(value: SystemServiceMethod) -> Self {
+        let args = String::from(value.get_signature());
+        let ret = String::from(value.get_return_type());
+
+        Self {
+            txn_id: value.transaction_id,
+            name: value.name,
+            args,
+            ret,
+        }
+    }
+}
+
 #[sql_db_row]
 #[derive(Serialize, Deserialize)]
 pub struct SystemServiceMethodDiff {

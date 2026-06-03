@@ -14,6 +14,7 @@ use std::thread::JoinHandle;
 
 use anyhow::bail;
 use anyhow::Context as AnyhowContext;
+use dtu::db::device::models::DiffSource;
 use itertools::Itertools;
 use promptly::prompt;
 use serde::de::DeserializeOwned;
@@ -30,6 +31,20 @@ use dtu::db::DeviceDatabase;
 use dtu::tasks::{TaskCancelCheck, TaskCanceller};
 use dtu::utils::{find_file_for_class, find_smali_file_for_class, ClassName, DevicePath};
 use dtu::{run_cmd, Context};
+
+#[macro_export]
+macro_rules! cache_key {
+    ($ns:literal, $($it:expr),*) => {{
+        use sha2::Digest;
+        let mut hasher = ::sha2::Sha256::default();
+
+        $(
+            hasher.update($it);
+        )*
+
+        ::std::format!("{}:{}", $ns, ::dtu::utils::hex::bytes_to_hex(&hasher.finalize()))
+    }};
+}
 
 /// Wrapper for functions with a per project cacheable result
 ///
@@ -82,6 +97,47 @@ where
 
 pub fn is_cachebust(ctx: &dyn Context) -> bool {
     ctx.has_env("DTU_CACHEBUST")
+}
+
+pub fn inum_hash_key<T: Into<i64> + Copy>(it: T) -> [u8; 8] {
+    it.into().to_le_bytes()
+}
+
+#[allow(unused)]
+pub fn num_hash_key<T: Into<u64> + Copy>(it: T) -> [u8; 8] {
+    it.into().to_le_bytes()
+}
+
+pub fn bool_hash_key(z: bool) -> &'static [u8] {
+    if z {
+        &[b'1']
+    } else {
+        &[b'0']
+    }
+}
+
+pub fn opt_diff_hash_key<'a>(it: &'a Option<DiffSource>) -> &'a [u8] {
+    if let Some(v) = it {
+        v.name.as_str().as_bytes()
+    } else {
+        &[]
+    }
+}
+
+#[allow(unused)]
+pub fn opt_asref_hash_key<'a, T: AsRef<str>>(it: &'a Option<T>) -> &'a [u8] {
+    if let Some(v) = it {
+        let s = v.as_ref();
+        s.as_bytes()
+    } else {
+        &[]
+    }
+}
+
+#[allow(unused)]
+pub fn asref_hash_key<'a, T: AsRef<str> + ?Sized>(it: &'a T) -> &'a [u8] {
+    let s = it.as_ref();
+    s.as_bytes()
 }
 
 pub fn tostringshash<T: ToString + ?Sized>(sha: &mut Sha256, s: &T) {

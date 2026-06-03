@@ -126,24 +126,30 @@ options = [
 
 [list.apks]
 options = [
-    ["only-non-aosp", "n", "None", ""],
+    ["only-new", "n", "None", ""],
+    ["diff-source", "S", "DiffSource", ""],
     ["only-priv", "o", "None", ""],
     ["show-path", "s", "None", ""],
+    ["json", "j", "None", ""]
 ]
 
 [list.system-services]
 options = [
+    ["only-new", "n", "None", ""],
+    ["diff-source", "S", "DiffSource", ""],
     ["only-accessible", "A", "None", ""],
-    ["only-non-aosp", "n", "None", ""],
     ["only-impls", "I", "None", ""],
     ["only-no-impls", "N", "None", ""],
+    ["with-methods", "M", "None", ""],
+    ["json", "j", "None", ""]
 ]
 
 [list.system-service-methods]
 options = [
+    ["only-new", "n", "None", ""],
+    ["diff-source", "S", "DiffSource", ""],
     ["service", "s", "SystemService", ""],
-    ["only-non-aosp", "o", "None", ""],
-    ["json", "j", "None", ""],
+    ["json", "j", "None", ""]
 ]
 
 [list.providers]
