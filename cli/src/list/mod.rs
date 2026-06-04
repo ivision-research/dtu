@@ -24,11 +24,8 @@ use system_services::SystemServices;
 mod system_service_methods;
 use system_service_methods::SystemServiceMethods;
 
-mod interface_impl;
-use interface_impl::InterfaceImpl;
-
-mod children;
-use children::Children;
+mod classes;
+use classes::{Children, InterfaceImpl, Parents};
 
 #[derive(Args)]
 pub struct List {
@@ -82,6 +79,187 @@ impl CommonParams {
         }
 
         true
+    }
+
+    fn do_list_json<F, R, M, MetaData>(
+        &self,
+        ctx: &DefaultContext,
+        db: &DeviceDatabase,
+        func: F,
+        meta_func: Option<&M>,
+    ) -> anyhow::Result<()>
+    where
+        MetaData: serde::Serialize,
+        M: Fn(&R) -> MetaData + ?Sized,
+        R: ApkIPC + Display,
+        F: FnOnce(&Self, &DefaultContext, &DeviceDatabase) -> anyhow::Result<Vec<R>>,
+    {
+        let apks: HashMap<i32, Apk> =
+            HashMap::from_iter(db.get_apks()?.into_iter().map(|apk| (apk.id, apk)));
+
+        #[derive(serde::Serialize)]
+        struct JsonOutput<'a, MD: serde::Serialize> {
+            id: i32,
+            class: ClassName,
+            package: Cow<'a, str>,
+            enabled: bool,
+            exported: bool,
+            permission: Option<String>,
+            apk: &'a str,
+            source: &'a str,
+            meta: Option<MD>,
+        }
+
+        let res = func(&self, ctx, db)?
+            .into_iter()
+            .filter_map(|it| {
+                let apk = apks.get(&it.get_apk_id())?;
+
+                let source = if apk.app_name == "android" {
+                    "framework"
+                } else {
+                    apk.device_path.as_squashed_str()
+                };
+
+                let meta = if let Some(f) = &meta_func {
+                    Some(f(&it))
+                } else {
+                    None
+                };
+
+                let mut class = it.get_class_name();
+                let mut package: Cow<'_, str> = Cow::Owned(it.get_package().to_string());
+
+                if package.is_empty() {
+                    if class.has_pkg() {
+                        package = Cow::Owned(class.pkg_as_java().to_string());
+                    } else {
+                        package = Cow::Borrowed(apk.app_name.as_str());
+                    }
+                }
+
+                if !class.has_pkg() {
+                    class = class.with_new_package(&package);
+                }
+
+                let permission = it.get_generic_permission();
+
+                Some(JsonOutput {
+                    id: it.get_id(),
+                    class,
+                    package,
+                    enabled: it.is_enabled(),
+                    exported: it.is_exported(),
+                    permission: permission.map(String::from),
+                    apk: &apk.name,
+                    meta,
+                    source,
+                })
+            })
+            .collect::<Vec<JsonOutput<'_, MetaData>>>();
+
+        serde_json::to_writer(io::stdout(), &res)?;
+
+        Ok(())
+    }
+
+    fn do_list<F, R, M, MetaData>(&self, func: F, meta_func: Option<&M>) -> anyhow::Result<()>
+    where
+        M: Fn(&R) -> MetaData + ?Sized,
+        MetaData: serde::Serialize,
+        R: ApkIPC + Display,
+        F: FnOnce(&Self, &DefaultContext, &DeviceDatabase) -> anyhow::Result<Vec<R>>,
+    {
+        let ctx = DefaultContext::new();
+        ensure_prereq(&ctx, Prereq::SQLDatabaseSetup)?;
+
+        let db = DeviceDatabase::new(&ctx)?;
+
+        if self.json {
+            return self.do_list_json(&ctx, &db, func, meta_func);
+        }
+        for it in func(&self, &ctx, &db)? {
+            println!("{}", it);
+        }
+        Ok(())
+    }
+
+    fn list_receivers(self) -> anyhow::Result<()> {
+        self.do_list(
+            |p, ctx, db| {
+                Ok(if p.only_new {
+                    db.get_receiver_diffs_by_diff_id(p.get_diff_id(ctx, db)?)?
+                        .into_iter()
+                        .filter(|it| p.filter_allow(it))
+                        .map(|it| it.receiver)
+                        .collect::<Vec<Receiver>>()
+                } else {
+                    db.get_receivers()?
+                })
+            },
+            None::<&dyn for<'a> Fn(&'a Receiver) -> String>,
+        )
+    }
+
+    fn list_activities(self) -> anyhow::Result<()> {
+        self.do_list(
+            |p, ctx, db| {
+                Ok(if p.only_new {
+                    db.get_activity_diffs_by_diff_id(p.get_diff_id(ctx, db)?)?
+                        .into_iter()
+                        .filter(|it| p.filter_allow(it))
+                        .map(|it| it.activity)
+                        .collect::<Vec<Activity>>()
+                } else {
+                    db.get_activities()?
+                })
+            },
+            None::<&dyn for<'a> Fn(&'a Activity) -> String>,
+        )
+    }
+
+    fn list_providers(self) -> anyhow::Result<()> {
+        self.do_list(
+            |p, ctx, db| {
+                Ok(if p.only_new {
+                    db.get_provider_diffs_by_diff_id(p.get_diff_id(ctx, db)?)?
+                        .into_iter()
+                        .filter(|it| p.filter_allow(it))
+                        .map(|it| it.provider)
+                        .collect::<Vec<Provider>>()
+                } else {
+                    db.get_providers()?
+                })
+            },
+            Some(&|prov: &Provider| {
+                #[derive(serde::Serialize)]
+                struct MetaData {
+                    authorities: Vec<String>,
+                    permission: Option<String>,
+                    read_permission: Option<String>,
+                    write_permission: Option<String>,
+                }
+
+                let authorities = prov
+                    .get_authorities()
+                    .map(String::from)
+                    .collect::<Vec<String>>();
+                let permission = prov.get_generic_permission().map(String::from);
+                let read_permission = prov
+                    .get_permission_for_mode(PermissionMode::Read)
+                    .map(String::from);
+                let write_permission = prov
+                    .get_permission_for_mode(PermissionMode::Write)
+                    .map(String::from);
+
+                MetaData {
+                    authorities,
+                    permission,
+                    read_permission,
+                    write_permission,
+                }
+            }),
+        )
     }
 }
 
@@ -151,21 +329,26 @@ enum Command {
     /// Find child classes
     #[command()]
     Children(Children),
+
+    /// Find parent classes
+    #[command()]
+    Parents(Parents),
 }
 
 impl List {
-    pub fn run(&self) -> anyhow::Result<()> {
-        match &self.command {
+    pub fn run(self) -> anyhow::Result<()> {
+        match self.command {
             Command::Apks(c) => c.run(),
             Command::SystemServices(c) => c.run(),
             Command::SystemServiceMethods(c) => c.run(),
-            Command::Providers(p) => self.list_providers(p),
-            Command::Receivers(p) => self.list_receivers(p),
-            Command::Activities(p) => self.list_activities(p),
-            Command::Services(p) => self.list_services(p),
+            Command::Providers(p) => p.list_providers(),
+            Command::Receivers(p) => p.list_receivers(),
+            Command::Activities(p) => p.list_activities(),
+            Command::Services(p) => p.list_services(),
             Command::Permissions => self.list_permissions(),
             Command::InterfaceImpl(c) => c.run(),
             Command::Children(c) => c.run(),
+            Command::Parents(c) => c.run(),
         }
     }
 
@@ -179,144 +362,20 @@ impl List {
         }
         Ok(())
     }
+}
 
-    fn do_list_json<F, R, M, MetaData>(
-        &self,
-        ctx: &DefaultContext,
-        db: &DeviceDatabase,
-        func: F,
-        meta_func: Option<&M>,
-    ) -> anyhow::Result<()>
-    where
-        MetaData: serde::Serialize,
-        M: Fn(&R) -> MetaData + ?Sized,
-        R: ApkIPC + Display,
-        F: FnOnce(&DefaultContext, &DeviceDatabase) -> anyhow::Result<Vec<R>>,
-    {
-        let apks: HashMap<i32, Apk> =
-            HashMap::from_iter(db.get_apks()?.into_iter().map(|apk| (apk.id, apk)));
-
-        #[derive(serde::Serialize)]
-        struct JsonOutput<'a, MD: serde::Serialize> {
-            id: i32,
-            class: ClassName,
-            package: Cow<'a, str>,
-            enabled: bool,
-            exported: bool,
-            permission: Option<String>,
-            apk: &'a str,
-            source: &'a str,
-            meta: Option<MD>,
-        }
-
-        let res = func(ctx, db)?
-            .into_iter()
-            .filter_map(|it| {
-                let apk = apks.get(&it.get_apk_id())?;
-
-                let source = if apk.app_name == "android" {
-                    "framework"
-                } else {
-                    apk.device_path.as_squashed_str()
-                };
-
-                let meta = if let Some(f) = &meta_func {
-                    Some(f(&it))
-                } else {
-                    None
-                };
-
-                let mut class = it.get_class_name();
-                let mut package: Cow<'_, str> = Cow::Owned(it.get_package().to_string());
-
-                if package.is_empty() {
-                    if class.has_pkg() {
-                        package = Cow::Owned(class.pkg_as_java().to_string());
-                    } else {
-                        package = Cow::Borrowed(apk.app_name.as_str());
-                    }
-                }
-
-                if !class.has_pkg() {
-                    class = class.with_new_package(&package);
-                }
-
-                let permission = it.get_generic_permission();
-
-                Some(JsonOutput {
-                    id: it.get_id(),
-                    class,
-                    package,
-                    enabled: it.is_enabled(),
-                    exported: it.is_exported(),
-                    permission: permission.map(String::from),
-                    apk: &apk.name,
-                    meta,
-                    source,
-                })
-            })
-            .collect::<Vec<JsonOutput<'_, MetaData>>>();
-
-        serde_json::to_writer(io::stdout(), &res)?;
-
-        Ok(())
-    }
-
-    fn do_list<F, R, M, MetaData>(
-        &self,
-        p: &CommonParams,
-        func: F,
-        meta_func: Option<&M>,
-    ) -> anyhow::Result<()>
-    where
-        M: Fn(&R) -> MetaData + ?Sized,
-        MetaData: serde::Serialize,
-        R: ApkIPC + Display,
-        F: FnOnce(&DefaultContext, &DeviceDatabase) -> anyhow::Result<Vec<R>>,
-    {
-        let ctx = DefaultContext::new();
-        ensure_prereq(&ctx, Prereq::SQLDatabaseSetup)?;
-
-        let db = DeviceDatabase::new(&ctx)?;
-
-        if p.json {
-            return self.do_list_json(&ctx, &db, func, meta_func);
-        }
-        for it in func(&ctx, &db)? {
-            println!("{}", it);
-        }
-        Ok(())
-    }
-
-    fn list_receivers(&self, p: &CommonParams) -> anyhow::Result<()> {
-        self.do_list(
-            p,
-            |ctx, db| {
-                Ok(if p.only_new {
-                    db.get_receiver_diffs_by_diff_id(p.get_diff_id(ctx, db)?)?
-                        .into_iter()
-                        .filter(|it| p.filter_allow(it))
-                        .map(|it| it.receiver)
-                        .collect::<Vec<Receiver>>()
-                } else {
-                    db.get_receivers()?
-                })
-            },
-            None::<&dyn for<'a> Fn(&'a Receiver) -> String>,
-        )
-    }
-
-    fn list_services(&self, p: &ServiceParams) -> anyhow::Result<()> {
+impl ServiceParams {
+    fn list_services(self) -> anyhow::Result<()> {
+        let only_returns_binder = self.only_returns_binder;
         let c = CommonParams {
-            only_public: p.only_public,
-            only_enabled: p.only_enabled,
-            json: p.json,
-            only_new: p.only_new,
-            diff_source: p.diff_source.clone(),
+            only_public: self.only_public,
+            only_enabled: self.only_enabled,
+            json: self.json,
+            only_new: self.only_new,
+            diff_source: self.diff_source.clone(),
         };
-        self.do_list(
-            &c,
-            |ctx, db| {
+        c.do_list(
+            |p, ctx, db| {
                 let services = if p.only_new {
                     db.get_service_diffs_by_diff_id(c.get_diff_id(ctx, db)?)?
                         .into_iter()
@@ -327,7 +386,7 @@ impl List {
                     db.get_services()?
                 };
 
-                if !p.only_returns_binder {
+                if !only_returns_binder {
                     return Ok(services);
                 }
                 let filtered = services
@@ -337,69 +396,6 @@ impl List {
                 Ok(filtered)
             },
             None::<&dyn for<'a> Fn(&'a Service) -> String>,
-        )
-    }
-
-    fn list_activities(&self, p: &CommonParams) -> anyhow::Result<()> {
-        self.do_list(
-            p,
-            |ctx, db| {
-                Ok(if p.only_new {
-                    db.get_activity_diffs_by_diff_id(p.get_diff_id(ctx, db)?)?
-                        .into_iter()
-                        .filter(|it| p.filter_allow(it))
-                        .map(|it| it.activity)
-                        .collect::<Vec<Activity>>()
-                } else {
-                    db.get_activities()?
-                })
-            },
-            None::<&dyn for<'a> Fn(&'a Activity) -> String>,
-        )
-    }
-
-    fn list_providers(&self, p: &CommonParams) -> anyhow::Result<()> {
-        self.do_list(
-            p,
-            |ctx, db| {
-                Ok(if p.only_new {
-                    db.get_provider_diffs_by_diff_id(p.get_diff_id(ctx, db)?)?
-                        .into_iter()
-                        .filter(|it| p.filter_allow(it))
-                        .map(|it| it.provider)
-                        .collect::<Vec<Provider>>()
-                } else {
-                    db.get_providers()?
-                })
-            },
-            Some(&|prov: &Provider| {
-                #[derive(serde::Serialize)]
-                struct MetaData {
-                    authorities: Vec<String>,
-                    permission: Option<String>,
-                    read_permission: Option<String>,
-                    write_permission: Option<String>,
-                }
-
-                let authorities = prov
-                    .get_authorities()
-                    .map(String::from)
-                    .collect::<Vec<String>>();
-                let permission = prov.get_generic_permission().map(String::from);
-                let read_permission = prov
-                    .get_permission_for_mode(PermissionMode::Read)
-                    .map(String::from);
-                let write_permission = prov
-                    .get_permission_for_mode(PermissionMode::Write)
-                    .map(String::from);
-
-                MetaData {
-                    authorities,
-                    permission,
-                    read_permission,
-                    write_permission,
-                }
-            }),
         )
     }
 }

@@ -40,6 +40,17 @@ pub trait GraphDatabase: Sync + Send {
             .collect::<Vec<_>>())
     }
 
+    /// Find all parent classes of the given child class
+    ///
+    /// The source is not optional here, as only a single class should be
+    /// queried for this to make sense
+    fn find_parent_classes_of(
+        &self,
+        child: &ClassName,
+        source: &str,
+    ) -> Result<Vec<ClassSpec>>;
+
+
     /// Find all child classes of the given parent class
     ///
     /// The source is for the source in which the relationship was discovered,
@@ -111,7 +122,7 @@ pub trait GraphDatabase: Sync + Send {
     /// Get all classes defined by the given source
     fn get_classes_for(&self, source: &str) -> Result<Vec<ClassName>>;
 
-    /// Get all methods defined by the given soruce
+    /// Get all methods defined by the given source
     fn get_methods_for(&self, source: &str) -> Result<Vec<MethodSpec>>;
 
     /// Wipe the database

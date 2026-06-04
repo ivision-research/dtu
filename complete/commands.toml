@@ -191,20 +191,30 @@ options = [
 
 [list.permissions]
 
+[list.parents]
+options = [
+    ["class", "c", "GraphClass", ""],
+    ["source", "S", "GraphSource", ""],
+    ["show-source", "", "None", ""],
+    ["json", "j", "None", ""],
+]
+
 [list.interface-impl]
 options = [
     ["class", "c", "GraphClass", ""],
-    ["apk", "a", "Apk", ""],
+    ["source", "S", "GraphSource", ""],
     ["no-fallback", "", "None", ""],
     ["show-source", "", "None", ""],
+    ["json", "j", "None", ""],
 ]
 
 [list.children]
 options = [
     ["class", "c", "GraphClass", ""],
-    ["apk", "a", "Apk", ""],
+    ["source", "S", "GraphSource", ""],
     ["no-fallback", "", "None", ""],
     ["show-source", "", "None", ""],
+    ["json", "j", "None", ""],
 ]
 
 [find]

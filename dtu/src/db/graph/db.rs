@@ -924,25 +924,71 @@ impl GraphDatabase for GraphSqliteDatabase {
         self.get_calls(CallDirection::From, from, None, depth)
     }
 
+    fn find_parent_classes_of(&self, child: &ClassName, source: &str) -> Result<Vec<ClassSpec>> {
+        // Same note as the child search with the UNION ALL, there shouldn't be cycles in well
+        // formed data
+        let q = sql_query(
+            r#"WITH RECURSIVE
+
+    child_class(child_id) AS (
+        SELECT c.id
+        FROM classes AS c
+        JOIN sources AS s
+            ON c.source = s.id
+        WHERE c.name = ?1 AND s.name = ?2
+    ),
+
+    parents(classid, distance) AS (
+        SELECT child_id, 0 FROM child_class
+        UNION ALL
+        SELECT
+            s.parent,
+            p.distance + 1
+        FROM supers AS s
+        JOIN parents AS p
+            ON p.classid = s.child
+    ),
+
+    class_specs(source, name, access_flags) AS (
+        SELECT s.name, c.name, c.access_flags
+        FROM parents AS p
+        JOIN classes AS c
+            ON c.id = p.classid
+        JOIN sources AS s
+            on s.id = c.source
+        WHERE p.distance > 0
+    )
+
+SELECT DISTINCT source, name, access_flags from class_specs
+    "#,
+        )
+        .bind::<Text, _>(child.get_smali_name())
+        .bind::<Text, _>(source);
+
+        self.with_connection(|c| -> Result<Vec<ClassSpec>> {
+            let rows: Vec<ChildClassRow> = query!(q).get_results(c)?;
+            Ok(rows.into_iter().map(ClassSpec::from).collect())
+        })
+    }
+
     fn find_child_classes_of(
         &self,
         parent: &ClassSearch,
         source: Option<&str>,
     ) -> Result<Vec<ClassSpec>> {
-        self.with_connection(|c| -> Result<Vec<ClassSpec>> {
-            let get_class_ids_sql = Self::get_class_ids_sql(parent);
+        let get_class_ids_sql = Self::get_class_ids_sql(parent);
 
-            let src_where = if source.is_some() {
-                "AND s.name = ?"
-            } else {
-                ""
-            };
+        let src_where = if source.is_some() {
+            "AND s.name = ?"
+        } else {
+            ""
+        };
 
-            // Since we're expecting well formed data, the UNION ALL here shouldn't be a problem
-            // since there should never be a cyclic inheritance graph in Java. At least I think. TBH
-            // I'm just asserting that.
-            let mut q = sql_query(format!(
-                r#"WITH RECURSIVE
+        // Since we're expecting well formed data, the UNION ALL here shouldn't be a problem
+        // since there should never be a cyclic inheritance graph in Java. At least I think. TBH
+        // I'm just asserting that.
+        let mut q = sql_query(format!(
+            r#"WITH RECURSIVE
     search_classes(search_class_id) AS ({get_class_ids_sql}),
 
     child_classes(classid, distance) AS (
@@ -966,21 +1012,22 @@ impl GraphDatabase for GraphSqliteDatabase {
     )
 SELECT DISTINCT source, name, access_flags from class_specs
             "#
-            ))
-            .into_boxed();
+        ))
+        .into_boxed();
 
-            let search_name = parent.class.get_smali_name();
+        let search_name = parent.class.get_smali_name();
 
-            q = q.bind::<Text, _>(search_name.into_owned());
+        q = q.bind::<Text, _>(search_name.into_owned());
 
-            if let Some(s) = parent.source {
-                q = q.bind::<Text, _>(String::from(s));
-            }
+        if let Some(s) = parent.source {
+            q = q.bind::<Text, _>(String::from(s));
+        }
 
-            if let Some(s) = source {
-                q = q.bind::<Text, _>(String::from(s));
-            }
+        if let Some(s) = source {
+            q = q.bind::<Text, _>(String::from(s));
+        }
 
+        self.with_connection(|c| -> Result<Vec<ClassSpec>> {
             let rows: Vec<ChildClassRow> = query!(q).get_results(c)?;
 
             Ok(rows.into_iter().map(ClassSpec::from).collect())
@@ -992,18 +1039,17 @@ SELECT DISTINCT source, name, access_flags from class_specs
         iface: &ClassSearch,
         source: Option<&str>,
     ) -> Result<Vec<ClassSpec>> {
-        self.with_connection(|c| {
-            let get_class_ids_sql = Self::get_class_ids_sql(iface);
+        let get_class_ids_sql = Self::get_class_ids_sql(iface);
 
-            let src_where = if source.is_some() {
-                "WHERE s.name = ?"
-            } else {
-                ""
-            };
+        let src_where = if source.is_some() {
+            "WHERE s.name = ?"
+        } else {
+            ""
+        };
 
-            // UNION ALL here is probably safe for the same reason as `supers`
-            let mut q = sql_query(format!(
-                r#" WITH RECURSIVE
+        // UNION ALL here is probably safe for the same reason as `supers`
+        let mut q = sql_query(format!(
+            r#" WITH RECURSIVE
     search_classes(search_class_id) AS ({get_class_ids_sql}),
 
     impl_classes(classid, distance) AS (
@@ -1045,21 +1091,22 @@ SELECT DISTINCT source, name, access_flags from class_specs
     )
 
 SELECT DISTINCT source, name, access_flags from class_specs"#
-            ))
-            .into_boxed();
+        ))
+        .into_boxed();
 
-            let search_name = iface.class.get_smali_name();
+        let search_name = iface.class.get_smali_name();
 
-            q = q.bind::<Text, _>(search_name.into_owned());
+        q = q.bind::<Text, _>(search_name.into_owned());
 
-            if let Some(s) = iface.source {
-                q = q.bind::<Text, _>(String::from(s));
-            }
+        if let Some(s) = iface.source {
+            q = q.bind::<Text, _>(String::from(s));
+        }
 
-            if let Some(s) = source {
-                q = q.bind::<Text, _>(String::from(s));
-            }
+        if let Some(s) = source {
+            q = q.bind::<Text, _>(String::from(s));
+        }
 
+        self.with_connection(|c| {
             let rows: Vec<ChildClassRow> = query!(q).get_results(c)?;
 
             Ok(rows.into_iter().map(ClassSpec::from).collect())
