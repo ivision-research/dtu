@@ -142,16 +142,16 @@
           sourceRoot = ".";
         };
 
-        jadxPkg = pkgs.stdenv.mkDerivation (jarCommon // rec {
+        jadxPkg = pkgs.stdenv.mkDerivation (rec {
             pname = "jadx";
             version = "1.5.5";
             src = jadx;
-            dontUnpack = false;
-            postUnpack = 
-            ''
-                mv source/lib/jadx-${version}-all.jar jadx.jar
+            installPhase = ''
+                mkdir -p "$out/lib"
+                mkdir -p "$out/bin"
+                install -D -m 550 bin/jadx "$out/bin/"
+                install -D -m 550 lib/jadx-${version}-all.jar "$out/lib/"
             '';
-            installPhase = jarInstall pname "jadx.jar";
         });
 
         apktoolPkg = pkgs.stdenv.mkDerivation (jarCommon // rec {
