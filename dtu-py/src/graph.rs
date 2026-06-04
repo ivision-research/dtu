@@ -10,7 +10,7 @@ use dtu::{
             ClassSearch, FieldAccessOp, FieldRef, FieldSearch, FieldSpec, MethodCallPath,
             MethodSearch, MethodSpec,
         },
-        ClassSpec, DefaultGraphDatabase, GraphDatabase,
+        ClassSpec, DefaultGraphDatabase, GraphDatabase, StringSearch,
     },
     utils::ClassName,
 };
@@ -98,7 +98,17 @@ impl GraphDB {
     fn get_methods_for_string(&self, string: &str) -> Result<Vec<PyMethodSpec>> {
         Ok(self
             .0
-            .get_methods_for_string(string)?
+            .get_methods_for_string(StringSearch::Exact(string))?
+            .into_iter()
+            .map(PyMethodSpec::from)
+            .collect())
+    }
+
+    /// Find all methods that contain the given sql glob string
+    fn get_methods_for_string_like(&self, string: &str) -> Result<Vec<PyMethodSpec>> {
+        Ok(self
+            .0
+            .get_methods_for_string(StringSearch::Like(string))?
             .into_iter()
             .map(PyMethodSpec::from)
             .collect())

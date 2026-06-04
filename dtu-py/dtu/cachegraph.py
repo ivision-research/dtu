@@ -148,6 +148,12 @@ class CachingGraphDB:
         """
         return self._maybe_cached(self.wrapped.get_methods_for_string, string)
 
+    def get_methods_for_string_like(self, string: str) -> List[MethodSpec]:
+        """
+        Find all methods that contain the given sql glob string
+        """
+        return self._maybe_cached(self.wrapped.get_methods_for_string_like, string)
+
     def get_methods(
         self,
         /,

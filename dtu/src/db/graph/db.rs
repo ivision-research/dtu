@@ -15,10 +15,10 @@ use crate::db::common::DBThread;
 use crate::db::common::*;
 use crate::db::graph::models::{
     ClassSearch, FieldRef, FieldSearchParams, MethodCallPath, MethodSearch, MethodSearchParams,
-    MethodSpec,
+    MethodSpec, SourcedString,
 };
 use crate::db::graph::models::{FieldAccessOp, FieldSearch, FieldSpec, Source};
-use crate::db::graph::{ClassSpec, GraphDatabase};
+use crate::db::graph::{ClassSpec, GraphDatabase, StringSearch};
 use crate::utils::{path_must_name, path_must_str, ClassName};
 use crate::Context;
 use diesel::prelude::*;
@@ -127,6 +127,88 @@ impl GraphSqliteDatabase {
         match search.source {
             Some(_) => "SELECT c.id FROM classes AS c JOIN sources AS s ON c.source = s.id WHERE c.name = ? AND s.name = ?",
             None => "SELECT id FROM classes WHERE name = ?",
+        }
+    }
+
+    fn get_method_for_string_like(&self, string: &str) -> Result<Vec<MethodSpec>> {
+        let q = query!(strings::table
+            .filter(strings::string.like(string))
+            .inner_join(method_strings::table)
+            .inner_join(methods::table.on(method_strings::method.eq(methods::id)))
+            .inner_join(classes::table.on(classes::id.eq(methods::class)))
+            .inner_join(sources::table)
+            .filter(strings::string.eq(string))
+            .select(MethodSpecRow::as_select()));
+        self.with_connection(|c| -> Result<Vec<MethodSpec>> {
+            let rows = q.load::<MethodSpecRow>(c)?;
+            Ok(rows.into_iter().map(MethodSpec::from).collect())
+        })
+    }
+
+    fn get_method_for_string_eq(&self, string: &str) -> Result<Vec<MethodSpec>> {
+        let q = query!(strings::table
+            .filter(strings::string.eq(string))
+            .inner_join(method_strings::table)
+            .inner_join(methods::table.on(method_strings::method.eq(methods::id)))
+            .inner_join(classes::table.on(classes::id.eq(methods::class)))
+            .inner_join(sources::table)
+            .filter(strings::string.eq(string))
+            .select(MethodSpecRow::as_select()));
+        self.with_connection(|c| -> Result<Vec<MethodSpec>> {
+            let rows = q.load::<MethodSpecRow>(c)?;
+            Ok(rows.into_iter().map(MethodSpec::from).collect())
+        })
+    }
+
+    fn find_strings_like(&self, string: &str, source: Option<&str>) -> Result<Vec<SourcedString>> {
+        match source {
+            None => {
+                let q = query!(strings::table
+                    .filter(strings::string.like(string))
+                    .inner_join(sources::table)
+                    .select(SourcedString::as_select()));
+                Ok(self
+                    .with_connection(|c| q.load(c))?
+                    .into_iter()
+                    .collect::<Vec<_>>())
+            }
+            Some(v) => {
+                let q = query!(strings::table
+                    .filter(strings::string.like(string))
+                    .inner_join(sources::table)
+                    .filter(sources::name.eq(v))
+                    .select(SourcedString::as_select()));
+                Ok(self
+                    .with_connection(|c| q.load(c))?
+                    .into_iter()
+                    .collect::<Vec<_>>())
+            }
+        }
+    }
+
+    fn find_strings_eq(&self, string: &str, source: Option<&str>) -> Result<Vec<SourcedString>> {
+        match source {
+            None => {
+                let q = query!(strings::table
+                    .filter(strings::string.eq(string))
+                    .inner_join(sources::table)
+                    .select(SourcedString::as_select()));
+                Ok(self
+                    .with_connection(|c| q.load(c))?
+                    .into_iter()
+                    .collect::<Vec<_>>())
+            }
+            Some(v) => {
+                let q = query!(strings::table
+                    .filter(strings::string.eq(string))
+                    .inner_join(sources::table)
+                    .filter(sources::name.eq(v))
+                    .select(SourcedString::as_select()));
+                Ok(self
+                    .with_connection(|c| q.load(c))?
+                    .into_iter()
+                    .collect::<Vec<_>>())
+            }
         }
     }
 
@@ -861,19 +943,22 @@ impl GraphDatabase for GraphSqliteDatabase {
         })
     }
 
-    fn get_methods_for_string(&self, string: &str) -> Result<Vec<MethodSpec>> {
-        self.with_connection(|c| -> Result<Vec<MethodSpec>> {
-            let rows = query!(strings::table
-                .filter(strings::string.eq(string))
-                .inner_join(method_strings::table)
-                .inner_join(methods::table.on(method_strings::method.eq(methods::id)))
-                .inner_join(classes::table.on(classes::id.eq(methods::class)))
-                .inner_join(sources::table)
-                .filter(strings::string.eq(string))
-                .select(MethodSpecRow::as_select()))
-            .load::<MethodSpecRow>(c)?;
-            Ok(rows.into_iter().map(MethodSpec::from).collect())
-        })
+    fn find_strings(
+        &self,
+        string: StringSearch,
+        source: Option<&str>,
+    ) -> Result<Vec<SourcedString>> {
+        match string {
+            StringSearch::Exact(s) => self.find_strings_eq(s, source),
+            StringSearch::Like(s) => self.find_strings_like(s, source),
+        }
+    }
+
+    fn get_methods_for_string(&self, string: StringSearch) -> Result<Vec<MethodSpec>> {
+        match string {
+            StringSearch::Exact(s) => self.get_method_for_string_eq(s),
+            StringSearch::Like(s) => self.get_method_for_string_like(s),
+        }
     }
 
     fn get_all_sources(&self) -> Result<HashSet<String>> {
@@ -1111,6 +1196,14 @@ SELECT DISTINCT source, name, access_flags from class_specs"#
 
             Ok(rows.into_iter().map(ClassSpec::from).collect())
         })
+    }
+}
+
+impl<DB: Backend> Selectable<DB> for SourcedString {
+    type SelectExpression = (strings::string, sources::name);
+
+    fn construct_selection() -> Self::SelectExpression {
+        (strings::string, sources::name)
     }
 }
 

@@ -8,6 +8,27 @@ use super::models::*;
 
 pub const FRAMEWORK_SOURCE: &'static str = "framework";
 
+pub enum StringSearch<'a> {
+    Exact(&'a str),
+    Like(&'a str),
+}
+
+impl<'a> From<&'a String> for StringSearch<'a> {
+    fn from(value: &'a String) -> Self {
+        Self::from(value.as_str())
+    }
+}
+
+impl<'a> From<&'a str> for StringSearch<'a> {
+    fn from(value: &'a str) -> Self {
+        if value.contains("%") {
+            Self::Like(value)
+        } else {
+            Self::Exact(value)
+        }
+    }
+}
+
 /// Trait for interfacing with the graph database. The graph database is used
 /// for finding relationships in the analyzed smali files.
 ///
@@ -44,12 +65,7 @@ pub trait GraphDatabase: Sync + Send {
     ///
     /// The source is not optional here, as only a single class should be
     /// queried for this to make sense
-    fn find_parent_classes_of(
-        &self,
-        child: &ClassName,
-        source: &str,
-    ) -> Result<Vec<ClassSpec>>;
-
+    fn find_parent_classes_of(&self, child: &ClassName, source: &str) -> Result<Vec<ClassSpec>>;
 
     /// Find all child classes of the given parent class
     ///
@@ -116,8 +132,15 @@ pub trait GraphDatabase: Sync + Send {
     /// Get all constant strings discovered in the given source
     fn get_strings_for_source(&self, source: &str) -> Result<Vec<String>>;
 
-    /// Get all methods that contain the given string
-    fn get_methods_for_string(&self, string: &str) -> Result<Vec<MethodSpec>>;
+    /// Find all strings that match the given search parameters
+    fn find_strings(
+        &self,
+        string: StringSearch,
+        source: Option<&str>,
+    ) -> Result<Vec<SourcedString>>;
+
+    /// Get all methods that contain a string matching the provided search params
+    fn get_methods_for_string(&self, string: StringSearch) -> Result<Vec<MethodSpec>>;
 
     /// Get all classes defined by the given source
     fn get_classes_for(&self, source: &str) -> Result<Vec<ClassName>>;

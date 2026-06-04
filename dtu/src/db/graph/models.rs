@@ -168,6 +168,13 @@ impl ClassSpec {
     }
 }
 
+#[derive(Queryable, PartialEq, Eq, Hash, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(test, derive(Debug, PartialOrd, Ord))]
+pub struct SourcedString {
+    pub string: String,
+    pub source: String,
+}
+
 #[derive(PartialEq, Eq, Hash, Clone, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(test, derive(Debug, PartialOrd, Ord))]
 pub struct MethodCallPath {

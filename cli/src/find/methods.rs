@@ -6,7 +6,7 @@ use dtu::{
     db::graph::{
         get_default_graphdb,
         models::{FieldAccessOp, FieldSearch, FieldSearchParams},
-        GraphDatabase, MethodSearch,
+        GraphDatabase, MethodSearch, StringSearch,
     },
     prereqs::Prereq,
     utils::{ensure_prereq, ClassName},
@@ -26,6 +26,10 @@ enum Command {
     /// Search by string inclusion
     #[command()]
     ByString(ByString),
+
+    /// Search by string inclusion with sql style globbing
+    #[command()]
+    ByStringLike(ByStringLike),
 
     /// Find methods by name
     #[command()]
@@ -49,11 +53,30 @@ impl Methods {
         match self.command {
             Command::ByField(c) => c.run(ctx),
             Command::ByString(c) => c.run(ctx),
+            Command::ByStringLike(c) => c.run(ctx),
             Command::ByClass(c) => c.run(ctx),
             Command::ByName(c) => c.run(ctx),
             Command::BySource(c) => c.run(ctx),
         }
     }
+}
+
+fn methods_search(
+    ctx: &dyn Context,
+    search: StringSearch,
+    source: &Option<String>,
+) -> anyhow::Result<()> {
+    ensure_prereq(ctx, Prereq::GraphDatabaseSetup)?;
+    let db = get_default_graphdb(ctx)?;
+    let mut methods = db.get_methods_for_string(search)?;
+    if let Some(source) = source {
+        methods = methods
+            .into_iter()
+            .filter(|it| it.source == *source)
+            .collect::<Vec<_>>();
+    }
+    serde_json::to_writer(io::stdout(), &methods)?;
+    Ok(())
 }
 
 #[derive(Args)]
@@ -69,21 +92,36 @@ struct ByString {
 
 impl ByString {
     fn run(mut self, ctx: &dyn Context) -> anyhow::Result<()> {
-        ensure_prereq(ctx, Prereq::GraphDatabaseSetup)?;
         if self.string == "-" {
             self.string.truncate(0);
             io::stdin().read_to_string(&mut self.string)?;
         }
-        let db = get_default_graphdb(ctx)?;
-        let mut methods = db.get_methods_for_string(&self.string)?;
-        if let Some(source) = &self.source {
-            methods = methods
-                .into_iter()
-                .filter(|it| it.source == *source)
-                .collect::<Vec<_>>();
+
+        let search = StringSearch::Exact(&self.string);
+        methods_search(ctx, search, &self.source)
+    }
+}
+
+#[derive(Args)]
+struct ByStringLike {
+    /// String to search for, can be `-` for stdin
+    #[arg()]
+    string: String,
+
+    /// Method source to filter on
+    #[arg(short = 'S', long, value_parser = GraphSourceValueParser)]
+    source: Option<String>,
+}
+
+impl ByStringLike {
+    fn run(mut self, ctx: &dyn Context) -> anyhow::Result<()> {
+        if self.string == "-" {
+            self.string.truncate(0);
+            io::stdin().read_to_string(&mut self.string)?;
         }
-        serde_json::to_writer(io::stdout(), &methods)?;
-        Ok(())
+
+        let search = StringSearch::Like(&self.string);
+        methods_search(ctx, search, &self.source)
     }
 }
 

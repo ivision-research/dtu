@@ -3,7 +3,10 @@ use std::io;
 use anyhow::bail;
 use clap::{self, Args, Subcommand};
 use dtu::{
-    db::graph::{get_default_graphdb, GraphDatabase, MethodSearch, MethodSpec, FRAMEWORK_SOURCE},
+    db::graph::{
+        get_default_graphdb, GraphDatabase, MethodSearch, MethodSpec, StringSearch,
+        FRAMEWORK_SOURCE,
+    },
     prereqs::Prereq,
     utils::{ensure_prereq, ClassName},
     Context,
@@ -23,6 +26,9 @@ enum Command {
     BySource(BySource),
 
     #[command()]
+    Like(Like),
+
+    #[command()]
     ByMethod(ByMethod),
 }
 
@@ -31,7 +37,48 @@ impl Strings {
         match self.command {
             Command::BySource(c) => c.run(ctx),
             Command::ByMethod(c) => c.run(ctx),
+            Command::Like(c) => c.run(ctx),
         }
+    }
+}
+
+#[derive(Args)]
+struct Like {
+    /// An optional source to search
+    #[arg(short = 'S', long, value_parser = GraphSourceValueParser)]
+    source: Option<String>,
+
+    /// String to search for, can be `-` for stdin
+    ///
+    /// Note that % is interpreted by SQL
+    #[arg()]
+    string: String,
+
+    #[arg(short, long)]
+    json: bool,
+}
+
+impl Like {
+    fn run(self, ctx: &dyn Context) -> anyhow::Result<()> {
+        ensure_prereq(ctx, Prereq::GraphDatabaseSetup)?;
+        let db = get_default_graphdb(ctx)?;
+
+        let search = StringSearch::from(&self.string);
+        let strings = db.find_strings(search, ostr(&self.source))?;
+
+        if self.json {
+            serde_json::to_writer(io::stdout(), &strings)?;
+            return Ok(());
+        }
+
+        for s in strings {
+            if self.source.is_some() {
+                println!("{}", s.string.escape_default());
+            } else {
+                println!("{} | {}", s.string.escape_default(), s.source);
+            }
+        }
+        Ok(())
     }
 }
 

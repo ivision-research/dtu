@@ -239,6 +239,11 @@ options = [
 
 [find.methods]
 
+[find.methods.by-string-like]
+options = [
+    ["source", "S", "GraphSource", ""]
+]
+
 [find.methods.by-string]
 options = [
     ["source", "S", "GraphSource", ""]
@@ -275,6 +280,12 @@ options = [
     ["signature", "s", "GraphSignature", ""],
     ["class", "c", "GraphClass", ""],
     ["source", "S", "GraphSource", ""]
+]
+
+[find.strings.like]
+options = [
+    ["source", "S", "GraphSource", ""],
+    ["json", "j", "None", ""]
 ]
 
 [find.strings.by-source]
