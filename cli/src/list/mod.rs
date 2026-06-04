@@ -7,7 +7,7 @@ use clap::{self, Args, Subcommand};
 
 use dtu::db::device::models::{self, Activity, Apk, DiffSource, Provider, Receiver, Service};
 use dtu::db::meta::get_default_metadb;
-use dtu::db::{ApkIPC, DeviceDatabase, PermissionMode, PermissionProtected};
+use dtu::db::{ApkIPC, DeviceDatabase, Diffable, PermissionMode, PermissionProtected};
 use dtu::prereqs::Prereq;
 use dtu::utils::{ensure_prereq, ClassName};
 use dtu::DefaultContext;
@@ -62,6 +62,26 @@ impl CommonParams {
     fn get_diff_id(&self, ctx: &DefaultContext, db: &DeviceDatabase) -> anyhow::Result<i32> {
         let meta = get_default_metadb(ctx)?;
         Ok(get_diff_source(ctx, &meta, db, &self.diff_source)?.id)
+    }
+
+    fn filter_allow<T, U>(&self, val: &T) -> bool
+    where
+        T: AsRef<U> + Diffable + ?Sized,
+        U: ApkIPC,
+    {
+        if self.only_new && val.in_diff() {
+            return false;
+        }
+        let ipc = val.as_ref();
+        if self.only_public && !ipc.is_exported() {
+            return false;
+        }
+
+        if self.only_enabled && !ipc.is_enabled() {
+            return false;
+        }
+
+        true
     }
 }
 
@@ -160,38 +180,10 @@ impl List {
         Ok(())
     }
 
-    fn get_items<F, R>(
-        &self,
-        ctx: &DefaultContext,
-        db: &DeviceDatabase,
-        p: &CommonParams,
-        func: F,
-    ) -> anyhow::Result<Vec<R>>
-    where
-        R: ApkIPC + Display,
-        F: FnOnce(&DefaultContext, &DeviceDatabase) -> anyhow::Result<Vec<R>>,
-    {
-        let unfiltered = func(ctx, db)?;
-
-        Ok(unfiltered
-            .into_iter()
-            .filter(|it| {
-                if p.only_public && !it.is_exported() {
-                    return false;
-                }
-                if p.only_enabled && !it.is_enabled() {
-                    return false;
-                }
-                true
-            })
-            .collect())
-    }
-
     fn do_list_json<F, R, M, MetaData>(
         &self,
         ctx: &DefaultContext,
         db: &DeviceDatabase,
-        p: &CommonParams,
         func: F,
         meta_func: Option<&M>,
     ) -> anyhow::Result<()>
@@ -217,8 +209,7 @@ impl List {
             meta: Option<MD>,
         }
 
-        let res = self
-            .get_items(ctx, db, p, func)?
+        let res = func(ctx, db)?
             .into_iter()
             .filter_map(|it| {
                 let apk = apks.get(&it.get_apk_id())?;
@@ -289,9 +280,9 @@ impl List {
         let db = DeviceDatabase::new(&ctx)?;
 
         if p.json {
-            return self.do_list_json(&ctx, &db, p, func, meta_func);
+            return self.do_list_json(&ctx, &db, func, meta_func);
         }
-        for it in self.get_items(&ctx, &db, p, func)? {
+        for it in func(&ctx, &db)? {
             println!("{}", it);
         }
         Ok(())
@@ -304,6 +295,7 @@ impl List {
                 Ok(if p.only_new {
                     db.get_receiver_diffs_by_diff_id(p.get_diff_id(ctx, db)?)?
                         .into_iter()
+                        .filter(|it| p.filter_allow(it))
                         .map(|it| it.receiver)
                         .collect::<Vec<Receiver>>()
                 } else {
@@ -328,6 +320,7 @@ impl List {
                 let services = if p.only_new {
                     db.get_service_diffs_by_diff_id(c.get_diff_id(ctx, db)?)?
                         .into_iter()
+                        .filter(|it| c.filter_allow(it))
                         .map(|it| it.service)
                         .collect::<Vec<Service>>()
                 } else {
@@ -354,6 +347,7 @@ impl List {
                 Ok(if p.only_new {
                     db.get_activity_diffs_by_diff_id(p.get_diff_id(ctx, db)?)?
                         .into_iter()
+                        .filter(|it| p.filter_allow(it))
                         .map(|it| it.activity)
                         .collect::<Vec<Activity>>()
                 } else {
@@ -371,6 +365,7 @@ impl List {
                 Ok(if p.only_new {
                     db.get_provider_diffs_by_diff_id(p.get_diff_id(ctx, db)?)?
                         .into_iter()
+                        .filter(|it| p.filter_allow(it))
                         .map(|it| it.provider)
                         .collect::<Vec<Provider>>()
                 } else {

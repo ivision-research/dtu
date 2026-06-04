@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use dtu_proc_macro::sql_db_row;
 
 use crate::db::common::{
-    ApkComponent, ApkIPC, ApkIPCKind, Enablable, Exportable, Idable, PermissionMode,
+    ApkComponent, ApkIPC, ApkIPCKind, Diffable, Enablable, Exportable, Idable, PermissionMode,
     PermissionProtected,
 };
 use crate::db::graph::FRAMEWORK_SOURCE;
@@ -78,6 +78,12 @@ pub struct DiffedPermission {
     pub exists_in_diff: bool,
     pub protection_level_matches_diff: bool,
     pub diff_protection_level: Option<String>,
+}
+
+impl Diffable for DiffedPermission {
+    fn in_diff(&self) -> bool {
+        self.exists_in_diff
+    }
 }
 
 impl Idable for DiffedPermission {
@@ -222,6 +228,12 @@ pub struct DiffedApk {
     pub exists_in_diff: bool,
 }
 
+impl Diffable for DiffedApk {
+    fn in_diff(&self) -> bool {
+        self.exists_in_diff
+    }
+}
+
 impl Idable for DiffedApk {
     fn get_id(&self) -> i32 {
         self.apk.id
@@ -313,6 +325,12 @@ pub struct DiffedReceiver {
     pub diff_permission: Option<String>,
 }
 
+impl Diffable for DiffedReceiver {
+    fn in_diff(&self) -> bool {
+        self.exists_in_diff
+    }
+}
+
 impl Idable for DiffedReceiver {
     fn get_id(&self) -> i32 {
         self.receiver.id
@@ -393,6 +411,12 @@ pub struct DiffedService {
     pub diff_permission: Option<String>,
 }
 
+impl Diffable for DiffedService {
+    fn in_diff(&self) -> bool {
+        self.exists_in_diff
+    }
+}
+
 impl Idable for DiffedService {
     fn get_id(&self) -> i32 {
         self.service.id
@@ -471,6 +495,12 @@ pub struct DiffedActivity {
     pub exported_matches_diff: bool,
     pub permission_matches_diff: bool,
     pub diff_permission: Option<String>,
+}
+
+impl Diffable for DiffedActivity {
+    fn in_diff(&self) -> bool {
+        self.exists_in_diff
+    }
 }
 
 impl Idable for DiffedActivity {
@@ -670,6 +700,12 @@ pub struct DiffedProvider {
     pub diff_read_permission: Option<String>,
 }
 
+impl Diffable for DiffedProvider {
+    fn in_diff(&self) -> bool {
+        self.exists_in_diff
+    }
+}
+
 impl Idable for DiffedProvider {
     fn get_id(&self) -> i32 {
         self.provider.id
@@ -821,6 +857,12 @@ pub struct DiffedSystemServiceMethod {
     pub hash_matches_diff: UnknownBool,
 }
 
+impl Diffable for DiffedSystemServiceMethod {
+    fn in_diff(&self) -> bool {
+        self.exists_in_diff
+    }
+}
+
 impl Idable for DiffedSystemServiceMethod {
     fn get_id(&self) -> i32 {
         self.method.id
@@ -894,6 +936,12 @@ pub struct SystemServiceDiff {
 pub struct DiffedSystemService {
     pub service: SystemService,
     pub exists_in_diff: bool,
+}
+
+impl Diffable for DiffedSystemService {
+    fn in_diff(&self) -> bool {
+        self.exists_in_diff
+    }
 }
 
 impl Idable for DiffedSystemService {

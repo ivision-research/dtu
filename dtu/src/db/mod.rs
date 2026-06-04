@@ -2,7 +2,7 @@
 mod common;
 pub use common::{
     ApkComponent, ApkIPC, ApkIPCKind, Enablable, Error, Exportable, Idable, PermissionMode,
-    PermissionProtected, Result,
+    PermissionProtected, Diffable, Result,
 };
 
 pub mod device;

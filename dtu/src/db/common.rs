@@ -170,6 +170,12 @@ pub enum ApkIPCKind {
     Service,
 }
 
+/// A trait for anything that can be included in the diff
+pub trait Diffable {
+    /// Whether the item exists in the diff or not
+    fn in_diff(&self) -> bool;
+}
+
 /// A trait for Receivers, Activities, and Services
 pub trait ApkIPC: ApkComponent + Exportable + PermissionProtected + Enablable + Idable {
     fn get_class_name(&self) -> ClassName;
