@@ -1,7 +1,8 @@
 use crate::parsers::simple_error;
-use crate::utils::{find_fully_qualified_apk, prompt_choice};
+use crate::utils::prompt_choice;
 use clap::builder::{NonEmptyStringValueParser, TypedValueParser};
 use dtu::db::device::models::Apk;
+use dtu::db::meta::get_default_metadb;
 use dtu::db::{DeviceDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::utils::DevicePath;
@@ -27,8 +28,32 @@ impl TypedValueParser for DevicePathValueParser {
             return Ok(DevicePath::from_squashed(val));
         }
 
+        let is_apk = val.ends_with(".apk");
+
         let ctx = DefaultContext::new();
-        let apks = find_fully_qualified_apk(&ctx, &val).map_err(simple_error)?;
+        let meta = get_default_metadb(&ctx).map_err(simple_error)?;
+        meta.ensure_prereq(Prereq::SQLDatabaseSetup)
+            .map_err(simple_error)?;
+        let db = DeviceDatabase::new(&ctx).map_err(simple_error)?;
+        // We do it this way in the off chance that the `*.apk` is the same
+        let apks = db
+            .get_apks()
+            .map_err(simple_error)?
+            .into_iter()
+            .filter_map(|it| {
+                if is_apk {
+                    if it.name == val {
+                        Some(it.device_path)
+                    } else {
+                        None
+                    }
+                } else if it.app_name == val {
+                    Some(it.device_path)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
         if apks.is_empty() {
             return Err(simple_error(format!("no apks matching {}", val)));
         }

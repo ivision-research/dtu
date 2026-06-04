@@ -266,19 +266,19 @@ pub fn find_fully_qualified_apk(
 ) -> anyhow::Result<Vec<DevicePath>> {
     let dir = ctx.get_apks_dir()?;
     let vals = fs::read_dir(&dir)?
-        .filter(|it| {
-            it.as_ref()
-                .map(|d| {
-                    let path = d.path();
-                    if !path.is_file() {
-                        return false;
-                    }
-                    let path = DevicePath::from_path(&path);
-                    path.map_or(false, |it| it.device_file_name() == apk_name)
-                })
-                .unwrap_or(false)
+        .filter_map(|it| {
+            let ent = it.ok()?;
+            let path = ent.path();
+            if !path.is_file() {
+                return None;
+            }
+            let device_path = DevicePath::from_path(&path).ok()?;
+            if device_path.device_file_name() != apk_name {
+                return None;
+            }
+
+            Some(device_path)
         })
-        .map(|it| DevicePath::from_path(&it.unwrap().path()).unwrap())
         .collect::<Vec<DevicePath>>();
 
     Ok(vals)
