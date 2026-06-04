@@ -33,7 +33,7 @@ pub struct SystemServices {
     #[arg(short = 'n', long)]
     only_new: bool,
 
-    /// Set the diff source (only valid with -N/--only-new) otherwise the emulator is the default
+    /// Set the diff source (only valid with -n/--only-new) otherwise the emulator is the default
     #[arg(short = 'S', long, value_parser = DiffSourceValueParser)]
     diff_source: Option<DiffSource>,
 

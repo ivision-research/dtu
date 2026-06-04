@@ -2,12 +2,17 @@ use std::io::{self};
 
 use clap::{self, Args, Subcommand};
 use dtu::{
-    Context, db::graph::{
-        GraphDatabase, MethodSearch, get_default_graphdb, models::{FieldAccessOp, FieldSearch, FieldSearchParams}
-    }, prereqs::Prereq, utils::{ClassName, ensure_prereq}
+    db::graph::{
+        get_default_graphdb,
+        models::{FieldAccessOp, FieldSearch, FieldSearchParams},
+        GraphDatabase, MethodSearch,
+    },
+    prereqs::Prereq,
+    utils::{ensure_prereq, ClassName},
+    Context,
 };
 
-use crate::utils::ostr;
+use crate::{parsers::GraphSourceValueParser, utils::ostr};
 
 #[derive(Args)]
 pub struct Fields {
@@ -58,7 +63,7 @@ pub struct ByMethod {
     only_read: bool,
 
     /// Source containing the class
-    #[arg(short = 'S', long)]
+    #[arg(short = 'S', long, value_parser = GraphSourceValueParser)]
     source: Option<String>,
 }
 
@@ -115,7 +120,7 @@ pub struct BySpec {
     name: Option<String>,
 
     /// Source containing the class
-    #[arg(short = 'S', long)]
+    #[arg(short = 'S', long, value_parser = GraphSourceValueParser)]
     source: Option<String>,
 }
 

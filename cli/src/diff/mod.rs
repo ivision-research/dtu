@@ -3,14 +3,9 @@ use dtu::db::{DeviceDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
 use dtu::{Context, DefaultContext};
 
-mod apks;
-use apks::Apks;
 use dtu::db::device::models::DiffSource;
 use dtu::db::device::EMULATOR_DIFF_SOURCE;
 use dtu::utils::{ClassName, SmaliMethodSignatureIterator};
-
-mod system_services;
-use system_services::SystemServices;
 
 mod ui;
 use ui::UI;
@@ -25,12 +20,6 @@ pub struct Diff {
 enum Command {
     #[command()]
     UI(UI),
-
-    #[command()]
-    SystemServices(SystemServices),
-
-    #[command()]
-    Apks(Apks),
 }
 
 impl Diff {
@@ -39,8 +28,6 @@ impl Diff {
         let meta = MetaSqliteDatabase::new(&ctx)?;
         match &self.command {
             Command::UI(c) => c.run(&ctx, &meta),
-            Command::SystemServices(c) => c.run(&ctx, &meta),
-            Command::Apks(c) => c.run(&ctx, &meta),
         }
     }
 }

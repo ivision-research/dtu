@@ -5,6 +5,7 @@ use dtu::Context;
 use sha2::{Digest, Sha256};
 
 use crate::find::utils::get_method_search;
+use crate::parsers::GraphSourceValueParser;
 use crate::printer::{color, Printer};
 use crate::utils::{oshash, ostr, project_cacheable};
 use dtu::db::graph::{GraphDatabase, MethodCallPath};
@@ -13,11 +14,11 @@ use dtu::utils::{hex, ClassName};
 #[derive(Args)]
 pub struct FindCallers {
     /// The source of the method to find callers to
-    #[arg(short = 'M', long)]
+    #[arg(short = 'M', long, value_parser = GraphSourceValueParser)]
     method_source: Option<String>,
 
     /// The source of the calls
-    #[arg(short = 'C', long)]
+    #[arg(short = 'C', long, value_parser = GraphSourceValueParser)]
     call_source: Option<String>,
 
     /// Method name
@@ -107,10 +108,10 @@ impl FindCallers {
 #[derive(Args)]
 pub struct FindOutgoingCalls {
     /// Only show outgoing calls that end up in this source
-    #[arg(short = 'T', long)]
+    #[arg(short = 'T', long, value_parser = GraphSourceValueParser)]
     into_source: Option<String>,
 
-    #[arg(short = 'L', long)]
+    #[arg(short = 'L', long, value_parser = GraphSourceValueParser)]
     /// Specify the source for the provided class or method
     leaving_source: Option<String>,
 

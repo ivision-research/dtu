@@ -88,7 +88,7 @@ options = [
 
 [graph.remove-source]
 options = [
-    ["apk", "a", "GraphSource", ""],
+    ["source", "S", "GraphSource", ""],
 ]
 
 [meta]
@@ -154,7 +154,7 @@ options = [
 
 [list.providers]
 options = [
-    ["only-new", "N", "None", ""],
+    ["only-new", "n", "None", ""],
     ["diff-source", "S", "DiffSource", ""],
     ["json", "j", "None", ""],
     ["only-public", "P", "None", ""],
@@ -163,7 +163,7 @@ options = [
 
 [list.receivers]
 options = [
-    ["only-new", "N", "None", ""],
+    ["only-new", "n", "None", ""],
     ["diff-source", "S", "DiffSource", ""],
     ["json", "j", "None", ""],
     ["only-public", "P", "None", ""],
@@ -172,7 +172,7 @@ options = [
 
 [list.activities]
 options = [
-    ["only-new", "N", "None", ""],
+    ["only-new", "n", "None", ""],
     ["diff-source", "S", "DiffSource", ""],
     ["json", "j", "None", ""],
     ["only-public", "P", "None", ""],
@@ -181,7 +181,7 @@ options = [
 
 [list.services]
 options = [
-    ["only-new", "N", "None", ""],
+    ["only-new", "n", "None", ""],
     ["diff-source", "S", "DiffSource", ""],
     ["json", "j", "None", ""],
     ["only-public", "P", "None", ""],
@@ -269,7 +269,7 @@ options = [
 
 [find.strings.by-source]
 options = [
-    ["apk", "a", "Apk", ""]
+    ["source", "S", "GraphSource", ""]
 ]
 
 [find.class]
@@ -398,7 +398,7 @@ options = [
 [diff.system-services.methods]
 options = [
     ["service", "s", "SystemService", ""],
-    ["only-new", "N", "None", ""],
+    ["only-new", "n", "None", ""],
     ["only-modified", "M", "None", ""],
     ["only-interesting", "I", "None", ""],
     ["only-binders", "B", "None", ""],

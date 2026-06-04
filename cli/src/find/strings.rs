@@ -5,11 +5,11 @@ use clap::{self, Args, Subcommand};
 use dtu::{
     db::graph::{get_default_graphdb, GraphDatabase, MethodSearch, MethodSpec, FRAMEWORK_SOURCE},
     prereqs::Prereq,
-    utils::{ensure_prereq, ClassName, DevicePath},
+    utils::{ensure_prereq, ClassName},
     Context,
 };
 
-use crate::{parsers::DevicePathValueParser, utils::ostr};
+use crate::{parsers::GraphSourceValueParser, utils::ostr};
 
 #[derive(Args)]
 pub struct Strings {
@@ -37,29 +37,25 @@ impl Strings {
 
 #[derive(Args)]
 struct BySource {
-    /// The APK to search, otherwise the framework source is used
-    #[arg(short, long, value_parser = DevicePathValueParser)]
-    apk: Option<DevicePath>,
+    /// The source to search, defaults to framework if unset
+    #[arg(short = 'S', long, value_parser = GraphSourceValueParser)]
+    source: Option<String>,
 }
 
 impl BySource {
     fn run(self, ctx: &dyn Context) -> anyhow::Result<()> {
         ensure_prereq(ctx, Prereq::GraphDatabaseSetup)?;
         let db = get_default_graphdb(ctx)?;
-        let src = self.get_source();
+        let src = self
+            .source
+            .as_ref()
+            .map(String::as_str)
+            .unwrap_or(FRAMEWORK_SOURCE);
         let strings = db.get_strings_for_source(src)?;
         for s in strings {
             println!("{s}");
         }
         Ok(())
-    }
-
-    fn get_source(&self) -> &str {
-        if let Some(ref apk) = self.apk {
-            apk.as_squashed_str()
-        } else {
-            FRAMEWORK_SOURCE
-        }
     }
 }
 
@@ -78,7 +74,7 @@ struct ByMethod {
     class: Option<ClassName>,
 
     /// An optional source
-    #[arg(short = 'S', long)]
+    #[arg(short = 'S', long, value_parser = GraphSourceValueParser)]
     source: Option<String>,
 }
 

@@ -4,9 +4,8 @@ use dtu::db::MetaDatabase;
 use dtu::prereqs::Prereq;
 use dtu::DefaultContext;
 
-use crate::parsers::DevicePathValueParser;
+use crate::parsers::GraphSourceValueParser;
 use dtu::db::graph::{get_default_graphdb, GraphDatabase};
-use dtu::utils::DevicePath;
 
 mod monitor;
 mod setup;
@@ -53,16 +52,16 @@ impl Graph {
 
 #[derive(Args)]
 struct RemoveSource {
-    /// The APK source to remove
-    #[arg(short, long, value_parser = DevicePathValueParser)]
-    apk: DevicePath,
+    /// The source to remove
+    #[arg(short = 'S', long, value_parser = GraphSourceValueParser)]
+    source: String,
 }
 
 impl RemoveSource {
     fn run(&self) -> anyhow::Result<()> {
         let ctx = DefaultContext::new();
         let db = get_default_graphdb(&ctx)?;
-        db.remove_source(self.apk.as_squashed_str())?;
+        db.remove_source(&self.source)?;
         Ok(())
     }
 }

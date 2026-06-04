@@ -13,7 +13,7 @@ use dtu::{
     Context,
 };
 
-use crate::utils::ostr;
+use crate::{parsers::GraphSourceValueParser, utils::ostr};
 
 #[derive(Args)]
 pub struct Methods {
@@ -63,7 +63,7 @@ struct ByString {
     string: String,
 
     /// Method source to filter on
-    #[arg(short = 'S', long)]
+    #[arg(short = 'S', long, value_parser = GraphSourceValueParser)]
     source: Option<String>,
 }
 
@@ -89,7 +89,7 @@ impl ByString {
 
 #[derive(Args)]
 struct BySource {
-    #[arg(short = 'S', long)]
+    #[arg(short = 'S', long, value_parser = GraphSourceValueParser)]
     source: String,
 }
 
@@ -109,7 +109,7 @@ struct ByName {
     name: String,
 
     /// Source to filter on
-    #[arg(short = 'S', long)]
+    #[arg(short = 'S', long, value_parser = GraphSourceValueParser)]
     source: Option<String>,
 }
 
@@ -133,16 +133,21 @@ impl ByName {
 struct ByClass {
     #[arg(short, long)]
     class: ClassName,
+
+    /// Source to filter on
+    #[arg(short = 'S', long, value_parser = GraphSourceValueParser)]
+    source: Option<String>,
 }
 
 impl ByClass {
     fn run(self, ctx: &dyn Context) -> anyhow::Result<()> {
         ensure_prereq(ctx, Prereq::GraphDatabaseSetup)?;
         let graphdb = get_default_graphdb(ctx)?;
-        let search = match MethodSearch::new_from_opts(Some(&self.class), None, None, None) {
-            Ok(v) => v,
-            Err(e) => bail!("{e}"),
-        };
+        let search =
+            match MethodSearch::new_from_opts(Some(&self.class), None, None, ostr(&self.source)) {
+                Ok(v) => v,
+                Err(e) => bail!("{e}"),
+            };
 
         let methods = graphdb.get_methods(&search)?;
         serde_json::to_writer(io::stdout(), &methods)?;
@@ -168,7 +173,7 @@ pub struct ByField {
     #[arg(short = 'R', long = "only-read")]
     only_read: bool,
 
-    #[arg(short = 'S', long)]
+    #[arg(short = 'S', long, value_parser = GraphSourceValueParser)]
     source: Option<String>,
 }
 

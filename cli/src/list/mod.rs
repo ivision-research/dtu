@@ -39,10 +39,10 @@ pub struct List {
 #[derive(Args)]
 struct CommonParams {
     /// Only show entries that don't exist in the given diff source (or emulator by default)
-    #[arg(short = 'N', long)]
+    #[arg(short = 'n', long)]
     only_new: bool,
 
-    /// Set the diff source (only valid with -N/--only-new) otherwise the emulator is the default
+    /// Set the diff source (only valid with -n/--only-new) otherwise the emulator is the default
     #[arg(short = 'S', long, value_parser = DiffSourceValueParser)]
     diff_source: Option<DiffSource>,
 
@@ -88,7 +88,7 @@ impl CommonParams {
 #[derive(Args)]
 struct ServiceParams {
     /// Only show entries that don't exist in the given diff source (or emulator by default)
-    #[arg(short = 'N', long)]
+    #[arg(short = 'n', long)]
     only_new: bool,
 
     #[arg(short = 'S', long, value_parser = DiffSourceValueParser)]

@@ -10,6 +10,9 @@ pub use system_service::SystemServiceValueParser;
 mod app_activity;
 pub use app_activity::AppActivityValueParser;
 
+mod graph_source;
+pub use graph_source::GraphSourceValueParser;
+
 mod provider;
 
 mod diff_source;
