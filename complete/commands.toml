@@ -230,6 +230,10 @@ options = [
 [find.methods]
 
 [find.methods.by-string]
+options = [
+    ["source", "S", "GraphSource", ""]
+]
+
 [find.methods.by-field]
 options = [
     ["class", "c", "GraphClass", ""],
@@ -241,6 +245,7 @@ options = [
 
 [find.methods.by-name]
 options = [
+    ["source", "S", "GraphSource", ""],
     ["name", "n", "GraphMethod", ""]
 ]
 [find.methods.by-class]

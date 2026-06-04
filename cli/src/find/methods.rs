@@ -61,6 +61,10 @@ struct ByString {
     /// String to search for, can be `-` for stdin
     #[arg()]
     string: String,
+
+    /// Method source to filter on
+    #[arg(short = 'S', long)]
+    source: Option<String>,
 }
 
 impl ByString {
@@ -71,7 +75,13 @@ impl ByString {
             io::stdin().read_to_string(&mut self.string)?;
         }
         let db = get_default_graphdb(ctx)?;
-        let methods = db.get_methods_for_string(&self.string)?;
+        let mut methods = db.get_methods_for_string(&self.string)?;
+        if let Some(source) = &self.source {
+            methods = methods
+                .into_iter()
+                .filter(|it| it.source == *source)
+                .collect::<Vec<_>>();
+        }
         serde_json::to_writer(io::stdout(), &methods)?;
         Ok(())
     }
@@ -97,16 +107,21 @@ impl BySource {
 struct ByName {
     #[arg(short, long)]
     name: String,
+
+    /// Source to filter on
+    #[arg(short = 'S', long)]
+    source: Option<String>,
 }
 
 impl ByName {
     fn run(self, ctx: &dyn Context) -> anyhow::Result<()> {
         ensure_prereq(ctx, Prereq::GraphDatabaseSetup)?;
         let graphdb = get_default_graphdb(ctx)?;
-        let search = match MethodSearch::new_from_opts(None, Some(&self.name), None, None) {
-            Ok(v) => v,
-            Err(e) => bail!("{e}"),
-        };
+        let search =
+            match MethodSearch::new_from_opts(None, Some(&self.name), None, ostr(&self.source)) {
+                Ok(v) => v,
+                Err(e) => bail!("{e}"),
+            };
 
         let methods = graphdb.get_methods(&search)?;
         serde_json::to_writer(io::stdout(), &methods)?;
