@@ -278,6 +278,8 @@ class GraphDB:
 
     def get_all_sources(self) -> set[str]: ...
 
+    def find_parent_classes_of(self, child: str, source: str) -> list[ClassSpec]: ...
+
     def find_child_classes_of(
         self,
         parent: str,

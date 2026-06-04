@@ -80,6 +80,29 @@ class CachingGraphDB:
         """
         return self._maybe_cached(self.wrapped.get_method_field_refs, method)
 
+    def find_parent_classes_of(self, child: str, src: str):
+        """
+        Find all parent classes of the given child class
+        """
+        self._maybe_cached(self.wrapped.find_parent_classes_of, child, src)
+
+    def find_child_classes_of(
+        self,
+        parent: str,
+        *,
+        parent_source: Optional[str] = None,
+        child_source: Optional[str] = None,
+    ):
+        """
+        Find all child classes of the given parent class
+        """
+        self._maybe_cached(
+            self.wrapped.find_child_classes_of,
+            parent,
+            parent_source=parent_source,
+            child_source=child_source,
+        )
+
     def find_callers(
         self,
         /,

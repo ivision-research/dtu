@@ -114,6 +114,18 @@ impl GraphDB {
         Ok(self.0.get_strings_for_method(method)?)
     }
 
+    /// Find all parent classes of the given child class
+    #[pyo3(signature = (child, source))]
+    fn find_parent_classes_of(&self, child: &str, source: &str) -> Result<Vec<PyClassSpec>> {
+        let class = ClassName::from(child);
+        Ok(self
+            .0
+            .find_parent_classes_of(&class, source)?
+            .into_iter()
+            .map(PyClassSpec::from)
+            .collect())
+    }
+
     /// Find all child classes of the given parent class
     #[pyo3(signature = (parent, *, parent_source = None, child_source = None))]
     fn find_child_classes_of(
