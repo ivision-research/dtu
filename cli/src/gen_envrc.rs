@@ -7,6 +7,7 @@ use anyhow::bail;
 use clap::{self, Args};
 use dtu::adb::{Adb, ExecAdb};
 use dtu::command::quote;
+use dtu::db::device::EMULATOR_DIFF_SOURCE;
 use dtu::{Context, DefaultContext};
 use promptly::{prompt, prompt_default};
 
@@ -16,12 +17,7 @@ use promptly::{prompt, prompt_default};
 #[derive(Args)]
 pub struct GenEnvrc {
     /// Prompt before writing the .envrc file or on multiple devices
-    #[arg(
-        short = 'P',
-        long,
-        action = clap::ArgAction::SetTrue,
-        default_value_t = false,
-    )]
+    #[arg(short = 'P', long)]
     prompt: bool,
 
     /// Sets the project home - defaults to the current working directory
@@ -37,6 +33,7 @@ pub struct GenEnvrc {
 struct EnvrcWriter<'a> {
     project_home: Cow<'a, str>,
     android_serial: Cow<'a, str>,
+    diff_source: Cow<'a, str>,
 }
 
 impl<'a> EnvrcWriter<'a> {
@@ -45,6 +42,12 @@ impl<'a> EnvrcWriter<'a> {
             to,
             "export DTU_PROJECT_HOME={}\n",
             quote(self.project_home.as_ref())
+        )?;
+
+        write!(
+            to,
+            "export DTU_DIFF_SOURCE={}\n",
+            quote(self.diff_source.as_ref())
         )?;
 
         write!(
@@ -63,10 +66,12 @@ impl GenEnvrc {
         let adb = ExecAdb::builder(&ctx).build();
         let project_home = self.get_project_home(&ctx)?;
         let android_serial = self.get_device_serial(&ctx, &adb)?;
+        let diff_source = self.get_diff_source(&ctx);
 
         let w = EnvrcWriter {
             project_home,
             android_serial,
+            diff_source,
         };
         if self.prompt {
             if !self.prompt_accepted(&w) {
@@ -82,6 +87,14 @@ impl GenEnvrc {
             .open(".envrc")?;
 
         w.write_envrc(&mut f)
+    }
+
+    fn get_diff_source(&self, ctx: &dyn Context) -> Cow<'_, str> {
+        if let Some(env) = ctx.maybe_get_env("DTU_DIFF_SOURCE") {
+            Cow::Owned(env)
+        } else {
+            Cow::Borrowed(EMULATOR_DIFF_SOURCE)
+        }
     }
 
     fn prompt_accepted(&self, w: &EnvrcWriter) -> bool {
