@@ -8,6 +8,8 @@ use clap::{self, Args, Subcommand};
 use dtu::utils::{path_must_str, proj_home_relative, ClassName, DevicePath};
 use dtu::{Context, DefaultContext};
 
+use crate::parsers::DevicePathValueParser;
+
 #[derive(Args)]
 pub struct Scripting {
     #[command(subcommand)]
@@ -22,6 +24,10 @@ enum Command {
 
     /// Attempt to extract DTU_PROJECT_HOME from a path based on heuristics
     ExtractProjectHome(ExtractProjectHome),
+
+    /// Retrieve a valid graph source for an APK
+    #[command()]
+    ApkSource(ApkSource),
 
     /// Unsquash a squashed path
     #[command()]
@@ -54,7 +60,21 @@ impl Scripting {
             Command::JavaClass(c) => c.run(),
             Command::CacheDir(c) => c.run(),
             Command::ExtractProjectHome(c) => c.run(),
+            Command::ApkSource(c) => c.run(),
         }
+    }
+}
+
+#[derive(Args)]
+struct ApkSource {
+    #[arg(value_parser = DevicePathValueParser)]
+    path: DevicePath,
+}
+
+impl ApkSource {
+    fn run(self) -> anyhow::Result<()> {
+        println!("{}", self.path.as_squashed_str());
+        return Ok(());
     }
 }
 
