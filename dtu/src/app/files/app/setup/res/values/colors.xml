@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="gruvboxBg">#282828</color>
+    <color name="gruvboxFg">#ebdbb2</color>
+
+    <color name="gruvboxBlack">#282828</color>
+    <color name="gruvboxRed">#cc241d</color>
+    <color name="gruvboxGreen">#98971a</color>
+    <color name="gruvboxYellow">#d79921</color>
+    <color name="gruvboxBlue">#458588</color>
+    <color name="gruvboxMagenta">#b16286</color>
+    <color name="gruvboxCyan">#689d6a</color>
+    <color name="gruvboxWhite">#a89984</color>
+
+    <color name="gruvboxBrBlack">#928374</color>
+    <color name="gruvboxBrRed">#fb4934</color>
+    <color name="gruvboxBrGreen">#b8bb26</color>
+    <color name="gruvboxBrYellow">#fabd2f</color>
+    <color name="gruvboxBrBlue">#83a598</color>
+    <color name="gruvboxBrMagenta">#d3869b</color>
+    <color name="gruvboxBrCyan">#8ec07c</color>
+    <color name="gruvboxBrWhite">#ebdbb2</color>
+
+    <color name="gruvboxOrange">#fe8019</color>
+    <color name="gruvboxOrangeDark">#d65d0e</color>
+
+    <color name="colorPrimary">#458588</color>
+    <color name="colorPrimaryDark">#282828</color>
+    <color name="colorAccent">#fe8019</color>
+</resources>
