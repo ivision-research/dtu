@@ -1,4 +1,4 @@
-package {{ app_pkg }}
+package c.arve
 
 import android.content.Intent
 import java.lang.Exception

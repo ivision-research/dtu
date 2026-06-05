@@ -20,6 +20,7 @@
 - Added a few more `-j/--json`s
 - Started adding a hidden `_scripting`/`_s` command that does some metadata related tasks for making shell scripts easier to write
 - Test app look updated
+- Make .tar.zstd files at build time for test app resources
 
 # 5.0.0
 

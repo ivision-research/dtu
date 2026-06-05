@@ -1,4 +1,4 @@
-package {{ app_pkg }}
+package c.arve
 
 import android.app.Service
 import android.content.Context

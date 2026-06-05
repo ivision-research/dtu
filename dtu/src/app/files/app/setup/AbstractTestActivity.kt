@@ -1,4 +1,4 @@
-package {{ app_pkg }}
+package c.arve
 
 
 import android.content.*
@@ -11,7 +11,7 @@ import android.text.SpannableString
 import android.text.style.ForegroundColorSpan
 import android.text.method.ScrollingMovementMethod
 
-import {{ app_pkg }}.databinding.GenericTestActivityBinding
+import c.arve.databinding.GenericTestActivityBinding
 
 /**
  * Abstract class for all generic tests. This provides a pretty basic

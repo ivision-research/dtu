@@ -1,4 +1,4 @@
-package {{ app_pkg }}
+package c.arve
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -85,7 +85,7 @@ class Server : Service() {
     }
 
     class ListenThread(
-        private val context: Context, private val executor: Executor, private val port: Int = {{ app_server_port }}
+        private val context: Context, private val executor: Executor, private val port: Int = Config.serverPort
     ) : Thread() {
         override fun run() {
             super.run()
@@ -638,7 +638,7 @@ sealed class Request {
 
         private fun getIntent(ctx: Context): Intent {
             val clazz = try {
-                Class.forName("{{ app_pkg }}.${name}Service")
+                Class.forName("c.arve.${name}Service")
             } catch (e: ClassNotFoundException) {
                 throw RequestException("no test named $name")
             }

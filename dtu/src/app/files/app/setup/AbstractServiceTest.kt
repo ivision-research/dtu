@@ -1,6 +1,4 @@
-package {{ app_pkg }}
-
-// Automatically generated. Changes may be overwritten!
+package c.arve
 
 import android.os.Bundle
 import android.os.IBinder
@@ -60,6 +58,13 @@ abstract class AbstractServiceTest(
     abstract fun doTestConnected(binder: IBinder, extras: Bundle?): Boolean
 
     open fun updateIntent(it: Intent, extras: Bundle?) {}
+
+    override fun cleanup() {
+        if (binder != null) {
+            context.unbindService(this)
+            binder = null
+        }
+    }
 
     override fun doTest(extras: Bundle?): Boolean {
         if (connecting.get()) {

@@ -17,12 +17,7 @@ use dtu::{run_cmd, Context, DefaultContext};
 #[derive(Args)]
 pub struct Setup {
     /// Force the test app to be recreated if it exists
-    #[arg(
-        short,
-        long,
-        action = clap::ArgAction::SetTrue,
-        default_value_t = false,
-    )]
+    #[arg(short, long)]
     force: bool,
 
     /// Set the gradle version
@@ -89,7 +84,7 @@ impl Setup {
         db.add_app_permissions(app_perms.as_slice())?;
 
         log::trace!("writing templates");
-        let templates = TemplateRenderer::new(&ctx, &db, &self.pkg);
+        let templates = TemplateRenderer::new(&ctx, &db, &self.app_id, &self.pkg);
 
         let setup_params = SetupParams::default()
             .set_project_name(project_name.as_ref())

@@ -1,4 +1,4 @@
-package {{ app_pkg }};
+package c.arve;
 
 interface ILogger {
     void info(String output);

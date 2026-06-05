@@ -3,9 +3,9 @@ use dtu_proc_macro::{define_setters, wraps_base_error};
 use std::fmt;
 use std::fmt::Arguments;
 use std::fs::{File, OpenOptions};
-use std::io;
 use std::io::{Cursor, Write as _};
 use std::path::{Path, PathBuf};
+use zstd::Decoder;
 
 use crate::app::AppTestStatus;
 use crate::app_server::{get_server_port, APP_SERVER_PORT};
@@ -25,8 +25,11 @@ pub enum Error {
     #[error("{0}")]
     DB(db::Error),
 
-    #[error("bad zip file {0}")]
-    BadZip(String),
+    #[error("bad tar file {0}")]
+    BadTar(String),
+
+    #[error("bad zstd file {0}")]
+    BadZstd(String),
 }
 
 impl From<db::Error> for Error {
@@ -41,72 +44,22 @@ impl From<askama::Error> for Error {
     }
 }
 
-macro_rules! simple_setup_template {
-    ($name:ident, $path:literal) => {
-        #[derive(Template)]
-        #[template(path = $path)]
-        struct $name<'a> {
-            app_pkg: &'a str,
-        }
-    };
-}
-
 #[derive(Template)]
-#[template(path = "app/setup/Server.kt.j2")]
-struct Server<'a> {
+#[template(path = "app/Config.kt.j2")]
+struct Config<'a> {
+    app_id: &'a str,
     app_pkg: &'a str,
     app_server_port: u16,
 }
 
-impl<'a> From<&'a SetupParams<'a>> for Server<'a> {
+impl<'a> From<&'a SetupParams<'a>> for Config<'a> {
     fn from(value: &'a SetupParams<'a>) -> Self {
         Self {
+            app_id: value.get_app_id(),
             app_pkg: value.app_pkg,
             app_server_port: value.app_server_port,
         }
     }
-}
-
-simple_setup_template!(AndroidLogger, "app/setup/AndroidLogger.kt.j2");
-simple_setup_template!(AbstractLogger, "app/setup/AbstractLogger.kt.j2");
-simple_setup_template!(TestService, "app/setup/TestService.kt.j2");
-simple_setup_template!(AbstractTest, "app/setup/AbstractTest.kt.j2");
-simple_setup_template!(IDeviceTest, "app/setup/IDeviceTest.aidl.j2");
-simple_setup_template!(ILogger, "app/setup/ILogger.aidl.j2");
-simple_setup_template!(AbstractBinderTest, "app/setup/AbstractBinderTest.kt.j2");
-simple_setup_template!(AbstractProviderTest, "app/setup/AbstractProviderTest.kt.j2");
-simple_setup_template!(AbstractServiceTest, "app/setup/AbstractServiceTest.kt.j2");
-simple_setup_template!(
-    AbstractSystemServiceTest,
-    "app/setup/AbstractSystemServiceTest.kt.j2"
-);
-simple_setup_template!(AbstractTestActivity, "app/setup/AbstractTestActivity.kt.j2");
-simple_setup_template!(BundleHelper, "app/setup/bundleHelper.kt.j2");
-simple_setup_template!(Exceptions, "app/setup/exceptions.kt.j2");
-simple_setup_template!(Extensions, "app/setup/extensions.kt.j2");
-simple_setup_template!(ParcelString, "app/setup/ParcelString.kt.j2");
-simple_setup_template!(LoggingBinder, "app/setup/LoggingBinder.kt.j2");
-simple_setup_template!(App, "app/setup/App.kt.j2");
-simple_setup_template!(GlobalConfig, "app/setup/GlobalConfig.kt.j2");
-simple_setup_template!(TestAppHomeActivity, "app/setup/TestAppHomeActivity.kt.j2");
-simple_setup_template!(Utils, "app/setup/Utils.kt.j2");
-
-macro_rules! render_simple {
-    ($name:ident, $base_dir:expr, $app_pkg:expr) => {
-        render_simple!($name, $base_dir, $app_pkg, "kt")
-    };
-    ($name:ident, $base_dir:expr, $app_pkg:expr, $ext:literal) => {{
-        let __tmpl = $name { app_pkg: $app_pkg };
-        let __dir = $base_dir.join(concat!(stringify!($name), ".", $ext));
-        let mut __writer = OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(&__dir)?;
-        log::trace!("rendering {} to {:?}", stringify!($name), __dir);
-        let mut __fwr = FileWriteAdapter::from(&mut __writer);
-        __tmpl.render_into(&mut __fwr)
-    }};
 }
 
 fn get_app_main_dir(ctx: &dyn Context) -> Result<PathBuf> {
@@ -121,6 +74,10 @@ fn get_app_aidl_dir(ctx: &dyn Context, app_pkg: &str) -> Result<PathBuf> {
     }
 
     Ok(base)
+}
+
+fn get_app_res_dir(ctx: &dyn Context) -> Result<PathBuf> {
+    Ok(get_app_main_dir(ctx)?.join("res"))
 }
 
 fn get_app_source_dir(ctx: &dyn Context, app_pkg: &str) -> Result<PathBuf> {
@@ -287,6 +244,12 @@ impl<'a> Default for AppGradleBuild<'a> {
     }
 }
 
+impl<'a> SetupParams<'a> {
+    fn get_app_id(&self) -> &'a str {
+        self.app_id.unwrap_or(self.app_pkg)
+    }
+}
+
 impl<'a> Default for SetupParams<'a> {
     fn default() -> Self {
         Self {
@@ -338,13 +301,24 @@ pub fn render_into<P: AsRef<Path> + ?Sized>(
 
 pub struct TemplateRenderer<'a> {
     app_pkg: &'a str,
+    app_id: &'a str,
     ctx: &'a dyn Context,
     meta: &'a dyn MetaDatabase,
 }
 
 impl<'a> TemplateRenderer<'a> {
-    pub fn new(ctx: &'a dyn Context, meta: &'a dyn MetaDatabase, app_pkg: &'a str) -> Self {
-        Self { ctx, meta, app_pkg }
+    pub fn new(
+        ctx: &'a dyn Context,
+        meta: &'a dyn MetaDatabase,
+        app_id: &'a str,
+        app_pkg: &'a str,
+    ) -> Self {
+        Self {
+            ctx,
+            meta,
+            app_id,
+            app_pkg,
+        }
     }
 
     #[inline]
@@ -370,14 +344,15 @@ impl<'a> TemplateRenderer<'a> {
             .map(|it| it.name.as_str())
             .collect::<Vec<&str>>();
 
-        let app_server = Server {
+        let app_config = Config {
+            app_id: self.app_id,
             app_pkg: self.app_pkg,
             app_server_port: get_server_port(self.ctx)?,
         };
 
         let src_dir = get_app_source_dir(self.ctx, self.app_pkg)?;
 
-        render_into(self.ctx, "Server.kt", &src_dir, &app_server)?;
+        render_into(self.ctx, "Config.kt", &src_dir, &app_config)?;
 
         let man = GeneratedManifest {
             app_pkg: self.app_pkg,
@@ -461,31 +436,13 @@ impl<'a> TemplateRenderer<'a> {
 
         let aidl_dir = get_app_aidl_dir(self.ctx, app_pkg)?;
         ensure_dir_exists(&aidl_dir)?;
-        render_simple!(IDeviceTest, aidl_dir, app_pkg, "aidl")?;
-        render_simple!(ILogger, aidl_dir, app_pkg, "aidl")?;
         let src_dir = get_app_source_dir(self.ctx, app_pkg)?;
         ensure_dir_exists(&src_dir)?;
-        render_simple!(AndroidLogger, src_dir, app_pkg)?;
-        render_simple!(AbstractLogger, src_dir, app_pkg)?;
-        render_simple!(TestService, src_dir, app_pkg)?;
-        render_simple!(AbstractTest, src_dir, app_pkg)?;
-        render_simple!(AbstractBinderTest, src_dir, app_pkg)?;
-        render_simple!(AbstractProviderTest, src_dir, app_pkg)?;
-        render_simple!(AbstractServiceTest, src_dir, app_pkg)?;
-        render_simple!(AbstractSystemServiceTest, src_dir, app_pkg)?;
-        render_simple!(AbstractTestActivity, src_dir, app_pkg)?;
-        render_simple!(BundleHelper, src_dir, app_pkg)?;
-        render_simple!(Exceptions, src_dir, app_pkg)?;
-        render_simple!(Extensions, src_dir, app_pkg)?;
-        render_simple!(App, src_dir, app_pkg)?;
-        render_simple!(LoggingBinder, src_dir, app_pkg)?;
-        render_simple!(ParcelString, src_dir, app_pkg)?;
-        render_simple!(GlobalConfig, src_dir, app_pkg)?;
-        render_simple!(TestAppHomeActivity, src_dir, app_pkg)?;
-        render_simple!(Utils, src_dir, app_pkg)?;
+        let res_dir = get_app_res_dir(self.ctx)?;
+        ensure_dir_exists(&res_dir)?;
 
-        let app_server = Server::from(&params);
-        render_into(self.ctx, "Server.kt", &src_dir, &app_server)?;
+        let app_config = Config::from(&params);
+        render_into(self.ctx, "Config.kt", &src_dir, &app_config)?;
 
         let app_build = AppGradleBuild::from(&params);
         render_into(
@@ -509,11 +466,16 @@ impl<'a> TemplateRenderer<'a> {
         };
         self.render_manifest(man)?;
         self.render_base_activities(&vec![], &src_dir)?;
-        self.copy_regular_files()?;
+        self.copy_regular_files(&src_dir, &aidl_dir, &res_dir)?;
         Ok(())
     }
 
-    fn copy_regular_files(&self) -> Result<()> {
+    fn copy_regular_files(
+        &self,
+        src_dir: &PathBuf,
+        aidl_dir: &PathBuf,
+        res_dir: &PathBuf,
+    ) -> Result<()> {
         macro_rules! write_raw_file {
             ($name:literal) => {
                 write_raw_file!($name, $name)
@@ -523,60 +485,54 @@ impl<'a> TemplateRenderer<'a> {
                 self.write_raw_to($name, $location, __raw)
             }};
         }
+
         log::debug!("starting copying files");
 
         write_raw_file!("gitignore", ".gitignore")?;
         write_raw_file!("gradle.properties")?;
-        write_raw_file!(
-            "res_layout_generic_test_activity.xml",
-            "app/src/main/res/layout/generic_test_activity.xml"
-        )?;
-        write_raw_file!(
-            "res_layout_home_activity.xml",
-            "app/src/main/res/layout/home_activity.xml"
-        )?;
         write_raw_file!("MainManifest.xml", "app/src/main/AndroidManifest.xml")?;
 
-        let res_zip = include_bytes!("files/app/setup/res.zip");
-        self.unzip_raw_to("files/app/setup/res.zip", "app/src/main/res", res_zip)?;
+        log::debug!("untarring default kotlin sources");
+        Self::untar_kt_sources(src_dir)?;
+        log::debug!("untarring default AIDL sources");
+        Self::untar_aidl_sources(aidl_dir)?;
+        log::debug!("untarring default image resoures files");
+        Self::untar_images_sources(res_dir)?;
+        log::debug!("untarring default res files");
+        Self::untar_res_dir(res_dir)?;
 
         log::debug!("done copying files");
 
         Ok(())
     }
 
-    fn unzip_raw_to(&self, name: &str, loc: &str, raw: &[u8]) -> Result<()> {
-        let write_to = self.ctx.get_test_app_dir()?.join(loc);
-        if let Some(parent) = write_to.parent() {
-            ensure_dir_exists(parent)?;
-        }
-        log::trace!("unzipping {} to {:?}", name, write_to);
-        let mut cursor = Cursor::new(raw);
-        let mut archive =
-            zip::ZipArchive::new(&mut cursor).map_err(|_| Error::BadZip(name.into()))?;
-        for i in 0..archive.len() {
-            let mut item = archive
-                .by_index(i)
-                .map_err(|_| Error::BadZip(name.into()))?;
-            if item.is_dir() {
-                continue;
-            }
-            let zip_path = item
-                .enclosed_name()
-                .ok_or_else(|| Error::BadZip(name.into()))?;
-            let path = write_to.join(zip_path);
-            if let Some(parent) = path.parent() {
-                ensure_dir_exists(parent)?;
-            }
-            log::trace!("unzipping {} to {:?}", item.name(), path);
-            let mut file = OpenOptions::new()
-                .create(true)
-                .truncate(true)
-                .write(true)
-                .open(&path)?;
-            io::copy(&mut item, &mut file)?;
-        }
+    fn untar(raw: &[u8], dir: &PathBuf) -> Result<()> {
+        let dec = Decoder::new(Cursor::new(raw))
+            .map_err(|_| Error::BadZstd("builtin kt.tar.ztd".into()))?;
+        let mut tf = tar::Archive::new(dec);
+        tf.unpack(dir)
+            .map_err(|_| Error::BadTar("builtin kt.tar.ztd".into()))?;
         Ok(())
+    }
+
+    fn untar_res_dir(res_dir: &PathBuf) -> Result<()> {
+        let raw_tar_zstd = include_bytes!(concat!(env!("OUT_DIR"), "/res.tar.zstd"));
+        Self::untar(raw_tar_zstd, res_dir)
+    }
+
+    fn untar_images_sources(res_dir: &PathBuf) -> Result<()> {
+        let raw_tar_zstd = include_bytes!("files/app/setup/res-images.tar.zstd");
+        Self::untar(raw_tar_zstd, res_dir)
+    }
+
+    fn untar_aidl_sources(aidl_dir: &PathBuf) -> Result<()> {
+        let raw_tar_zstd = include_bytes!(concat!(env!("OUT_DIR"), "/aidl.tar.zstd"));
+        Self::untar(raw_tar_zstd, aidl_dir)
+    }
+
+    fn untar_kt_sources(src_dir: &PathBuf) -> Result<()> {
+        let raw_tar_zstd = include_bytes!(concat!(env!("OUT_DIR"), "/kt.tar.zstd"));
+        Self::untar(raw_tar_zstd, src_dir)
     }
 
     fn write_raw_to(&self, name: &str, loc: &str, raw: &[u8]) -> Result<()> {

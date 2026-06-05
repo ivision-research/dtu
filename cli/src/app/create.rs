@@ -13,7 +13,7 @@ use crate::utils::{exec_open_file, prompt_choice};
 use dtu::askama::DynTemplate;
 use dtu::db;
 use dtu::db::device::models::{SystemService, SystemServiceMethod};
-use dtu::db::meta::db::APP_PKG_KEY;
+use dtu::db::meta::db::{APP_ID_KEY, APP_PKG_KEY};
 use dtu::db::meta::models::InsertAppActivity;
 use dtu::db::{DeviceDatabase, MetaDatabase};
 use dtu::utils::ClassName;
@@ -381,8 +381,9 @@ fn add_template_activity(
         status: AppTestStatus::Experimenting,
     };
     meta.add_app_activity(&new_act)?;
+    let id = meta.get_key_value(APP_ID_KEY)?;
     let pkg = meta.get_key_value(APP_PKG_KEY)?;
-    let template = TemplateRenderer::new(ctx, meta, &pkg);
+    let template = TemplateRenderer::new(ctx, meta, &id, &pkg);
     template.update()?;
 
     if !open {

@@ -1,6 +1,6 @@
-package {{ app_pkg }};
+package c.arve;
 
-import {{ app_pkg }}.ILogger;
+import c.arve.ILogger;
 import android.os.Bundle;
 
 interface IDeviceTest {

@@ -1,4 +1,4 @@
-package {{ app_pkg }}
+package c.arve
 
 class AndroidLogger : AbstractLogger() {
     override fun info(input: String) {

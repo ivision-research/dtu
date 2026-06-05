@@ -254,8 +254,9 @@ impl App {
 }
 
 pub(crate) fn regen_templates(ctx: &dyn Context, meta: &impl MetaDatabase) -> anyhow::Result<()> {
+    let app_id = meta.get_key_value(APP_ID_KEY)?;
     let pkg = meta.get_key_value(APP_PKG_KEY)?;
-    let template = TemplateRenderer::new(ctx, meta, &pkg);
+    let template = TemplateRenderer::new(ctx, meta, &app_id, &pkg);
     template.update()?;
     Ok(())
 }
@@ -273,8 +274,9 @@ impl ChangeStatus {
 impl RemoveTest {
     fn run(&self, ctx: &dyn Context, meta: &impl MetaDatabase) -> anyhow::Result<()> {
         meta.delete_app_activity_by_id(self.activity.id)?;
+        let id = meta.get_key_value(APP_ID_KEY)?;
         let pkg = meta.get_key_value(APP_PKG_KEY)?;
-        let template = TemplateRenderer::new(ctx, meta, &pkg);
+        let template = TemplateRenderer::new(ctx, meta, &id, &pkg);
         template.update()?;
         let path = format!("app/src/main/kotlin/c/arve/{}.kt", self.activity.name);
         let path = ctx.get_test_app_dir()?.join(path.as_str());

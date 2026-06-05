@@ -1,4 +1,4 @@
-package {{ app_pkg }}
+package c.arve
 
 abstract class AbstractLogger : ILogger.Stub() {
     fun error(output: String, err: Throwable) {

@@ -1,6 +1,4 @@
-package {{ app_pkg }}
-
-// Automatically generated. Changes may be overwritten!
+package c.arve
 
 import android.content.Context
 import android.net.Uri

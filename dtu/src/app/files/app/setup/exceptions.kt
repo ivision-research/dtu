@@ -1,4 +1,4 @@
-package {{ app_pkg }}
+package c.arve
 
 import java.lang.Exception
 

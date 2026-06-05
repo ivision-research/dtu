@@ -1,12 +1,10 @@
-package {{ app_pkg }}
-
-// Automatically generated. Changes may be overwritten!
+package c.arve
 
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.content.Intent
 
-import {{ app_pkg }}.databinding.HomeActivityBinding
+import c.arve.databinding.HomeActivityBinding
 
 class TestAppHomeActivity : AppCompatActivity() {
 
