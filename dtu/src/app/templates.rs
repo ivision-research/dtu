@@ -12,7 +12,8 @@ use crate::app_server::{get_server_port, APP_SERVER_PORT};
 use crate::db::meta::models::AppActivity;
 use crate::db::{self, MetaDatabase};
 use crate::utils::{ensure_dir_exists, ClassName};
-use crate::Context;
+use crate::version::GIT_COMMIT;
+use crate::{Context, VERSION};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -41,6 +42,22 @@ impl From<db::Error> for Error {
 impl From<askama::Error> for Error {
     fn from(value: askama::Error) -> Self {
         Self::RenderError(value.to_string())
+    }
+}
+
+#[derive(Template)]
+#[template(path = "app/setup/metadata.toml.j2")]
+struct Metadata {
+    version: String,
+    commit: &'static str,
+}
+
+impl Default for Metadata {
+    fn default() -> Self {
+        let version = VERSION.to_string();
+        let commit = GIT_COMMIT;
+
+        Self { commit, version }
     }
 }
 
@@ -443,6 +460,9 @@ impl<'a> TemplateRenderer<'a> {
 
         let app_config = Config::from(&params);
         render_into(self.ctx, "Config.kt", &src_dir, &app_config)?;
+
+        let meta = Metadata::default();
+        render_into(self.ctx, "metadata.toml", "metadata.toml", &meta)?;
 
         let app_build = AppGradleBuild::from(&params);
         render_into(

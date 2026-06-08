@@ -1,5 +1,5 @@
 use std::cmp;
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::fs::{read_dir, DirEntry};
 use std::hash::{Hash, Hasher};
