@@ -1,6 +1,7 @@
 use crate::utils::{ClassName, DevicePath};
 use crate::Context;
 use std::borrow::Cow;
+use std::env::{current_dir, set_current_dir};
 use std::fs::{self, create_dir_all, read_dir, File};
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
@@ -11,6 +12,20 @@ use super::{replace_char, unreplace_char};
 pub const OS_PATH_SEP: &'static str = "/";
 #[cfg(not(windows))]
 pub const OS_PATH_SEP_CHAR: char = '/';
+
+#[cfg(not(windows))]
+#[macro_export]
+macro_rules! os_path_sep {
+    () => {
+        "/"
+    };
+}
+#[cfg(windows)]
+macro_rules! os_path_sep {
+    () => {
+        "\\"
+    };
+}
 
 #[cfg(windows)]
 pub const OS_PATH_SEP: &'static str = "\\";
@@ -231,6 +246,26 @@ pub fn read_file(path: &Path) -> crate::Result<String> {
             _ => Err(e.into()),
         },
     }
+}
+
+pub fn with_working_dir<R, E, F: FnOnce() -> Result<R, E>>(
+    dir: &Path,
+    func: F,
+) -> crate::Result<Result<R, E>> {
+    let current = current_dir()?;
+    set_current_dir(dir)?;
+    let res = func();
+    if let Err(e) = set_current_dir(&current) {
+        if res.is_ok() {
+            return Err(e.into());
+        }
+        log::error!(
+            "failed to reset working directory to {}: {}",
+            path_must_str(&current),
+            e
+        );
+    }
+    Ok(res)
 }
 
 #[cfg(test)]

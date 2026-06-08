@@ -1,19 +1,19 @@
 use askama::{DynTemplate, Template};
 use dtu_proc_macro::{define_setters, wraps_base_error};
-use std::fmt;
 use std::fmt::Arguments;
-use std::fs::{File, OpenOptions};
-use std::io::{Cursor, Write as _};
+use std::fs::{create_dir_all, read_dir, File, OpenOptions};
+use std::io::{BufWriter, Cursor, Write as _};
 use std::path::{Path, PathBuf};
+use std::{fmt, io};
 use zstd::Decoder;
 
 use crate::app::AppTestStatus;
 use crate::app_server::{get_server_port, APP_SERVER_PORT};
 use crate::db::meta::models::AppActivity;
 use crate::db::{self, MetaDatabase};
-use crate::utils::{ensure_dir_exists, ClassName};
+use crate::utils::{ensure_dir_exists, path_must_str, with_working_dir, ClassName};
 use crate::version::GIT_COMMIT;
-use crate::{Context, VERSION};
+use crate::{os_path_sep, Context, VERSION};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -22,6 +22,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     #[error("error rendering template {0}")]
     RenderError(String),
+
+    #[error("io error {1} with {0}")]
+    IO(String, io::Error),
 
     #[error("{0}")]
     DB(db::Error),
@@ -323,6 +326,16 @@ pub struct TemplateRenderer<'a> {
     meta: &'a dyn MetaDatabase,
 }
 
+macro_rules! write_raw_file {
+    ($self:expr, $name:literal) => {
+        write_raw_file!($self, $name, $name)
+    };
+    ($self:expr, $name:literal, $location:expr) => {{
+        let __raw = include_bytes!(concat!("files/app/setup/", $name));
+        $self.write_raw_to($name, $location, __raw)
+    }};
+}
+
 impl<'a> TemplateRenderer<'a> {
     pub fn new(
         ctx: &'a dyn Context,
@@ -436,6 +449,36 @@ impl<'a> TemplateRenderer<'a> {
         Ok(())
     }
 
+    fn gitignore_generated(gitignore: &mut BufWriter<File>, dir: &Path) -> io::Result<()> {
+        let ents = read_dir(dir)?;
+
+        for ent in ents {
+            let ent = ent?;
+            let path = ent.path();
+
+            let as_str = path_must_str(&path);
+
+            // Don't ignore .gitignores
+            if as_str.ends_with(concat!(os_path_sep!(), ".gitignore")) {
+                continue;
+            }
+
+            if path.is_dir() {
+                // These directories are already in the builtin gitignore
+                static IGNORED_DIRS: &[&'static str] = &["./.gradle", "./build", "./gradle"];
+                if !IGNORED_DIRS.contains(&as_str) {
+                    Self::gitignore_generated(gitignore, &path)?;
+                }
+                continue;
+            }
+
+            let line = as_str.trim_start_matches(concat!(".", os_path_sep!()));
+            gitignore.write_all(line.as_bytes())?;
+            gitignore.write(&[b'\n'])?;
+        }
+        Ok(())
+    }
+
     /// Sets up the test application
     pub fn setup(&self, params: SetupParams) -> Result<()> {
         let app_pkg = params.app_pkg;
@@ -461,9 +504,6 @@ impl<'a> TemplateRenderer<'a> {
         let app_config = Config::from(&params);
         render_into(self.ctx, "Config.kt", &src_dir, &app_config)?;
 
-        let meta = Metadata::default();
-        render_into(self.ctx, "metadata.toml", "metadata.toml", &meta)?;
-
         let app_build = AppGradleBuild::from(&params);
         render_into(
             self.ctx,
@@ -487,7 +527,40 @@ impl<'a> TemplateRenderer<'a> {
         self.render_manifest(man)?;
         self.render_base_activities(&vec![], &src_dir)?;
         self.copy_regular_files(&src_dir, &aidl_dir, &res_dir)?;
+
+        // Ignore all generated files in gitignore
+        let base = self.ctx.get_test_app_dir()?;
+        with_working_dir(&base, || -> Result<()> {
+            let start = Path::new(".");
+            self.update_gitignore(&start)
+                .map_err(|e| Error::IO(".gitignore".into(), e))?;
+            Ok(())
+        })??;
+
+        // These files should not be ignored
+        let meta = Metadata::default();
+        render_into(self.ctx, "metadata.toml", "metadata.toml", &meta)?;
+        write_raw_file!(self, "MainManifest.xml", "app/src/main/AndroidManifest.xml")?;
+        write_raw_file!(self, "gradle.properties")?;
+
         Ok(())
+    }
+
+    fn update_gitignore(&self, base: &Path) -> io::Result<()> {
+        let gitignore = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(base.join(".gitignore"))?;
+
+        let mut buffered = BufWriter::new(gitignore);
+
+        buffered.write_all(include_bytes!("files/app/setup/gitignore"))?;
+
+        buffered.write_all("\n# Automatically generated files\n\n".as_bytes())?;
+
+        Self::gitignore_generated(&mut buffered, &base)?;
+
+        buffered.flush()
     }
 
     fn copy_regular_files(
@@ -496,21 +569,7 @@ impl<'a> TemplateRenderer<'a> {
         aidl_dir: &PathBuf,
         res_dir: &PathBuf,
     ) -> Result<()> {
-        macro_rules! write_raw_file {
-            ($name:literal) => {
-                write_raw_file!($name, $name)
-            };
-            ($name:literal, $location:expr) => {{
-                let __raw = include_bytes!(concat!("files/app/setup/", $name));
-                self.write_raw_to($name, $location, __raw)
-            }};
-        }
-
         log::debug!("starting copying files");
-
-        write_raw_file!("gitignore", ".gitignore")?;
-        write_raw_file!("gradle.properties")?;
-        write_raw_file!("MainManifest.xml", "app/src/main/AndroidManifest.xml")?;
 
         log::debug!("untarring default kotlin sources");
         Self::untar_kt_sources(src_dir)?;
@@ -526,33 +585,59 @@ impl<'a> TemplateRenderer<'a> {
         Ok(())
     }
 
-    fn untar(raw: &[u8], dir: &PathBuf) -> Result<()> {
+    fn untar_builtin(raw: &[u8], dir: &PathBuf, name: &str) -> Result<()> {
         let dec = Decoder::new(Cursor::new(raw))
-            .map_err(|_| Error::BadZstd("builtin kt.tar.ztd".into()))?;
+            .map_err(|e| Error::BadZstd(format!("builtin {name}: {e}")))?;
+
         let mut tf = tar::Archive::new(dec);
-        tf.unpack(dir)
-            .map_err(|_| Error::BadTar("builtin kt.tar.ztd".into()))?;
+
+        // Manually unpack since we know the structure of everything we're unpacking
+        // and it's more efficient.
+        let entries = tf
+            .entries()
+            .map_err(|e| Error::BadTar(format!("builtin {name}: {e}")))?;
+
+        for ent in entries {
+            let mut ent = ent.map_err(|e| Error::BadTar(format!("builtin {name}: {e}")))?;
+
+            let path = ent
+                .path()
+                .map_err(|e| Error::BadTar(format!("builtin {name}: {e}")))?;
+
+            let into = dir.join(&path);
+            if let Some(p) = into.parent() {
+                match create_dir_all(p) {
+                    Ok(_) => {}
+                    Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+                    Err(e) => return Err(Error::IO(format!("builtin {name}"), e)),
+                }
+            }
+
+            ent.unpack(dir.join(&path))
+                .map_err(|e| Error::BadTar(format!("builtin {name}: {e}")))?;
+        }
+
         Ok(())
     }
 
     fn untar_res_dir(res_dir: &PathBuf) -> Result<()> {
         let raw_tar_zstd = include_bytes!(concat!(env!("OUT_DIR"), "/res.tar.zstd"));
-        Self::untar(raw_tar_zstd, res_dir)
+        Self::untar_builtin(raw_tar_zstd, res_dir, "res.tar.zstd")
     }
 
     fn untar_images_sources(res_dir: &PathBuf) -> Result<()> {
         let raw_tar_zstd = include_bytes!("files/app/setup/res-images.tar.zstd");
-        Self::untar(raw_tar_zstd, res_dir)
+        Self::untar_builtin(raw_tar_zstd, res_dir, "res-images.tar.zstd")
     }
 
     fn untar_aidl_sources(aidl_dir: &PathBuf) -> Result<()> {
         let raw_tar_zstd = include_bytes!(concat!(env!("OUT_DIR"), "/aidl.tar.zstd"));
-        Self::untar(raw_tar_zstd, aidl_dir)
+        Self::untar_builtin(raw_tar_zstd, aidl_dir, "aidl.tar.zstd")
     }
 
     fn untar_kt_sources(src_dir: &PathBuf) -> Result<()> {
         let raw_tar_zstd = include_bytes!(concat!(env!("OUT_DIR"), "/kt.tar.zstd"));
-        Self::untar(raw_tar_zstd, src_dir)
+        Self::untar_builtin(raw_tar_zstd, src_dir, "kt.tar.zstd")
     }
 
     fn write_raw_to(&self, name: &str, loc: &str, raw: &[u8]) -> Result<()> {
@@ -565,9 +650,11 @@ impl<'a> TemplateRenderer<'a> {
             .create(true)
             .truncate(true)
             .write(true)
-            .open(&write_to)?;
+            .open(&write_to)
+            .map_err(|e| Error::IO(String::from(loc), e))?;
 
-        file.write_all(raw)?;
+        file.write_all(raw)
+            .map_err(|e| Error::IO(String::from(loc), e))?;
         Ok(())
     }
 }
