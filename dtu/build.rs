@@ -1,6 +1,8 @@
 use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read};
 use std::num::NonZero;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::{borrow::Cow, env, io::Write};
 
 use anyhow::Context;
@@ -152,6 +154,11 @@ fn embed_version(out_dir: &str) {
     let minor = vparts.next().expect("version minor");
     let patch_and_extra = vparts.next().expect("version patch");
 
+    let git_rev = match get_git_rev() {
+        Ok(v) => Cow::Owned(v),
+        Err(_) => Cow::Borrowed("unknown"),
+    };
+
     let (patch, extra) = if let Some((p, e)) = patch_and_extra.split_once('-') {
         (p, Cow::Owned(format!("Some(\"{e}\")")))
     } else {
@@ -169,4 +176,38 @@ fn embed_version(out_dir: &str) {
         "pub const VERSION: Version = Version {{ major: {major}, minor: {minor}, patch: {patch}, extra: {extra} }};\n"
     )
     .expect("failed to write VERSION");
+
+    write!(
+        f,
+        "pub const GIT_COMMIT: &'static str = \"{}\";\n",
+        git_rev.trim()
+    )
+    .expect("failed to write GIT_COMMIT");
+}
+
+fn get_git_rev() -> io::Result<String> {
+    if let Ok(rev) = env::var("DTU_GIT_REVISION") {
+        Ok(rev)
+    } else {
+        Command::new("git")
+            .arg("rev-parse")
+            .arg("HEAD")
+            .output()
+            .and_then(|out| {
+                String::from_utf8(out.stdout).map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "git rev-parse HEAD output was not UTF-8",
+                    )
+                })
+            })
+            .or_else(|_| git_rev_from_file())
+    }
+}
+fn git_rev_from_file() -> io::Result<String> {
+    let git_file = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap()).join(".git/refs/heads/main");
+    let mut file = File::open(git_file)?;
+    let mut rev = String::new();
+    file.read_to_string(&mut rev)?;
+    Ok(rev)
 }
