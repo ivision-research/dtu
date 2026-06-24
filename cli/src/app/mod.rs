@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::ffi::CString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -35,11 +36,11 @@ pub struct App {
 enum Subcommand {
     /// Just build the application
     #[command()]
-    Build,
+    Build(Build),
 
     /// Build and install the application
     #[command()]
-    Install,
+    Install(Install),
 
     /// Set the application ID
     #[command()]
@@ -95,6 +96,71 @@ enum Subcommand {
 }
 
 #[derive(Args)]
+struct Build {
+    /// Application directory if not the default
+    #[arg(short, long)]
+    dir: Option<PathBuf>,
+}
+
+impl Build {
+    fn run(self, ctx: &dyn Context) -> anyhow::Result<()> {
+        println!("Building the application...");
+        let meta = MetaSqliteDatabase::new(ctx)?;
+        ctx.get_env("ANDROID_HOME")?;
+        let app_dir = match self.dir {
+            Some(v) => v,
+            None => ctx.get_test_app_dir()?,
+        };
+        regen_templates(ctx, &meta, Some(&app_dir))?;
+
+        let app_dir_string = app_dir.to_str().expect("valid paths");
+        let gradlew = get_gradlew(&app_dir)?;
+        let gradlew_cstring = CString::new(gradlew.as_str())?;
+        let args = &[
+            &gradlew_cstring,
+            &CString::new("-p")?,
+            &CString::new(app_dir_string)?,
+            &CString::new("assembleGenerated")?,
+        ];
+        nix::unistd::execv(&gradlew_cstring, args)?;
+        Ok(())
+    }
+}
+
+#[derive(Args)]
+struct Install {
+    /// Application directory if not the default
+    #[arg(short, long)]
+    dir: Option<PathBuf>,
+
+    /// Don't try to automatically start the application
+    #[arg(short, long)]
+    no_start: bool,
+}
+
+impl Install {
+    fn run(self, ctx: &dyn Context, meta: &impl MetaDatabase) -> anyhow::Result<()> {
+        let app_id = meta.get_key_value(APP_ID_KEY)?;
+        let adb = get_adb(ctx, true)?;
+        let app_dir = match self.dir {
+            Some(v) => v,
+            None => ctx.get_test_app_dir()?,
+        };
+        let output = app_dir.join(Path::new(
+            "app/build/outputs/apk/generated/app-generated.apk",
+        ));
+        let output_string = path_must_str(&output);
+        println!("Installing the application via ADB");
+        adb.install(output_string)?;
+        if !self.no_start {
+            println!("Starting the application...");
+            am_start_app(&adb, &app_id)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Args)]
 struct SetAppId {
     /// The new app id
     #[arg(short, long)]
@@ -133,7 +199,7 @@ struct ForwardServer {
 }
 
 impl App {
-    pub fn run(&self) -> anyhow::Result<()> {
+    pub fn run(self) -> anyhow::Result<()> {
         let needs_setup = match &self.command {
             Subcommand::Setup(_) => false,
             _ => true,
@@ -143,15 +209,12 @@ impl App {
         if needs_setup {
             meta.ensure_prereq(Prereq::AppSetup)?;
         }
-        match &self.command {
+        match self.command {
             Subcommand::Setup(c) => c.run()?,
             Subcommand::ForwardServer(c) => c.run(&ctx)?,
-            Subcommand::Build => self.build(&ctx)?,
-            Subcommand::SetAppId(c) => self.set_app_id(&ctx, &meta, &c.id)?,
-            Subcommand::Install => {
-                let app_id = meta.get_key_value(APP_ID_KEY)?;
-                self.install(&ctx, &app_id)?
-            }
+            Subcommand::Build(c) => c.run(&ctx)?,
+            Subcommand::SetAppId(c) => set_app_id(&ctx, &meta, &c.id)?,
+            Subcommand::Install(c) => c.run(&ctx, &meta)?,
             Subcommand::ChangeStatus(c) => c.run(&ctx, &meta)?,
             Subcommand::RemoveTest(c) => c.run(&ctx, &meta)?,
             Subcommand::NewSystemService(c) => c.run(&ctx, &meta)?,
@@ -159,99 +222,25 @@ impl App {
             Subcommand::NewGeneric(c) => c.run(&ctx, &meta)?,
             Subcommand::NewAppService(c) => c.run(&ctx, &meta)?,
             Subcommand::RunTest(c) => c.run(&ctx, &meta)?,
-            Subcommand::Start => self.start_app(&ctx, &meta)?,
-            Subcommand::StartServer => self.start_server(&ctx, &meta)?,
-            Subcommand::ListTests => self.list_tests(&ctx, &meta)?,
+            Subcommand::Start => start_app(&ctx, &meta)?,
+            Subcommand::StartServer => start_server(&ctx, &meta)?,
+            Subcommand::ListTests => list_tests(&meta)?,
         }
-        Ok(())
-    }
-
-    fn start_server(&self, ctx: &dyn Context, meta: &impl MetaDatabase) -> anyhow::Result<()> {
-        let app_id = meta.get_key_value(APP_ID_KEY)?;
-        let adb = get_adb(ctx, true)?;
-        let cmd = format!("am start-service -n '{app_id}/{LIB_PKG_NAME}.Server'");
-        let res = adb.shell(&cmd)?;
-        res.err_on_status()?;
-        Ok(())
-    }
-
-    fn list_tests(&self, _ctx: &dyn Context, meta: &impl MetaDatabase) -> anyhow::Result<()> {
-        let activities = meta.get_app_activities()?;
-        for a in &activities {
-            println!("{} - {}", a.name, a.status);
-        }
-        Ok(())
-    }
-
-    fn start_app(&self, ctx: &dyn Context, meta: &impl MetaDatabase) -> anyhow::Result<()> {
-        let adb = get_adb(ctx, true)?;
-        let app_id = meta.get_key_value(APP_ID_KEY)?;
-        self.am_start_app(&adb, &app_id)
-    }
-
-    fn set_app_id(
-        &self,
-        ctx: &dyn Context,
-        meta: &impl MetaDatabase,
-        id: &str,
-    ) -> anyhow::Result<()> {
-        meta.update_key_value(APP_ID_KEY, id)?;
-        let dir = ctx.get_test_app_dir()?.join("app").join("build.gradle.kts");
-        let build_template = AppGradleBuild::default().set_app_id(id);
-        render_into(ctx, "build.gradle", &dir, &build_template)?;
-        Ok(())
-    }
-
-    fn get_gradlew(&self, app_dir: &PathBuf) -> anyhow::Result<String> {
-        let app_dir_string = app_dir.to_str().expect("valid paths");
-        Ok(format!("{}{}gradlew", app_dir_string, OS_PATH_SEP))
-    }
-
-    fn build(&self, ctx: &dyn Context) -> anyhow::Result<()> {
-        println!("Building the application...");
-        let meta = MetaSqliteDatabase::new(ctx)?;
-        ctx.get_env("ANDROID_HOME")?;
-        regen_templates(ctx, &meta)?;
-        let app_dir = ctx.get_test_app_dir()?;
-        let app_dir_string = app_dir.to_str().expect("valid paths");
-        let gradlew = self.get_gradlew(&app_dir)?;
-        let gradlew_cstring = CString::new(gradlew.as_str())?;
-        let args = &[
-            &gradlew_cstring,
-            &CString::new("-p")?,
-            &CString::new(app_dir_string)?,
-            &CString::new("assembleGenerated")?,
-        ];
-        nix::unistd::execv(&gradlew_cstring, args)?;
-        Ok(())
-    }
-
-    fn install(&self, ctx: &dyn Context, app_id: &str) -> anyhow::Result<()> {
-        let adb = get_adb(ctx, true)?;
-        let app_dir = ctx.get_test_app_dir()?;
-        let output = app_dir.join(Path::new(
-            "app/build/outputs/apk/generated/app-generated.apk",
-        ));
-        let output_string = path_must_str(&output);
-        println!("Installing the application via ADB");
-        adb.install(output_string)?;
-        println!("Starting the application...");
-        self.am_start_app(&adb, app_id)
-    }
-
-    fn am_start_app(&self, adb: &impl Adb, app_id: &str) -> anyhow::Result<()> {
-        adb.shell(&format!(
-            "am start-activity -n {app_id}/{LIB_PKG_NAME}.TestAppHomeActivity",
-        ))?
-        .err_on_status()?;
         Ok(())
     }
 }
 
-pub(crate) fn regen_templates(ctx: &dyn Context, meta: &impl MetaDatabase) -> anyhow::Result<()> {
-
-    let dir = ctx.get_test_app_dir()?;
-    let noregen = dir.join(".dtu-noregen").exists();
+pub(crate) fn regen_templates(
+    ctx: &dyn Context,
+    meta: &impl MetaDatabase,
+    app_dir: Option<&Path>,
+) -> anyhow::Result<()> {
+    let flag_file = match app_dir {
+        Some(v) => Cow::Borrowed(v),
+        None => Cow::Owned(ctx.get_test_app_dir()?),
+    }
+    .join(".dtu-noregen");
+    let noregen = flag_file.exists();
     if noregen {
         return Ok(());
     }
@@ -267,7 +256,7 @@ impl ChangeStatus {
         let mut act = self.activity.clone();
         act.status = self.status;
         meta.update_app_activity(&act)?;
-        regen_templates(ctx, meta)?;
+        regen_templates(ctx, meta, None)?;
         Ok(())
     }
 }
@@ -307,4 +296,48 @@ impl ForwardServer {
         let port = get_server_port(ctx)?;
         Ok(port)
     }
+}
+
+fn set_app_id(ctx: &dyn Context, meta: &impl MetaDatabase, id: &str) -> anyhow::Result<()> {
+    meta.update_key_value(APP_ID_KEY, id)?;
+    let dir = ctx.get_test_app_dir()?.join("app").join("build.gradle.kts");
+    let build_template = AppGradleBuild::default().set_app_id(id);
+    render_into(ctx, "build.gradle", &dir, &build_template)?;
+    Ok(())
+}
+
+fn get_gradlew(app_dir: &Path) -> anyhow::Result<String> {
+    let app_dir_string = path_must_str(app_dir);
+    Ok(format!("{}{}gradlew", app_dir_string, OS_PATH_SEP))
+}
+
+fn start_app(ctx: &dyn Context, meta: &impl MetaDatabase) -> anyhow::Result<()> {
+    let adb = get_adb(ctx, true)?;
+    let app_id = meta.get_key_value(APP_ID_KEY)?;
+    am_start_app(&adb, &app_id)
+}
+
+fn am_start_app(adb: &impl Adb, app_id: &str) -> anyhow::Result<()> {
+    adb.shell(&format!(
+        "am start-activity -n {app_id}/{LIB_PKG_NAME}.TestAppHomeActivity",
+    ))?
+    .err_on_status()?;
+    Ok(())
+}
+
+fn start_server(ctx: &dyn Context, meta: &impl MetaDatabase) -> anyhow::Result<()> {
+    let app_id = meta.get_key_value(APP_ID_KEY)?;
+    let adb = get_adb(ctx, true)?;
+    let cmd = format!("am start-service -n '{app_id}/{LIB_PKG_NAME}.Server'");
+    let res = adb.shell(&cmd)?;
+    res.err_on_status()?;
+    Ok(())
+}
+
+fn list_tests(meta: &impl MetaDatabase) -> anyhow::Result<()> {
+    let activities = meta.get_app_activities()?;
+    for a in &activities {
+        println!("{} - {}", a.name, a.status);
+    }
+    Ok(())
 }
