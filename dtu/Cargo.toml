@@ -14,7 +14,7 @@ tempfile = "3.19"
 zip = { version = "4.3", default-features = false, features = ["deflate", "deflate64"] }
 rayon = "1.10"
 blanket = "0.2"
-smalisa = { git = "https://github.com/ivision-research/smalisa.git", rev = "1c6b4e623524257a83ea474e410f7208deb8b347", default-features = false, optional = true }
+smalisa = { git = "https://github.com/ivision-research/smalisa.git", rev = "1c6b4e623524257a83ea474e410f7208deb8b347", default-features = false }
 csv = "1.3"
 sha2 = { workspace = true }
 walkdir = "2"
@@ -79,9 +79,9 @@ graph = ["sql", "reexport_smalisa"]
 decompile = []
 
 # Include setup tasks
-setup = ["graph", "decompile", "dep:smalisa"]
+setup = ["graph", "decompile"]
 
-reexport_smalisa = ["dep:smalisa"]
+reexport_smalisa = []
 reexport_diesel = []
 reexport_askama = []
 # Trace database commands

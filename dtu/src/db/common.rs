@@ -20,6 +20,9 @@ use crate::utils::{ensure_dir_exists, ClassName};
 use crate::Context;
 use dtu_proc_macro::wraps_base_error;
 
+
+pub const FRAMEWORK_SOURCE: &'static str = "framework";
+
 #[derive(Debug)]
 pub struct DBErrorInfo {
     pub message: String,

@@ -6,7 +6,7 @@ use crate::Context;
 use super::common::Result;
 use super::models::*;
 
-pub const FRAMEWORK_SOURCE: &'static str = "framework";
+pub use super::common::FRAMEWORK_SOURCE;
 
 pub enum StringSearch<'a> {
     Exact(&'a str),

@@ -10,9 +10,8 @@ use dtu_proc_macro::sql_db_row;
 
 use crate::db::common::{
     ApkComponent, ApkIPC, ApkIPCKind, Diffable, Enablable, Exportable, Idable, PermissionMode,
-    PermissionProtected,
+    PermissionProtected, FRAMEWORK_SOURCE,
 };
-use crate::db::graph::FRAMEWORK_SOURCE;
 use crate::manifest::{self, ApktoolManifestResolver};
 use crate::utils::{path_must_str, ClassName, DevicePath};
 use crate::UnknownBool;
