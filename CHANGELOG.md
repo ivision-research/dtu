@@ -5,7 +5,9 @@
 - **BREAKING** Update to apktool v3.0.2 -- this is breaking because the new apktool doesn't allow specifying `-api`
 - **BREAKING** Changed the way `list system-services/system-service-methods/apks` works to take a diff source similar to other commands
 - **BREAKING** Removed redundant commands under `diff` that were covered (better) by commands under `list`
--- **BREAKING** Tried to make some of the flags more consistent across calls, `-n/--only-new` vs `-N/--only-new` was a big one.
+- **BREAKING** Tried to make some of the flags more consistent across calls, `-n/--only-new` vs `-N/--only-new` was a big one.
+- **BREAKING** Default app_id is now `d.tu`, package is now hard coded to `dtu`, and generated Kotlin code lives in `dtu.lib`. This makes life a bit easier.
+- Added the ability to stop regenerating test application files if the `.dtu-noregen` file exists in the base application dir
 - Allow specifying graph sources by APK instead of squashed paths
 - Major bugfixes:
     - Permissions were UNIQUE(name), updated to UNIQUE(name, source_apk_id)

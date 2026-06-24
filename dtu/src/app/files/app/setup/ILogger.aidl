@@ -1,4 +1,4 @@
-package c.arve;
+package dtu.lib;
 
 interface ILogger {
     void info(String output);

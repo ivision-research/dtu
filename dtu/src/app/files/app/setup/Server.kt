@@ -1,4 +1,4 @@
-package c.arve
+package dtu.lib
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -584,13 +584,15 @@ sealed class Request {
     }
 
     class RunTest(
-        private val name: String, private val data: IntentString?
+        private val name: String,
+        private val data: IntentString?,
+        private val pkg: String
     ) : Request(), ServiceConnection {
         companion object {
             fun fromJson(obj: JSONObject): RunTest {
                 return RunTest(obj.getString("name"), obj.maybeString("intentData")?.let {
                     IntentString.parse(it)
-                })
+                }, obj.maybeString("pkg") ?: "dtu")
             }
         }
 
@@ -638,7 +640,7 @@ sealed class Request {
 
         private fun getIntent(ctx: Context): Intent {
             val clazz = try {
-                Class.forName("c.arve.${name}Service")
+                Class.forName("$pkg.${name}Service")
             } catch (e: ClassNotFoundException) {
                 throw RequestException("no test named $name")
             }
@@ -1082,7 +1084,7 @@ sealed class Request {
                                 Cursor.FIELD_TYPE_FLOAT -> cursor.getDouble(i)
                                 Cursor.FIELD_TYPE_INTEGER -> cursor.getLong(i)
                                 Cursor.FIELD_TYPE_STRING -> cursor.getString(i)
-                                else -> "c.arve::ERROR unhandled type $ty for column $i"
+                                else -> "d.tu::ERROR unhandled type $ty for column $i"
                             }
                         )
                     }

@@ -6,8 +6,8 @@ use crate::utils::get_adb;
 use anyhow::bail;
 use clap::{self, Args};
 use dtu::adb::Adb;
-use dtu::app::{SetupParams, TemplateRenderer, DEFAULT_APP_ID, DEFAULT_PKG_NAME};
-use dtu::db::meta::db::{APP_ID_KEY, APP_PKG_KEY};
+use dtu::app::{SetupParams, TemplateRenderer, DEFAULT_APP_ID};
+use dtu::db::meta::db::APP_ID_KEY;
 use dtu::db::meta::models::InsertAppPermission;
 use dtu::db::{DeviceDatabase, MetaDatabase, MetaSqliteDatabase};
 use dtu::prereqs::Prereq;
@@ -27,10 +27,6 @@ pub struct Setup {
     /// Set the project name, otherwise generated from the device
     #[arg(short, long)]
     project_name: Option<String>,
-
-    /// Set the application package
-    #[arg(short = 'P', long, default_value_t = String::from(DEFAULT_PKG_NAME))]
-    pkg: String,
 
     /// Set the application id
     #[arg(short = 'I', long, default_value_t = String::from(DEFAULT_APP_ID))]
@@ -56,7 +52,6 @@ impl Setup {
         }
 
         db.update_key_value(APP_ID_KEY, &self.app_id)?;
-        db.update_key_value(APP_PKG_KEY, &self.pkg)?;
 
         ensure_dir_exists(&app_dir)?;
 
@@ -84,12 +79,11 @@ impl Setup {
         db.add_app_permissions(app_perms.as_slice())?;
 
         log::trace!("writing templates");
-        let templates = TemplateRenderer::new(&ctx, &db, &self.app_id, &self.pkg);
+        let templates = TemplateRenderer::new(&ctx, &db, &self.app_id);
 
         let setup_params = SetupParams::default()
             .set_project_name(project_name.as_ref())
-            .set_app_id(Some(self.app_id.as_str()))
-            .set_app_pkg(&self.pkg);
+            .set_app_id(Some(self.app_id.as_str()));
 
         templates.setup(setup_params)?;
 

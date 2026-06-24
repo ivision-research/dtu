@@ -22,7 +22,7 @@
     {% endfor %}
 
     <application
-        android:name="c.arve.App"
+        android:name="dtu.lib.App"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="Device Testing App"
@@ -43,7 +43,7 @@
         {% endfor %}
 
         <activity
-            android:name=".TestAppHomeActivity"
+            android:name="dtu.lib.TestAppHomeActivity"
             android:exported="true"
             android:theme="@style/AppTheme">
             <intent-filter>
@@ -54,28 +54,28 @@
         </activity>
 
         <activity
-            android:name=".TestAppExperimentingActivity"
+            android:name="dtu.lib.TestAppExperimentingActivity"
             android:exported="true"
             android:theme="@style/AppTheme" />
 
         <activity
-            android:name=".TestAppConfirmedActivity"
+            android:name="dtu.lib.TestAppConfirmedActivity"
             android:exported="true"
             android:theme="@style/AppTheme" />
 
         <activity
-            android:name=".TestAppFailedActivity"
+            android:name="dtu.lib.TestAppFailedActivity"
             android:exported="true"
             android:theme="@style/AppTheme" />
 
         <service
-            android:name=".Server"
+            android:name="dtu.lib.Server"
             android:foregroundServiceType="specialUse"
             android:exported="true"
             android:process=":server">
 
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Carve server" />
+                android:value="dtu server" />
         </service>
 
 

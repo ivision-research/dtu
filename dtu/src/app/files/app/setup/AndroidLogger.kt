@@ -1,4 +1,4 @@
-package c.arve
+package dtu.lib
 
 class AndroidLogger : AbstractLogger() {
     override fun info(input: String) {

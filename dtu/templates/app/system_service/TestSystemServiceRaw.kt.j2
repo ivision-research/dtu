@@ -1,9 +1,10 @@
-package c.arve
+package dtu
 
 {% let txn_num_var_name = "{}_TXN_CODE"|format(method|upper) %}
 
 import android.content.Context
 import android.os.Bundle
+import dtu.lib.*
 
 class {{ class }}Test(context: Context) : AbstractSystemServiceTest(context) {
 

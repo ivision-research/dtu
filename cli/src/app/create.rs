@@ -13,7 +13,7 @@ use crate::utils::{exec_open_file, prompt_choice};
 use dtu::askama::DynTemplate;
 use dtu::db;
 use dtu::db::device::models::{SystemService, SystemServiceMethod};
-use dtu::db::meta::db::{APP_ID_KEY, APP_PKG_KEY};
+use dtu::db::meta::db::APP_ID_KEY;
 use dtu::db::meta::models::InsertAppActivity;
 use dtu::db::{DeviceDatabase, MetaDatabase};
 use dtu::utils::ClassName;
@@ -64,10 +64,8 @@ impl ServiceFile {
         ensure_class_available(meta, class_name.as_ref())?;
 
         let service_pkg = self.pkg.as_ref().map(|it| it.as_str());
-        let pkg = meta.get_key_value(APP_PKG_KEY)?;
 
         let template = TestServiceRaw {
-            app_pkg: &pkg,
             class: class_name.as_ref(),
             txn_number: self.txn_id,
             service_class: &self.class,
@@ -121,10 +119,7 @@ impl GenericFile {
         let class_name = format!("Test{}", ensure_valid_name(&self.name));
         ensure_class_available(meta, &class_name)?;
 
-        let pkg = meta.get_key_value(APP_PKG_KEY)?;
-
         let template = TestGeneric {
-            app_pkg: &pkg,
             class: class_name.as_str(),
         };
 
@@ -172,10 +167,7 @@ impl ProviderFile {
             Ok(_) => {}
         }
 
-        let pkg = meta.get_key_value(APP_PKG_KEY)?;
-
         let template = TestProvider {
-            app_pkg: &pkg,
             class: class_name.as_str(),
             authority: self.authority.as_str(),
         };
@@ -265,10 +257,8 @@ impl SystemServiceFile {
 
         let txn_number = self.get_transaction_id(&db, &service)?;
         let method_name = self.get_method_name();
-        let pkg = meta.get_key_value(APP_PKG_KEY)?;
 
         let template = TestSystemServiceRaw {
-            app_pkg: &pkg,
             class: class_name.as_ref(),
             txn_number,
             service: &self.service,
@@ -365,7 +355,7 @@ fn add_template_activity(
     button_text: &Option<String>,
     open: bool,
 ) -> anyhow::Result<()> {
-    let name = format!("app/src/main/kotlin/c/arve/{}.kt", class_name);
+    let name = format!("app/src/main/kotlin/dtu/{}.kt", class_name);
     render_into(&ctx, class_name, name.as_str(), template)?;
 
     let button_text = button_text
@@ -382,8 +372,7 @@ fn add_template_activity(
     };
     meta.add_app_activity(&new_act)?;
     let id = meta.get_key_value(APP_ID_KEY)?;
-    let pkg = meta.get_key_value(APP_PKG_KEY)?;
-    let template = TemplateRenderer::new(ctx, meta, &id, &pkg);
+    let template = TemplateRenderer::new(ctx, meta, &id);
     template.update()?;
 
     if !open {

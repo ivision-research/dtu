@@ -1,4 +1,4 @@
-package c.arve
+package dtu.lib
 
 abstract class AbstractLogger : ILogger.Stub() {
     fun error(output: String, err: Throwable) {

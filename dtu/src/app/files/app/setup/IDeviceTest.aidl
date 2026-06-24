@@ -1,6 +1,6 @@
-package c.arve;
+package dtu.lib;
 
-import c.arve.ILogger;
+import dtu.lib.ILogger;
 import android.os.Bundle;
 
 interface IDeviceTest {

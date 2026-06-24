@@ -1,4 +1,4 @@
-package c.arve
+package dtu
 
 {% let iface_short = iface|class_simple_name %}
 {% let service_class_short = service_class|class_simple_name %}
@@ -9,6 +9,7 @@ import `{{ iface }}$Stub`
 import android.content.Context
 import android.os.Bundle
 import android.os.IBinder
+import dtu.lib.*
 
 class {{ class }}Test(context: Context): AbstractServiceTest(context) {
 

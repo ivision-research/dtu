@@ -2,8 +2,6 @@
 
 `dtu` is a toolkit for testing entire Android devices, without requiring root access. The goal is to collect as much data as possible from a generic Android device and store it in formats that are accessible via the command line tool or associated library.
 
-Check out the [release blog post](https://research.ivision.com/introducing-dtu.html).
-
 ## Installation
 
 You can install `dtu` via `nix` or with `cargo`. The `nix` install will provide you with all of the associated binaries, of which there are quite a few, at known compatible versions if you use the `dtuEnv` package.
@@ -117,6 +115,8 @@ Look around `dtu --help` for more commands like these, as this documentation cou
 ### Using the test application
 
 The test application is intended to be modified and rebuilt over and over to run various tests that require Kotlin code to execute instead of the limited functionality provided by the command line tool. There are templates for different tests that can be generated with the `dtu app new-*` commands, and tests can be run via the `dtu app run-test ...` command.
+
+Note that various `dtu app` commands will potentially regenerate files in the `test_app` directory. To completely disable this, create the `test_app/.dtu-noregen` file. You will be required to manage all base activities and manifests yourself with this flag set.
 
 ## File system Dumps
 

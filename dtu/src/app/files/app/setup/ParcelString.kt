@@ -1,4 +1,4 @@
-package c.arve
+package dtu.lib
 
 import android.content.ContentValues
 import android.content.Intent

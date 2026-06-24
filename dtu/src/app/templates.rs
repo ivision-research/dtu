@@ -68,7 +68,6 @@ impl Default for Metadata {
 #[template(path = "app/Config.kt.j2")]
 struct Config<'a> {
     app_id: &'a str,
-    app_pkg: &'a str,
     app_server_port: u16,
 }
 
@@ -76,7 +75,6 @@ impl<'a> From<&'a SetupParams<'a>> for Config<'a> {
     fn from(value: &'a SetupParams<'a>) -> Self {
         Self {
             app_id: value.get_app_id(),
-            app_pkg: value.app_pkg,
             app_server_port: value.app_server_port,
         }
     }
@@ -86,30 +84,20 @@ fn get_app_main_dir(ctx: &dyn Context) -> Result<PathBuf> {
     Ok(ctx.get_test_app_dir()?.join(Path::new("app/src/main")))
 }
 
-fn get_app_aidl_dir(ctx: &dyn Context, app_pkg: &str) -> Result<PathBuf> {
-    let mut base = ctx.get_test_app_dir()?.join(Path::new("app/src/main/aidl"));
-
-    for subdir in app_pkg.split('.') {
-        base.push(subdir);
-    }
-
-    Ok(base)
+fn get_lib_aidl_dir(ctx: &dyn Context) -> Result<PathBuf> {
+    Ok(ctx
+        .get_test_app_dir()?
+        .join(Path::new("app/src/main/aidl/dtu/lib")))
 }
 
 fn get_app_res_dir(ctx: &dyn Context) -> Result<PathBuf> {
     Ok(get_app_main_dir(ctx)?.join("res"))
 }
 
-fn get_app_source_dir(ctx: &dyn Context, app_pkg: &str) -> Result<PathBuf> {
-    let mut base = ctx
+fn get_lib_source_dir(ctx: &dyn Context) -> Result<PathBuf> {
+    Ok(ctx
         .get_test_app_dir()?
-        .join(Path::new("app/src/main/kotlin"));
-
-    for subdir in app_pkg.split('.') {
-        base.push(subdir);
-    }
-
-    Ok(base)
+        .join(Path::new("app/src/main/kotlin/dtu/lib")))
 }
 
 #[derive(Template)]
@@ -129,17 +117,12 @@ impl<'a> From<&'a SetupParams<'a>> for GradleSettings<'a> {
 #[derive(Template)]
 #[template(path = "app/GeneratedManifest.xml.j2")]
 pub struct GeneratedManifest<'a> {
-    pub app_pkg: &'a str,
     pub permissions: &'a [&'a str],
     pub activities: &'a [&'a str],
 }
 
 #[define_setters]
 pub struct SetupParams<'a> {
-    pub app_pkg: &'a str,
-
-    /// Optional app_id, this will be the `applicationId` part of the
-    /// app/build.gradle. If this isn't set, `app_pkg` is used.
     pub app_id: Option<&'a str>,
 
     pub app_server_port: u16,
@@ -156,7 +139,7 @@ pub struct SetupParams<'a> {
 
 struct Button<'a> {
     pub id: &'a str,
-    pub target: &'a str,
+    pub target: String,
     pub txt: &'a str,
 }
 
@@ -169,7 +152,6 @@ struct ResConfirmedActivity<'a> {
 #[derive(Template)]
 #[template(path = "app/TestAppConfirmedActivity.kt.j2")]
 struct ConfirmedActivityKt<'a> {
-    pub app_pkg: &'a str,
     buttons: &'a [Button<'a>],
 }
 
@@ -182,7 +164,6 @@ struct ResFailedActivity<'a> {
 #[derive(Template)]
 #[template(path = "app/TestAppFailedActivity.kt.j2")]
 struct FailedActivityKt<'a> {
-    pub app_pkg: &'a str,
     buttons: &'a [Button<'a>],
 }
 
@@ -195,7 +176,6 @@ struct ResExperimentingActivity<'a> {
 #[derive(Template)]
 #[template(path = "app/TestAppExperimentingActivity.kt.j2")]
 struct ExperimentingActivityKt<'a> {
-    pub app_pkg: &'a str,
     buttons: &'a [Button<'a>],
 }
 
@@ -218,7 +198,6 @@ impl<'a> From<&'a SetupParams<'a>> for RootGradleBuild<'a> {
 #[template(path = "app/setup/app_build.gradle.kts.j2")]
 pub struct AppGradleBuild<'a> {
     pub app_id: &'a str,
-    pub app_pkg: &'a str,
     pub build_tools_version: &'a str,
     pub compile_sdk_version: u32,
     pub min_sdk_version: u32,
@@ -229,8 +208,7 @@ pub struct AppGradleBuild<'a> {
 impl<'a> From<&'a SetupParams<'a>> for AppGradleBuild<'a> {
     fn from(value: &'a SetupParams<'a>) -> Self {
         Self {
-            app_id: value.app_id.unwrap_or(value.app_pkg),
-            app_pkg: value.app_pkg,
+            app_id: value.app_id.unwrap_or(DEFAULT_APP_ID),
             build_tools_version: value.build_tools_version,
             compile_sdk_version: value.compile_sdk_version,
             min_sdk_version: value.min_sdk_version,
@@ -245,15 +223,15 @@ pub const DEFAULT_COMPILE_SDK: u32 = 36;
 pub const DEFAULT_MIN_SDK: u32 = 27;
 pub const DEFAULT_TARGET_SDK: u32 = DEFAULT_COMPILE_SDK;
 pub const DEFAULT_ANDROID_PLUGIN_VERSION: &'static str = "9.0.0";
-pub const DEFAULT_PKG_NAME: &'static str = "c.arve";
-pub const DEFAULT_APP_ID: &'static str = "c.arve";
+pub const PKG_NAME: &'static str = "dtu";
+pub const LIB_PKG_NAME: &'static str = "dtu.lib";
+pub const DEFAULT_APP_ID: &'static str = "d.tu";
 pub const DEFAULT_PROJECT_NAME: &'static str = "DeviceTestApp";
 pub const DEFAULT_BUILD_TOOLS_VERSION: &'static str = "36.0.0";
 
 impl<'a> Default for AppGradleBuild<'a> {
     fn default() -> Self {
         Self {
-            app_pkg: DEFAULT_PKG_NAME,
             app_id: DEFAULT_APP_ID,
             compile_sdk_version: DEFAULT_COMPILE_SDK,
             build_tools_version: DEFAULT_BUILD_TOOLS_VERSION,
@@ -266,14 +244,13 @@ impl<'a> Default for AppGradleBuild<'a> {
 
 impl<'a> SetupParams<'a> {
     fn get_app_id(&self) -> &'a str {
-        self.app_id.unwrap_or(self.app_pkg)
+        self.app_id.unwrap_or(DEFAULT_APP_ID)
     }
 }
 
 impl<'a> Default for SetupParams<'a> {
     fn default() -> Self {
         Self {
-            app_pkg: DEFAULT_PKG_NAME,
             app_server_port: APP_SERVER_PORT,
             project_name: DEFAULT_PROJECT_NAME,
             app_id: Some(DEFAULT_APP_ID),
@@ -320,7 +297,6 @@ pub fn render_into<P: AsRef<Path> + ?Sized>(
 }
 
 pub struct TemplateRenderer<'a> {
-    app_pkg: &'a str,
     app_id: &'a str,
     ctx: &'a dyn Context,
     meta: &'a dyn MetaDatabase,
@@ -337,18 +313,8 @@ macro_rules! write_raw_file {
 }
 
 impl<'a> TemplateRenderer<'a> {
-    pub fn new(
-        ctx: &'a dyn Context,
-        meta: &'a dyn MetaDatabase,
-        app_id: &'a str,
-        app_pkg: &'a str,
-    ) -> Self {
-        Self {
-            ctx,
-            meta,
-            app_id,
-            app_pkg,
-        }
+    pub fn new(ctx: &'a dyn Context, meta: &'a dyn MetaDatabase, app_id: &'a str) -> Self {
+        Self { ctx, meta, app_id }
     }
 
     #[inline]
@@ -376,16 +342,14 @@ impl<'a> TemplateRenderer<'a> {
 
         let app_config = Config {
             app_id: self.app_id,
-            app_pkg: self.app_pkg,
             app_server_port: get_server_port(self.ctx)?,
         };
 
-        let src_dir = get_app_source_dir(self.ctx, self.app_pkg)?;
+        let src_dir = get_lib_source_dir(self.ctx)?;
 
         render_into(self.ctx, "Config.kt", &src_dir, &app_config)?;
 
         let man = GeneratedManifest {
-            app_pkg: self.app_pkg,
             permissions: perm_names.as_slice(),
             activities: activity_names.as_slice(),
         };
@@ -417,10 +381,7 @@ impl<'a> TemplateRenderer<'a> {
                     &__res,
                 )?;
 
-                let __kt = $kt_name {
-                    app_pkg: self.app_pkg,
-                    buttons,
-                };
+                let __kt = $kt_name { buttons };
 
                 let __into = src_dir.join(concat!("TestApp", $class, "Activity.kt"));
 
@@ -481,7 +442,6 @@ impl<'a> TemplateRenderer<'a> {
 
     /// Sets up the test application
     pub fn setup(&self, params: SetupParams) -> Result<()> {
-        let app_pkg = params.app_pkg;
         if log::log_enabled!(log::Level::Trace) {
             log::trace!(
                 "App base dir is {}",
@@ -494,9 +454,9 @@ impl<'a> TemplateRenderer<'a> {
         let settings = GradleSettings::from(&params);
         render_into(self.ctx, "GradleSettings", "settings.gradle.kts", &settings)?;
 
-        let aidl_dir = get_app_aidl_dir(self.ctx, app_pkg)?;
+        let aidl_dir = get_lib_aidl_dir(self.ctx)?;
         ensure_dir_exists(&aidl_dir)?;
-        let src_dir = get_app_source_dir(self.ctx, app_pkg)?;
+        let src_dir = get_lib_source_dir(self.ctx)?;
         ensure_dir_exists(&src_dir)?;
         let res_dir = get_app_res_dir(self.ctx)?;
         ensure_dir_exists(&res_dir)?;
@@ -520,7 +480,6 @@ impl<'a> TemplateRenderer<'a> {
         )?;
 
         let man = GeneratedManifest {
-            app_pkg: params.app_pkg,
             activities: &[],
             permissions: &[],
         };
@@ -665,7 +624,7 @@ fn activties_to_buttons(activities: &Vec<AppActivity>, status: AppTestStatus) ->
         if a.status == status {
             btns.push(Button {
                 id: a.button_android_id.as_str(),
-                target: a.name.as_str(),
+                target: format!("{PKG_NAME}.{}", a.name.as_str()),
                 txt: a.button_text.as_str(),
             })
         }
@@ -676,8 +635,6 @@ fn activties_to_buttons(activities: &Vec<AppActivity>, status: AppTestStatus) ->
 #[derive(Template)]
 #[template(path = "app/generic/TestGeneric.kt.j2")]
 pub struct TestGeneric<'a> {
-    /// Package name
-    pub app_pkg: &'a str,
     /// Name of the class to create
     pub class: &'a str,
 }
@@ -685,8 +642,6 @@ pub struct TestGeneric<'a> {
 #[derive(Template)]
 #[template(path = "app/service/TestServiceRaw.kt.j2")]
 pub struct TestServiceRaw<'a> {
-    /// Package name
-    pub app_pkg: &'a str,
     /// Name of the class to create
     pub class: &'a str,
     /// Method transaction number
@@ -707,8 +662,6 @@ pub struct TestServiceRaw<'a> {
 #[derive(Template)]
 #[template(path = "app/service/TestServiceWithLib.kt.j2")]
 pub struct TestServiceWithLib<'a> {
-    /// Package name
-    pub app_pkg: &'a str,
     /// Name of the class to create
     pub class: &'a str,
 
@@ -730,8 +683,6 @@ pub struct TestServiceWithLib<'a> {
 #[derive(Template)]
 #[template(path = "app/provider/TestProvider.kt.j2")]
 pub struct TestProvider<'a> {
-    /// Package name
-    pub app_pkg: &'a str,
     /// Name of the class to create
     pub class: &'a str,
     /// Provider authority
@@ -741,8 +692,6 @@ pub struct TestProvider<'a> {
 #[derive(Template)]
 #[template(path = "app/system_service/TestSystemServiceRaw.kt.j2")]
 pub struct TestSystemServiceRaw<'a> {
-    /// Package name
-    pub app_pkg: &'a str,
     /// Name of the class to create
     pub class: &'a str,
     /// Method transaction number
@@ -758,8 +707,6 @@ pub struct TestSystemServiceRaw<'a> {
 #[derive(Template)]
 #[template(path = "app/system_service/TestSystemServiceWithLib.kt.j2")]
 pub struct TestSystemServiceWithLib<'a> {
-    /// Package name
-    pub app_pkg: &'a str,
     /// Name of the class to create
     pub class: &'a str,
     /// Name of the target service

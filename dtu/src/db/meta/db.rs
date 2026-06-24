@@ -11,7 +11,6 @@ use super::schema;
 use crate::prereqs::Prereq;
 
 pub const APP_ID_KEY: &'static str = "app_id";
-pub const APP_PKG_KEY: &'static str = "app_pkg";
 
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations/meta_migrations/");
 

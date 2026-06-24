@@ -1,10 +1,10 @@
-package c.arve
+package dtu.lib
 
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.content.Intent
 
-import c.arve.databinding.HomeActivityBinding
+import dtu.databinding.HomeActivityBinding
 
 class TestAppHomeActivity : AppCompatActivity() {
 

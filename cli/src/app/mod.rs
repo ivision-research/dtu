@@ -20,8 +20,8 @@ use setup::Setup;
 mod create;
 use create::*;
 use dtu::app::server::get_server_port;
-use dtu::app::{render_into, AppGradleBuild, AppTestStatus, TemplateRenderer};
-use dtu::db::meta::db::{APP_ID_KEY, APP_PKG_KEY};
+use dtu::app::{render_into, AppGradleBuild, AppTestStatus, TemplateRenderer, LIB_PKG_NAME};
+use dtu::db::meta::db::APP_ID_KEY;
 use dtu::db::meta::models::AppActivity;
 use dtu::db::{MetaDatabase, MetaSqliteDatabase};
 
@@ -150,8 +150,7 @@ impl App {
             Subcommand::SetAppId(c) => self.set_app_id(&ctx, &meta, &c.id)?,
             Subcommand::Install => {
                 let app_id = meta.get_key_value(APP_ID_KEY)?;
-                let pkg = meta.get_key_value(APP_PKG_KEY)?;
-                self.install(&ctx, &app_id, &pkg)?
+                self.install(&ctx, &app_id)?
             }
             Subcommand::ChangeStatus(c) => c.run(&ctx, &meta)?,
             Subcommand::RemoveTest(c) => c.run(&ctx, &meta)?,
@@ -168,10 +167,9 @@ impl App {
     }
 
     fn start_server(&self, ctx: &dyn Context, meta: &impl MetaDatabase) -> anyhow::Result<()> {
-        let app_pkg = meta.get_key_value(APP_PKG_KEY)?;
         let app_id = meta.get_key_value(APP_ID_KEY)?;
         let adb = get_adb(ctx, true)?;
-        let cmd = format!("am start-service -n '{app_id}/{app_pkg}.Server'");
+        let cmd = format!("am start-service -n '{app_id}/{LIB_PKG_NAME}.Server'");
         let res = adb.shell(&cmd)?;
         res.err_on_status()?;
         Ok(())
@@ -188,8 +186,7 @@ impl App {
     fn start_app(&self, ctx: &dyn Context, meta: &impl MetaDatabase) -> anyhow::Result<()> {
         let adb = get_adb(ctx, true)?;
         let app_id = meta.get_key_value(APP_ID_KEY)?;
-        let app_pkg = meta.get_key_value(APP_PKG_KEY)?;
-        self.am_start_app(&adb, &app_id, &app_pkg)
+        self.am_start_app(&adb, &app_id)
     }
 
     fn set_app_id(
@@ -198,10 +195,9 @@ impl App {
         meta: &impl MetaDatabase,
         id: &str,
     ) -> anyhow::Result<()> {
-        let pkg = meta.get_key_value(APP_PKG_KEY)?;
         meta.update_key_value(APP_ID_KEY, id)?;
         let dir = ctx.get_test_app_dir()?.join("app").join("build.gradle.kts");
-        let build_template = AppGradleBuild::default().set_app_id(id).set_app_pkg(&pkg);
+        let build_template = AppGradleBuild::default().set_app_id(id);
         render_into(ctx, "build.gradle", &dir, &build_template)?;
         Ok(())
     }
@@ -230,7 +226,7 @@ impl App {
         Ok(())
     }
 
-    fn install(&self, ctx: &dyn Context, app_id: &str, app_pkg: &str) -> anyhow::Result<()> {
+    fn install(&self, ctx: &dyn Context, app_id: &str) -> anyhow::Result<()> {
         let adb = get_adb(ctx, true)?;
         let app_dir = ctx.get_test_app_dir()?;
         let output = app_dir.join(Path::new(
@@ -240,13 +236,12 @@ impl App {
         println!("Installing the application via ADB");
         adb.install(output_string)?;
         println!("Starting the application...");
-        self.am_start_app(&adb, app_id, app_pkg)
+        self.am_start_app(&adb, app_id)
     }
 
-    fn am_start_app(&self, adb: &impl Adb, app_id: &str, app_pkg: &str) -> anyhow::Result<()> {
+    fn am_start_app(&self, adb: &impl Adb, app_id: &str) -> anyhow::Result<()> {
         adb.shell(&format!(
-            "am start-activity -n {}/{}.TestAppHomeActivity",
-            app_id, app_pkg
+            "am start-activity -n {app_id}/{LIB_PKG_NAME}.TestAppHomeActivity",
         ))?
         .err_on_status()?;
         Ok(())
@@ -254,9 +249,15 @@ impl App {
 }
 
 pub(crate) fn regen_templates(ctx: &dyn Context, meta: &impl MetaDatabase) -> anyhow::Result<()> {
+
+    let dir = ctx.get_test_app_dir()?;
+    let noregen = dir.join(".dtu-noregen").exists();
+    if noregen {
+        return Ok(());
+    }
+
     let app_id = meta.get_key_value(APP_ID_KEY)?;
-    let pkg = meta.get_key_value(APP_PKG_KEY)?;
-    let template = TemplateRenderer::new(ctx, meta, &app_id, &pkg);
+    let template = TemplateRenderer::new(ctx, meta, &app_id);
     template.update()?;
     Ok(())
 }
@@ -275,10 +276,9 @@ impl RemoveTest {
     fn run(&self, ctx: &dyn Context, meta: &impl MetaDatabase) -> anyhow::Result<()> {
         meta.delete_app_activity_by_id(self.activity.id)?;
         let id = meta.get_key_value(APP_ID_KEY)?;
-        let pkg = meta.get_key_value(APP_PKG_KEY)?;
-        let template = TemplateRenderer::new(ctx, meta, &id, &pkg);
+        let template = TemplateRenderer::new(ctx, meta, &id);
         template.update()?;
-        let path = format!("app/src/main/kotlin/c/arve/{}.kt", self.activity.name);
+        let path = format!("app/src/main/kotlin/dtu/{}.kt", self.activity.name);
         let path = ctx.get_test_app_dir()?.join(path.as_str());
         fs::remove_file(&path)?;
         Ok(())

@@ -1,10 +1,11 @@
-package c.arve
+package dtu
 
 {% let service_class_short = service_class|class_simple_name %}
 
 import android.content.Context
 import android.os.IBinder
 import android.os.Bundle
+import dtu.lib.*
 
 class {{ class }}Test(context: Context) : AbstractServiceTest(context) {
 

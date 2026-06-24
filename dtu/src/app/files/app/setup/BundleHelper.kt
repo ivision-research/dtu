@@ -1,4 +1,4 @@
-package c.arve
+package dtu.lib
 
 import android.os.Bundle
 import kotlin.reflect.KClass
