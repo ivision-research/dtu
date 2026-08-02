@@ -137,7 +137,6 @@ impl GraphSqliteDatabase {
             .inner_join(methods::table.on(method_strings::method.eq(methods::id)))
             .inner_join(classes::table.on(classes::id.eq(methods::class)))
             .inner_join(sources::table)
-            .filter(strings::string.eq(string))
             .select(MethodSpecRow::as_select()));
         self.with_connection(|c| -> Result<Vec<MethodSpec>> {
             let rows = q.load::<MethodSpecRow>(c)?;
@@ -152,7 +151,6 @@ impl GraphSqliteDatabase {
             .inner_join(methods::table.on(method_strings::method.eq(methods::id)))
             .inner_join(classes::table.on(classes::id.eq(methods::class)))
             .inner_join(sources::table)
-            .filter(strings::string.eq(string))
             .select(MethodSpecRow::as_select()));
         self.with_connection(|c| -> Result<Vec<MethodSpec>> {
             let rows = q.load::<MethodSpecRow>(c)?;
