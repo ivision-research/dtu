@@ -1,3 +1,9 @@
+# 6.0.1
+
+- Critical bugfix, 6.0.0 baksmali was broken
+- Bugfix in LIKE string searching for methods
+- Use `start-foreground-service` for starting the server
+
 # 6.0.0
 
 - **BREAKING** No longer output `strings.txt` with smalisa output. This has been reworked to include strings in the graph database so they can be queried alongside the graph. It is still possible to get all strings for a given source, but this file no longer exists
