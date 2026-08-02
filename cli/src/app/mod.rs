@@ -328,7 +328,7 @@ fn am_start_app(adb: &impl Adb, app_id: &str) -> anyhow::Result<()> {
 fn start_server(ctx: &dyn Context, meta: &impl MetaDatabase) -> anyhow::Result<()> {
     let app_id = meta.get_key_value(APP_ID_KEY)?;
     let adb = get_adb(ctx, true)?;
-    let cmd = format!("am start-service -n '{app_id}/{LIB_PKG_NAME}.Server'");
+    let cmd = format!("am start-foreground-service -n '{app_id}/{LIB_PKG_NAME}.Server'");
     let res = adb.shell(&cmd)?;
     res.err_on_status()?;
     Ok(())
