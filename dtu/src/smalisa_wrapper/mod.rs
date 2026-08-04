@@ -1,4 +1,4 @@
-use std::io;
+use std::{fs::File, io};
 
 mod gen_csvs;
 pub use gen_csvs::{write_analysis_files, Event, CSV};
@@ -49,4 +49,13 @@ impl From<io::Error> for Error {
     fn from(value: io::Error) -> Self {
         Self::IO(value)
     }
+}
+
+pub(crate) fn arena_for_file(file: &File, def: Option<usize>) -> smalisa::Arena {
+    let size = file
+        .metadata()
+        .ok()
+        .and_then(|it| usize::try_from(it.len()).ok())
+        .unwrap_or(def.unwrap_or(1 * 1024));
+    smalisa::Arena::with_capacity(size)
 }

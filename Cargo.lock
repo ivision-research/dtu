@@ -738,7 +738,7 @@ dependencies = [
 
 [[package]]
 name = "dtu"
-version = "6.0.0"
+version = "6.1.0"
 dependencies = [
  "anyhow",
  "askama",
@@ -782,7 +782,7 @@ dependencies = [
 
 [[package]]
 name = "dtu-cli"
-version = "6.0.0"
+version = "6.1.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -813,7 +813,7 @@ dependencies = [
 
 [[package]]
 name = "dtu-complete"
-version = "6.0.0"
+version = "6.1.0"
 dependencies = [
  "anyhow",
  "dtu",
@@ -825,7 +825,7 @@ dependencies = [
 
 [[package]]
 name = "dtu-decompile"
-version = "6.0.0"
+version = "6.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -835,7 +835,7 @@ dependencies = [
 
 [[package]]
 name = "dtu-fs"
-version = "6.0.0"
+version = "6.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -844,7 +844,7 @@ dependencies = [
 
 [[package]]
 name = "dtu-py"
-version = "6.0.0"
+version = "6.1.0"
 dependencies = [
  "anyhow",
  "dtu",
@@ -1847,7 +1847,7 @@ dependencies = [
 
 [[package]]
 name = "protoc_generate"
-version = "6.0.0"
+version = "6.1.0"
 dependencies = [
  "protobuf-codegen",
 ]
@@ -2335,11 +2335,11 @@ dependencies = [
 
 [[package]]
 name = "smalisa"
-version = "0.3.0"
-source = "git+https://github.com/ivision-research/smalisa.git?rev=1c6b4e623524257a83ea474e410f7208deb8b347#1c6b4e623524257a83ea474e410f7208deb8b347"
+version = "1.0.0"
+source = "git+https://github.com/ivision-research/smalisa.git?rev=baad397ca45a0d7c558bf5ab707be165b27f22e0#baad397ca45a0d7c558bf5ab707be165b27f22e0"
 dependencies = [
  "bitflags 2.9.0",
- "smallvec",
+ "bumpalo",
  "thiserror 1.0.69",
 ]
 

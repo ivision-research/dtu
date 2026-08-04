@@ -30,6 +30,7 @@ use crate::db::MetaDatabase;
 use crate::fsdump::FSDumpAccess;
 use crate::manifest::{self, ApktoolManifestResolver, IPC};
 use crate::prereqs::Prereq;
+use crate::smalisa_wrapper::arena_for_file;
 use crate::tasks::task::{EventMonitor, TaskCancelCheck};
 use crate::unknownbool::UnknownBool;
 use crate::utils::class_name::ClassName;
@@ -547,7 +548,8 @@ impl<'a> AddManifestTask<'a> {
             Ok(f) => f,
         };
 
-        let lexer = Lexer::new_buffered(&mut file);
+        let arena = arena_for_file(&file, None);
+        let lexer = Lexer::new_buffered(&mut file, &arena);
         let mut parser = Parser::new(lexer);
 
         let parsed = match parse_class(&mut parser) {
@@ -877,11 +879,11 @@ impl<'a> AddSystemServiceTask<'a> {
     /// Parse a file with smalisa to find the class name
     fn get_class_from_file(&self, path: &PathBuf) -> SetupResult<ClassName> {
         let mut file = open_file(&path)?;
-        let lexer = Lexer::new_buffered(&mut file);
+        let arena = arena_for_file(&file, None);
+        let lexer = Lexer::new_buffered(&mut file, &arena);
         let mut parser = Parser::new(lexer);
-        let mut line = Line::default();
         loop {
-            match parser.parse_line_into(&mut line) {
+            let line = match parser.parse_line() {
                 Err(e) if e.is_eof() => {
                     return Err(SetupError::Generic(format!(
                         "invalid smali file {} doesn't contain .class directive",
@@ -889,8 +891,8 @@ impl<'a> AddSystemServiceTask<'a> {
                     )))
                 }
                 Err(e) => return Err(e.into()),
-                Ok(_) => {}
-            }
+                Ok(v) => v,
+            };
             match line {
                 Line::Class(_, name) => return Ok(ClassName::from(name)),
                 _ => {}
@@ -924,7 +926,8 @@ impl<'a> AddSystemServiceTask<'a> {
         };
 
         let mut file = open_file(&path)?;
-        let lexer = Lexer::new_buffered(&mut file);
+        let arena = arena_for_file(&file, None);
+        let lexer = Lexer::new_buffered(&mut file, &arena);
         let mut parser = Parser::new(lexer);
 
         let class = parse_class(&mut parser).map_err(|e| SetupError::Smalisa(e.to_string()))?;
@@ -1118,20 +1121,19 @@ impl<'a> AddSystemServiceTask<'a> {
     ) -> SetupResult<HashMap<String, MethodData>> {
         let mut methods: HashMap<String, MethodData> = HashMap::new();
         let mut stub_file = open_file(stub_path)?;
-        let stub_lexer = Lexer::new_buffered(&mut stub_file);
+        let arena = arena_for_file(&stub_file, None);
+        let stub_lexer = Lexer::new_buffered(&mut stub_file, &arena);
         let mut stub_parser = Parser::new(stub_lexer);
-
-        let mut line = Line::default();
 
         // Stub file contains the TRANSACTION_{NAME} fields
 
         loop {
             self.cancel_check()?;
-            match stub_parser.parse_line_into(&mut line) {
+            let line = match stub_parser.parse_line() {
                 Err(e) if e.is_eof() => break,
                 Err(e) => return Err(e.into()),
-                Ok(_) => {}
-            }
+                Ok(v) => v,
+            };
             match &line {
                 Line::Field(fld) => {
                     if fld.name.starts_with("TRANSACTION") {
@@ -1216,17 +1218,17 @@ impl<'a> AddSystemServiceTask<'a> {
     ) -> SetupResult<bool> {
         let mut mod_count = 0;
 
-        let mut line = Line::default();
         let mut iface_file = open_file(&iface_path)?;
-        let iface_lexer = Lexer::new_buffered(&mut iface_file);
+        let arena = arena_for_file(&iface_file, None);
+        let iface_lexer = Lexer::new_buffered(&mut iface_file, &arena);
         let mut iface_parser = Parser::new(iface_lexer);
         loop {
             self.cancel_check()?;
-            match iface_parser.parse_line_into(&mut line) {
+            let line = match iface_parser.parse_line() {
                 Err(e) if e.is_eof() => break,
                 Err(e) => return Err(e.into()),
-                Ok(_) => {}
-            }
+                Ok(v) => v,
+            };
             match &line {
                 Line::MethodHeader(hdr) => {
                     if let Some(meta) = methods.get_mut(hdr.name) {

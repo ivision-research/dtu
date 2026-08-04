@@ -9,7 +9,7 @@ use csv;
 use itertools::Itertools;
 use rayon::prelude::*;
 use smalisa::instructions::{InvArgs, Invocation};
-use smalisa::{AccessFlag, Field, Lexer, Line, LineParse, Parser, Primitive, RawLiteral};
+use smalisa::{AccessFlag, Arena, Field, Lexer, Line, LineParse, Parser, Primitive, RawLiteral};
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fmt;
@@ -718,9 +718,14 @@ where
     let mut class = "";
     let mut calling_method_args = "";
     let mut calling_method_name = "";
-    let lexer = Lexer::new_buffered(&file);
+    let arena_size = ent
+        .metadata()
+        .ok()
+        .and_then(|it| usize::try_from(it.len()).ok())
+        .unwrap_or(4 * 1024);
+    let arena = Arena::with_capacity(arena_size);
+    let lexer = Lexer::new_buffered(&file, &arena);
     let mut parser = Parser::new(lexer);
-    let mut line = Line::Empty;
 
     // It's worth doing some deduping in this method since there are often duplicates and it makes
     // things a little easier on the global deduplication
@@ -749,13 +754,11 @@ where
     }
 
     loop {
-        let res = parser.parse_line_into(&mut line);
-        if let Err(perr) = res {
-            if perr.is_eof() {
-                break;
-            }
-            return Err(Error::from(perr));
-        }
+        let line = match parser.parse_line() {
+            Err(e) if e.is_eof() => break,
+            Err(e) => return Err(Error::from(e)),
+            Ok(v) => v,
+        };
         match line {
             Line::Class(flags, clazz) => {
                 if class_ignore_func(clazz) {
