@@ -88,7 +88,7 @@ impl SystemServiceMethodFilterBox {
             combo_expanded: false,
             only_new: false,
             only_modified: false,
-            only_binders: true,
+            only_binders: false,
         }
     }
 
