@@ -118,7 +118,7 @@ impl TestContext {
 
     pub fn get_temp_path(&self, suffix: Option<&str>) -> PathBuf {
         let mut rng = rand::thread_rng();
-        let rand_name: u64 = rng.gen();
+        let rand_name: u64 = rng.r#gen();
         let name = match suffix {
             Some(v) => format!("{}.{}", rand_name, v),
             None => rand_name.to_string(),
@@ -157,7 +157,7 @@ impl Drop for TestContext {
 impl Default for TestContext {
     fn default() -> Self {
         let mut rng = rand::thread_rng();
-        let rand_name: u64 = rng.gen();
+        let rand_name: u64 = rng.r#gen();
         let td = env::temp_dir().join(format!("dtu_test_base_{}", rand_name));
 
         if td.exists() {

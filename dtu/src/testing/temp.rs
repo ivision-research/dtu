@@ -49,7 +49,7 @@ impl TmpDir {
     #[allow(dead_code)]
     pub fn create_file_suffix(&self, suffix: Option<&str>, content: Option<&str>) -> PathBuf {
         let mut rng = rand::thread_rng();
-        let rand: u32 = rng.gen();
+        let rand: u32 = rng.r#gen();
         let name = match suffix {
             None => rand.to_string(),
             Some(v) => format!("{}.{}", rand, v),
@@ -75,7 +75,7 @@ impl Drop for TmpDir {
 pub fn tmp_dir() -> TmpDir {
     let base = env::temp_dir();
     let mut rng = rand::thread_rng();
-    let rand_name: u32 = rng.gen();
+    let rand_name: u32 = rng.r#gen();
     let temp_dir = base.join(rand_name.to_string());
     let _ = fs::create_dir(&temp_dir);
     TmpDir {

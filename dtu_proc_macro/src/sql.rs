@@ -334,8 +334,8 @@ fn transform_string_to_str(f: &Field) -> Field {
                 PathArguments::None => make_str_ref_type(lifetime),
                 PathArguments::AngleBracketed(sargs) => {
                     let mut args = sargs.clone();
-                    let gen = args.args.first_mut().unwrap();
-                    match gen {
+                    let gen_ = args.args.first_mut().unwrap();
+                    match gen_ {
                         GenericArgument::Type(ty) => {
                             *ty = make_str_ref_type(lifetime);
                         }

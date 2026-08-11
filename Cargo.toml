@@ -12,9 +12,9 @@ members = [
 
 resolver = "2"
 
-
 [workspace.package]
 version = "6.1.0"
+edition = "2024"
 
 [workspace.dependencies]
 clap = { version = "4.5", features = ["derive"] }

@@ -1,7 +1,7 @@
 [package]
 name = "dtu"
 version.workspace = true
-edition = "2021"
+edition.workspace = true
 
 [dependencies]
 dtu_proc_macro = { path = "../dtu_proc_macro" }

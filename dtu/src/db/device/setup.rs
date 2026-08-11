@@ -980,7 +980,7 @@ impl<'a> AddSystemServiceTask<'a> {
         hash_type(&mut hasher, &m.return_type);
         for line in m.lines.iter() {
             match line {
-                MethodLine::Instruction(ref ins) => {
+                MethodLine::Instruction(ins) => {
                     let bits = ins.instruction().bits();
                     hasher.update(bits.to_be_bytes());
                     let args = ins.args();

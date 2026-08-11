@@ -1,6 +1,6 @@
 [package]
 name = "dtu-py"
-edition = "2024"
+edition.workspace = true
 version.workspace = true
 
 [lib]
