@@ -125,7 +125,7 @@ impl SystemServices {
             &inum_hash_key(diff_id.unwrap_or(-1))
         );
 
-        let json = project_cacheable(&ctx, &cache_path, false, || {
+        let json = project_cacheable(ctx, &cache_path, false, || {
             self.get_json_output(db, diff_id, services)
         })?;
 

@@ -1,4 +1,3 @@
-use blanket::blanket;
 use once_cell::sync::OnceCell;
 use std::env;
 use std::path::PathBuf;
@@ -45,7 +44,6 @@ fn find_program(prog: &str) -> Option<String> {
 ///
 /// Most methods on this trait have a default implementation that is perfectly
 /// safe to leave unchanged.
-#[blanket(derive(Ref, Box))]
 pub trait Context: Send + Sync {
     /// Returns the target Android API level.
     fn get_target_api_level(&self) -> u32;

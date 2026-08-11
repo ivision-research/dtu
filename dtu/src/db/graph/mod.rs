@@ -25,5 +25,5 @@ pub type DefaultGraphDatabase = GraphSqliteDatabase;
 
 /// Get the default GraphDB implementation
 pub fn get_default_graphdb(ctx: &dyn crate::Context) -> super::common::Result<GraphSqliteDatabase> {
-    Ok(GraphSqliteDatabase::new(&ctx)?)
+    Ok(GraphSqliteDatabase::new(ctx)?)
 }

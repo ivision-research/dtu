@@ -356,7 +356,7 @@ fn add_template_activity(
     open: bool,
 ) -> anyhow::Result<()> {
     let name = format!("app/src/main/kotlin/dtu/{}.kt", class_name);
-    render_into(&ctx, class_name, name.as_str(), template)?;
+    render_into(ctx, class_name, name.as_str(), template)?;
 
     let button_text = button_text
         .as_ref()
@@ -381,7 +381,7 @@ fn add_template_activity(
 
     let full_path = ctx.get_test_app_dir()?.join(name);
     let full_path_string = full_path.to_str().expect("valid paths");
-    exec_open_file(&ctx, full_path_string)?;
+    exec_open_file(ctx, full_path_string)?;
 
     Ok(())
 }

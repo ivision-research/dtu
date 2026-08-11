@@ -56,7 +56,7 @@ impl FindCallers {
         oshash(&mut hasher, &self.class);
         let digest = hasher.finalize();
         let cache = format!("find-callers-{}-{}", hex::bytes_to_hex(&digest), self.depth);
-        let mpaths = project_cacheable(&ctx, &cache, self.no_cache, || self.go(db))?;
+        let mpaths = project_cacheable(ctx, &cache, self.no_cache, || self.go(db))?;
 
         if self.json {
             serde_json::to_writer(io::stdout(), &mpaths)?;
@@ -156,7 +156,7 @@ impl FindOutgoingCalls {
             hex::bytes_to_hex(&digest),
             self.depth
         );
-        let mpaths = project_cacheable(&ctx, &cache, self.no_cache, || self.go(db))?;
+        let mpaths = project_cacheable(ctx, &cache, self.no_cache, || self.go(db))?;
 
         if self.json {
             serde_json::to_writer(io::stdout(), &mpaths)?;

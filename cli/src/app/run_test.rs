@@ -37,7 +37,7 @@ impl RunTest {
             Some(parse_intent_string(self.intent.as_slice())?)
         };
 
-        let mut srv = get_app_server(&ctx)?;
+        let mut srv = get_app_server(ctx)?;
         let res = srv.run_test(name, intent.as_ref())?;
 
         let printer = Printer::new();

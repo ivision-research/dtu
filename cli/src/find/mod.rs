@@ -114,7 +114,7 @@ enum Command {
 
 fn graph_db(ctx: &dyn Context) -> anyhow::Result<DefaultGraphDatabase> {
     ensure_prereq(ctx, Prereq::GraphDatabaseSetup)?;
-    let db = get_default_graphdb(&ctx)?;
+    let db = get_default_graphdb(ctx)?;
     Ok(db)
 }
 

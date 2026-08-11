@@ -639,7 +639,7 @@ impl<'a> Pull<'a> {
                 );
             }
         })));
-        match apex.decompile(&self.ctx, self.dfs, smali_dir) {
+        match apex.decompile(self.ctx, self.dfs, smali_dir) {
             Err(e) => {
                 self.send_event(Event::decompile_done(host_path.as_str(), false));
                 Err(e.into())

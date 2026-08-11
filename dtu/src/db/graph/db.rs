@@ -1466,7 +1466,7 @@ mod test {
     }
 
     fn db_test(context: &dyn Context, func: impl FnOnce(GraphSqliteDatabase)) {
-        let url = get_db_url(&context);
+        let url = get_db_url(context);
         let db = GraphSqliteDatabase::new_from_url(&url).expect("failed to get database");
         let res = panic::catch_unwind(AssertUnwindSafe(|| func(db)));
         cleanup_database(&url);

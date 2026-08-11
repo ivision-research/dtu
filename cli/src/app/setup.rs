@@ -128,7 +128,7 @@ impl Setup {
         }
 
         let default = String::from("DeviceTestApp");
-        let adb = match get_adb(&ctx, true) {
+        let adb = match get_adb(ctx, true) {
             Ok(it) => it,
             Err(_) => return Cow::Owned(default),
         };

@@ -116,7 +116,7 @@ impl Logcat {
         handles.push(start_logcat_proc(
             adb.clone(),
             args,
-            self.get_available_logcat_file(&ctx, "ssfuzz_verbose_all_errors")?,
+            self.get_available_logcat_file(ctx, "ssfuzz_verbose_all_errors")?,
             rx,
         )?);
 
@@ -127,7 +127,7 @@ impl Logcat {
         handles.push(start_logcat_proc(
             adb.clone(),
             args,
-            self.get_available_logcat_file(&ctx, "ssfuzz_info_all_errors")?,
+            self.get_available_logcat_file(ctx, "ssfuzz_info_all_errors")?,
             rx,
         )?);
 
@@ -139,7 +139,7 @@ impl Logcat {
         handles.push(start_logcat_proc(
             adb.clone(),
             args,
-            self.get_available_logcat_file(&ctx, "ssfuzz_info_all_verbose")?,
+            self.get_available_logcat_file(ctx, "ssfuzz_info_all_verbose")?,
             rx,
         )?);
 
@@ -153,7 +153,7 @@ impl Logcat {
         handles.push(start_logcat_proc(
             adb.clone(),
             args,
-            self.get_available_logcat_file(&ctx, "all_verbose_default_string_regex")?,
+            self.get_available_logcat_file(ctx, "all_verbose_default_string_regex")?,
             rx,
         )?);
 
@@ -164,7 +164,7 @@ impl Logcat {
             handles.push(start_logcat_proc(
                 adb.clone(),
                 args,
-                self.get_available_logcat_file(&ctx, "system_server_only")?,
+                self.get_available_logcat_file(ctx, "system_server_only")?,
                 rx,
             )?);
         }

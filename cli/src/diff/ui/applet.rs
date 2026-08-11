@@ -257,7 +257,7 @@ impl<'a> Applet<'a> {
 
     fn on_quit(&mut self) {
         self.update_state();
-        if let Err(e) = self.state.store(&self.ctx) {
+        if let Err(e) = self.state.store(self.ctx) {
             log::error!("saving state: {}", e);
         }
         self.should_quit = true;

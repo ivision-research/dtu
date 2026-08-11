@@ -46,7 +46,7 @@ impl FindClassWithMethod {
         let digest = hasher.finalize();
 
         let cache = format!("find-class-with-method-{}", hex::bytes_to_hex(&digest));
-        let mut classes = project_cacheable(&ctx, &cache, self.no_cache, || {
+        let mut classes = project_cacheable(ctx, &cache, self.no_cache, || {
             Ok(gdb.find_classes_with_method(&self.name, ostr(&self.sig), ostr(&self.source))?)
         })?;
 

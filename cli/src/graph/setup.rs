@@ -90,7 +90,7 @@ impl Setup {
             if check.was_cancelled() {
                 break;
             }
-            self.smalisa_apk_dir(&ctx, &mon, &path, &check, &source_tx)?;
+            self.smalisa_apk_dir(ctx, &mon, &path, &check, &source_tx)?;
         }
 
         drop(mon);
@@ -105,7 +105,7 @@ impl Setup {
         num_sources: usize,
         deny: OptDenylist<DevicePath>,
     ) -> anyhow::Result<()> {
-        let db = get_default_graphdb(&ctx)?;
+        let db = get_default_graphdb(ctx)?;
 
         let (mon, chan) = ChannelEventMonitor::create();
         let (cancel, check) = task_canceller()?;

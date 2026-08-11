@@ -90,7 +90,7 @@ impl Pull {
     }
 
     fn get_opts(&self, ctx: &dyn Context) -> Options {
-        let mut opts = Options::from_context(&ctx);
+        let mut opts = Options::from_context(ctx);
         if self.force_vdex {
             opts.try_vdex = true;
         }

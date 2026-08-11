@@ -32,7 +32,7 @@ impl UI {
         let db = DeviceDatabase::new(ctx)?;
         let diff_source = get_diff_source(ctx, meta, &db, &self.diff_source)?;
         let adb = get_adb_if_configured(ctx, true)?;
-        let mut applet = Applet::new(&ctx, db, adb, diff_source)?;
+        let mut applet = Applet::new(ctx, db, adb, diff_source)?;
 
         let mut term = setup_terminal()?;
 

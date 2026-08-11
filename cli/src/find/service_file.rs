@@ -92,7 +92,7 @@ impl ServiceFile {
         };
 
         Ok(
-            find_smali_file_for_class(&ctx, &imp.class_name, apk.as_ref()).ok_or_else(|| {
+            find_smali_file_for_class(ctx, &imp.class_name, apk.as_ref()).ok_or_else(|| {
                 anyhow::Error::msg(format!("failed to find smali file for {}", imp.class_name))
             })?,
         )

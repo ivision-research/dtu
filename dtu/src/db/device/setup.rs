@@ -532,7 +532,7 @@ impl<'a> AddManifestTask<'a> {
     }
 
     fn service_on_bind_returns_nonnull(&self, class: &ClassName) -> UnknownBool {
-        let path = match find_smali_file_for_class(&self.ctx, class, Some(self.device_path)) {
+        let path = match find_smali_file_for_class(self.ctx, class, Some(self.device_path)) {
             None => {
                 log::warn!("couldn't find smali file for {}", class);
                 return UnknownBool::Unknown;
@@ -1096,7 +1096,7 @@ impl<'a> AddSystemServiceTask<'a> {
             return Ok(Some((self.get_methods_from_stubs_file(p)?, p.clone())));
         }
 
-        let stub_paths = find_files_for_class(&self.ctx, stub);
+        let stub_paths = find_files_for_class(self.ctx, stub);
         if stub_paths.len() == 0 {
             log::warn!("failed to find the smali file for stub {}", stub);
             return Ok(None);
@@ -1262,7 +1262,7 @@ impl<'a> AddSystemServiceTask<'a> {
             }
         }
 
-        for path in find_files_for_class(&self.ctx, iface) {
+        for path in find_files_for_class(self.ctx, iface) {
             if path == iface_path {
                 continue;
             }
@@ -1288,7 +1288,7 @@ impl<'a> AddSystemServiceTask<'a> {
             Some(DevicePath::from_squashed(&imp.source))
         };
 
-        find_smali_file_for_class(&self.ctx, &imp.name, apk.as_ref())
+        find_smali_file_for_class(self.ctx, &imp.name, apk.as_ref())
     }
 
     #[inline]
