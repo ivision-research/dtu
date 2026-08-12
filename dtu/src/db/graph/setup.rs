@@ -14,7 +14,7 @@ use super::schema::{_load_status, classes, sources};
 use super::setup_task::{AddDirTask, GraphDatabaseSetup, InitialImportOptions};
 use super::FRAMEWORK_SOURCE;
 use super::{setup::SetupResult, AddDirectoryOptions, SetupEvent};
-use crate::db::graph::models::InsertDiscoveredString;
+use crate::db::graph::models::{InsertDiscoveredString, SourceId};
 use crate::db::graph::schema::strings;
 use crate::smalisa_wrapper::CSV;
 use crate::utils::DevicePath;
@@ -34,13 +34,13 @@ impl CSV {
 }
 
 struct SetupContext<'a> {
-    source: i32,
+    source: SourceId,
     data: &'a mut CsvReader,
     db: &'a GraphSqliteDatabase,
 }
 
 impl<'a> SetupContext<'a> {
-    fn new(db: &'a GraphSqliteDatabase, source: i32, data: &'a mut CsvReader) -> Self {
+    fn new(db: &'a GraphSqliteDatabase, source: SourceId, data: &'a mut CsvReader) -> Self {
         Self { source, data, db }
     }
 
@@ -245,7 +245,7 @@ impl GraphSqliteDatabase {
     fn load_staged_method_field_access_with_conn(
         &self,
         conn: &mut SqliteConnection,
-        src: i32,
+        src: SourceId,
     ) -> Result<()> {
         // A few separate parts to this query
         //
@@ -284,7 +284,7 @@ JOIN methods AS m
     fn load_staged_class_fields_with_conn(
         &self,
         conn: &mut SqliteConnection,
-        src: i32,
+        src: SourceId,
     ) -> Result<()> {
         // We can only discover class fields inside the source, so c.source should always give us
         // something unless some funny business has happened.
@@ -301,7 +301,11 @@ JOIN classes AS c
         Ok(())
     }
 
-    fn load_staged_supers_with_conn(&self, conn: &mut SqliteConnection, src: i32) -> Result<()> {
+    fn load_staged_supers_with_conn(
+        &self,
+        conn: &mut SqliteConnection,
+        src: SourceId,
+    ) -> Result<()> {
         // The `child` will already exist in the database, but the `parent` might not. If the parent
         // doesn't exist, add it to the framework, not the current source.
         query!(sql_query(
@@ -333,7 +337,11 @@ JOIN classes AS parent
         Ok(())
     }
 
-    fn load_staged_impls_with_conn(&self, conn: &mut SqliteConnection, src: i32) -> Result<()> {
+    fn load_staged_impls_with_conn(
+        &self,
+        conn: &mut SqliteConnection,
+        src: SourceId,
+    ) -> Result<()> {
         let flags = AccessFlag::PUBLIC | AccessFlag::INTERFACE;
 
         let raw_flags: i64 = flags.bits() as i64;
@@ -370,7 +378,11 @@ JOIN classes AS interface
         Ok(())
     }
 
-    fn load_staged_methods_with_conn(&self, conn: &mut SqliteConnection, src: i32) -> Result<()> {
+    fn load_staged_methods_with_conn(
+        &self,
+        conn: &mut SqliteConnection,
+        src: SourceId,
+    ) -> Result<()> {
         query!(sql_query(
             r#"INSERT INTO methods(class, name, args, ret, access_flags, source)
     SELECT DISTINCT c.id, nm.name, nm.args, nm.ret, nm.access_flags, ?1
@@ -386,7 +398,7 @@ JOIN classes AS interface
     fn load_staged_method_strings_with_conn(
         &self,
         conn: &mut SqliteConnection,
-        src: i32,
+        src: SourceId,
     ) -> Result<()> {
         // Since we allow duplicates of strings between sources, we can be sure the string is
         // available in this source: it can't possibly not be in the DB if a method in a given
@@ -407,7 +419,11 @@ JOIN classes AS interface
         Ok(())
     }
 
-    fn load_staged_calls_with_conn(&self, conn: &mut SqliteConnection, src: i32) -> Result<()> {
+    fn load_staged_calls_with_conn(
+        &self,
+        conn: &mut SqliteConnection,
+        src: SourceId,
+    ) -> Result<()> {
         // The callee class might not exist. When that happens, we should add the class to the
         // database as part of the FRAMEWORK not as part of our current source. If it was part of
         // the current source we should have already added it when we added classes for this source,
@@ -494,31 +510,31 @@ WHERE dst.id != src.id"#
         Ok(())
     }
 
-    fn load_staged_impls(&self, src: i32) -> Result<()> {
+    fn load_staged_impls(&self, src: SourceId) -> Result<()> {
         Ok(self.transaction(|c| self.load_staged_impls_with_conn(c, src))?)
     }
 
-    fn load_staged_method_strings(&self, src: i32) -> Result<()> {
+    fn load_staged_method_strings(&self, src: SourceId) -> Result<()> {
         Ok(self.transaction(|c| self.load_staged_method_strings_with_conn(c, src))?)
     }
 
-    fn load_staged_method_field_access(&self, src: i32) -> Result<()> {
+    fn load_staged_method_field_access(&self, src: SourceId) -> Result<()> {
         Ok(self.transaction(|c| self.load_staged_method_field_access_with_conn(c, src))?)
     }
 
-    fn load_staged_class_fields(&self, src: i32) -> Result<()> {
+    fn load_staged_class_fields(&self, src: SourceId) -> Result<()> {
         Ok(self.transaction(|c| self.load_staged_class_fields_with_conn(c, src))?)
     }
 
-    fn load_staged_supers(&self, src: i32) -> Result<()> {
+    fn load_staged_supers(&self, src: SourceId) -> Result<()> {
         Ok(self.transaction(|c| self.load_staged_supers_with_conn(c, src))?)
     }
 
-    fn load_staged_methods(&self, src: i32) -> Result<()> {
+    fn load_staged_methods(&self, src: SourceId) -> Result<()> {
         Ok(self.transaction(|c| self.load_staged_methods_with_conn(c, src))?)
     }
 
-    fn load_staged_calls(&self, src: i32) -> Result<()> {
+    fn load_staged_calls(&self, src: SourceId) -> Result<()> {
         Ok(self.transaction(|c| self.load_staged_calls_with_conn(c, src))?)
     }
 
@@ -552,7 +568,7 @@ WHERE dst.id != src.id"#
         )?)
     }
 
-    fn update_load_status(conn: &mut SqliteConnection, src: i32, status: CSV) -> Result<()> {
+    fn update_load_status(conn: &mut SqliteConnection, src: SourceId, status: CSV) -> Result<()> {
         let ls = InsertLoadStatus::new(src, status.to_kind());
         _ = query!(insert_into(_load_status::table).values(&ls)).execute(conn)?;
         Ok(())
@@ -808,7 +824,7 @@ impl<'a> RecordParser<'a> {
 }
 
 impl<'a> InsertDiscoveredString<'a> {
-    fn from_record(record: &'a StringRecord, src: i32) -> Result<Self> {
+    fn from_record(record: &'a StringRecord, src: SourceId) -> Result<Self> {
         let rp = RecordParser::new(record, CSV::Strings);
         let s = rp.get(0)?;
         Ok(Self::new(s, src))
@@ -816,7 +832,7 @@ impl<'a> InsertDiscoveredString<'a> {
 }
 
 impl<'a> InsertClass<'a> {
-    fn from_record(record: &'a StringRecord, src: i32) -> Result<Self> {
+    fn from_record(record: &'a StringRecord, src: SourceId) -> Result<Self> {
         let rp = RecordParser::new(record, CSV::Classes);
         let name = rp.get(0)?;
         let raw_flags = rp.get_parsable::<u64>(1)?;

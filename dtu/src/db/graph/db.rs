@@ -14,8 +14,8 @@ use super::schema::*;
 use crate::db::common::DBThread;
 use crate::db::common::*;
 use crate::db::graph::models::{
-    ClassSearch, FieldRef, FieldSearchParams, MethodCallPath, MethodSearch, MethodSearchParams,
-    MethodSpec, SourcedString,
+    ClassId, ClassSearch, FieldId, FieldRef, FieldSearchParams, MethodCallPath, MethodId,
+    MethodSearch, MethodSearchParams, MethodSpec, SourceId, SourcedString,
 };
 use crate::db::graph::models::{FieldAccessOp, FieldSearch, FieldSpec, Source};
 use crate::db::graph::{ClassSpec, GraphDatabase, StringSearch};
@@ -94,13 +94,13 @@ impl GraphSqliteDatabase {
     }
 
     #[allow(unused)]
-    pub(super) fn get_source_id(&self, source: &str) -> Result<i32> {
+    pub(super) fn get_source_id(&self, source: &str) -> Result<SourceId> {
         Ok(self.with_connection(|c| {
             query!(sources::table
                 .filter(sources::name.eq(source))
                 .select(sources::id)
                 .limit(1))
-            .get_result::<i32>(c)
+            .get_result::<SourceId>(c)
         })?)
     }
 
@@ -111,7 +111,7 @@ impl GraphSqliteDatabase {
     fn get_field_ids_with_conn(
         conn: &mut SqliteConnection,
         search: &FieldSearch,
-    ) -> Result<Vec<i32>> {
+    ) -> Result<Vec<FieldId>> {
         search.param.get_sql(conn, search.source)
     }
 
@@ -119,7 +119,7 @@ impl GraphSqliteDatabase {
     fn get_method_ids_with_conn(
         conn: &mut SqliteConnection,
         search: &MethodSearch,
-    ) -> Result<Vec<i32>> {
+    ) -> Result<Vec<MethodId>> {
         search.param.get_sql(conn, search.source)
     }
 
@@ -328,7 +328,7 @@ impl<'a> FieldSearchParams<'a> {
             }
         }
     }
-    fn get_sql(&self, conn: &mut SqliteConnection, source: Option<&str>) -> Result<Vec<i32>> {
+    fn get_sql(&self, conn: &mut SqliteConnection, source: Option<&str>) -> Result<Vec<FieldId>> {
         match self {
             Self::ByClass { class } => self.sql_by_class(conn, &class.get_smali_name(), source),
             Self::ByClassAndName { class, name } => {
@@ -347,7 +347,7 @@ impl<'a> FieldSearchParams<'a> {
         name: &str,
         ty: &str,
         source: Option<&str>,
-    ) -> Result<Vec<i32>> {
+    ) -> Result<Vec<FieldId>> {
         Ok(match source {
             Some(v) => query!(class_fields::table
                 .inner_join(classes::table.on(classes::id.eq(class_fields::class)))
@@ -357,14 +357,14 @@ impl<'a> FieldSearchParams<'a> {
                 .filter(class_fields::ty.eq(ty))
                 .filter(class_fields::name.eq(name))
                 .select(class_fields::id))
-            .load::<i32>(conn),
+            .load::<FieldId>(conn),
             None => query!(class_fields::table
                 .inner_join(classes::table.on(classes::id.eq(class_fields::class)))
                 .filter(classes::name.eq(class))
                 .filter(class_fields::ty.eq(ty))
                 .filter(class_fields::name.eq(name))
                 .select(class_fields::id))
-            .load::<i32>(conn),
+            .load::<FieldId>(conn),
         }?)
     }
 
@@ -374,7 +374,7 @@ impl<'a> FieldSearchParams<'a> {
         class: &str,
         name: &str,
         source: Option<&str>,
-    ) -> Result<Vec<i32>> {
+    ) -> Result<Vec<FieldId>> {
         Ok(match source {
             Some(v) => query!(class_fields::table
                 .inner_join(classes::table.on(classes::id.eq(class_fields::class)))
@@ -383,13 +383,13 @@ impl<'a> FieldSearchParams<'a> {
                 .filter(classes::name.eq(class))
                 .filter(class_fields::name.eq(name))
                 .select(class_fields::id))
-            .load::<i32>(conn),
+            .load::<FieldId>(conn),
             None => query!(class_fields::table
                 .inner_join(classes::table.on(classes::id.eq(class_fields::class)))
                 .filter(classes::name.eq(class))
                 .filter(class_fields::name.eq(name))
                 .select(class_fields::id))
-            .load::<i32>(conn),
+            .load::<FieldId>(conn),
         }?)
     }
 
@@ -398,7 +398,7 @@ impl<'a> FieldSearchParams<'a> {
         conn: &mut SqliteConnection,
         class: &str,
         source: Option<&str>,
-    ) -> Result<Vec<i32>> {
+    ) -> Result<Vec<FieldId>> {
         Ok(match source {
             Some(v) => query!(class_fields::table
                 .inner_join(classes::table.on(classes::id.eq(class_fields::class)))
@@ -406,12 +406,12 @@ impl<'a> FieldSearchParams<'a> {
                 .filter(sources::name.eq(v))
                 .filter(classes::name.eq(class))
                 .select(class_fields::id))
-            .load::<i32>(conn),
+            .load::<FieldId>(conn),
             None => query!(class_fields::table
                 .inner_join(classes::table.on(classes::id.eq(class_fields::class)))
                 .filter(classes::name.eq(class))
                 .select(class_fields::id))
-            .load::<i32>(conn),
+            .load::<FieldId>(conn),
         }?)
     }
 
@@ -527,7 +527,7 @@ impl<'a> MethodSearchParams<'a> {
             } => self.spec_sql_by_full_spec(conn, &class.get_smali_name(), name, signature, source),
         }
     }
-    fn get_sql(&self, conn: &mut SqliteConnection, source: Option<&str>) -> Result<Vec<i32>> {
+    fn get_sql(&self, conn: &mut SqliteConnection, source: Option<&str>) -> Result<Vec<MethodId>> {
         match self {
             Self::ByName { name } => self.sql_by_name(conn, name, source),
             Self::ByClass { class } => self.sql_by_class(conn, &class.get_smali_name(), source),
@@ -552,7 +552,7 @@ impl<'a> MethodSearchParams<'a> {
         name: &str,
         sig: &str,
         source: Option<&str>,
-    ) -> Result<Vec<i32>> {
+    ) -> Result<Vec<MethodId>> {
         Ok(match source {
             Some(v) => query!(methods::table
                 .inner_join(sources::table)
@@ -562,14 +562,14 @@ impl<'a> MethodSearchParams<'a> {
                 .filter(methods::args.eq(sig))
                 .filter(methods::name.eq(name))
                 .select(methods::id))
-            .load::<i32>(conn),
+            .load::<MethodId>(conn),
             None => query!(methods::table
                 .inner_join(classes::table)
                 .filter(methods::args.eq(sig))
                 .filter(classes::name.eq(class))
                 .filter(methods::name.eq(name))
                 .select(methods::id))
-            .load::<i32>(conn),
+            .load::<MethodId>(conn),
         }?)
     }
 
@@ -579,7 +579,7 @@ impl<'a> MethodSearchParams<'a> {
         name: &str,
         sig: &str,
         source: Option<&str>,
-    ) -> Result<Vec<i32>> {
+    ) -> Result<Vec<MethodId>> {
         Ok(match source {
             Some(v) => query!(methods::table
                 .inner_join(sources::table)
@@ -587,12 +587,12 @@ impl<'a> MethodSearchParams<'a> {
                 .filter(methods::args.eq(sig))
                 .filter(methods::name.eq(name))
                 .select(methods::id))
-            .load::<i32>(conn),
+            .load::<MethodId>(conn),
             None => query!(methods::table
                 .filter(methods::args.eq(sig))
                 .filter(methods::name.eq(name))
                 .select(methods::id))
-            .load::<i32>(conn),
+            .load::<MethodId>(conn),
         }?)
     }
 
@@ -602,7 +602,7 @@ impl<'a> MethodSearchParams<'a> {
         class: &str,
         name: &str,
         source: Option<&str>,
-    ) -> Result<Vec<i32>> {
+    ) -> Result<Vec<MethodId>> {
         Ok(match source {
             Some(v) => query!(methods::table
                 .inner_join(sources::table)
@@ -611,13 +611,13 @@ impl<'a> MethodSearchParams<'a> {
                 .filter(classes::name.eq(class))
                 .filter(methods::name.eq(name))
                 .select(methods::id))
-            .load::<i32>(conn),
+            .load::<MethodId>(conn),
             None => query!(methods::table
                 .inner_join(classes::table)
                 .filter(classes::name.eq(class))
                 .filter(methods::name.eq(name))
                 .select(methods::id))
-            .load::<i32>(conn),
+            .load::<MethodId>(conn),
         }?)
     }
 
@@ -626,7 +626,7 @@ impl<'a> MethodSearchParams<'a> {
         conn: &mut SqliteConnection,
         class: &str,
         source: Option<&str>,
-    ) -> Result<Vec<i32>> {
+    ) -> Result<Vec<MethodId>> {
         Ok(match source {
             Some(v) => query!(methods::table
                 .inner_join(sources::table)
@@ -634,12 +634,12 @@ impl<'a> MethodSearchParams<'a> {
                 .filter(sources::name.eq(v))
                 .filter(classes::name.eq(class))
                 .select(methods::id))
-            .load::<i32>(conn),
+            .load::<MethodId>(conn),
             None => query!(methods::table
                 .inner_join(classes::table)
                 .filter(classes::name.eq(class))
                 .select(methods::id))
-            .load::<i32>(conn),
+            .load::<MethodId>(conn),
         }?)
     }
 
@@ -648,18 +648,18 @@ impl<'a> MethodSearchParams<'a> {
         conn: &mut SqliteConnection,
         name: &str,
         source: Option<&str>,
-    ) -> Result<Vec<i32>> {
+    ) -> Result<Vec<MethodId>> {
         Ok(match source {
             Some(v) => query!(methods::table
                 .inner_join(sources::table)
                 .filter(sources::name.eq(v))
                 .filter(methods::name.eq(name))
                 .select(methods::id))
-            .load::<i32>(conn),
+            .load::<MethodId>(conn),
             None => query!(methods::table
                 .filter(methods::name.eq(name))
                 .select(methods::id))
-            .load::<i32>(conn),
+            .load::<MethodId>(conn),
         }?)
     }
 
@@ -856,11 +856,11 @@ impl GraphDatabase for GraphSqliteDatabase {
         Ok(self.delete_source_by_name(source)?)
     }
 
-    fn get_method_ids(&self, search: &MethodSearch) -> Result<Vec<i32>> {
+    fn get_method_ids(&self, search: &MethodSearch) -> Result<Vec<MethodId>> {
         self.with_connection(|c| Self::get_method_ids_with_conn(c, search))
     }
 
-    fn get_field_ids(&self, search: &FieldSearch) -> Result<Vec<i32>> {
+    fn get_field_ids(&self, search: &FieldSearch) -> Result<Vec<FieldId>> {
         self.with_connection(|c| Self::get_field_ids_with_conn(c, search))
     }
 
@@ -872,7 +872,7 @@ impl GraphDatabase for GraphSqliteDatabase {
         self.with_connection(|c| search.param.get_spec_sql(c, search.source))
     }
 
-    fn get_method_field_refs(&self, method: i32) -> Result<Vec<FieldRef>> {
+    fn get_method_field_refs(&self, method: MethodId) -> Result<Vec<FieldRef>> {
         self.with_connection(|c| {
             Ok(query!(method_field_access::table
                 .filter(method_field_access::method.eq(method))
@@ -895,7 +895,7 @@ impl GraphDatabase for GraphSqliteDatabase {
 
     fn get_methods_referencing_field(
         &self,
-        field: i32,
+        field: FieldId,
         action: Option<FieldAccessOp>,
     ) -> Result<Vec<MethodSpec>> {
         self.with_connection(|c| {
@@ -921,7 +921,7 @@ impl GraphDatabase for GraphSqliteDatabase {
         })
     }
 
-    fn get_strings_for_method(&self, method: i32) -> Result<Vec<String>> {
+    fn get_strings_for_method(&self, method: MethodId) -> Result<Vec<String>> {
         self.with_connection(|c| -> Result<Vec<String>> {
             Ok(query!(method_strings::table
                 .inner_join(strings::table)
@@ -1208,7 +1208,7 @@ impl<DB: Backend> Selectable<DB> for SourcedString {
 #[derive(Queryable, Debug)]
 struct FieldSpecRow {
     #[diesel(sql_type = Integer)]
-    id: i32,
+    id: FieldId,
     #[diesel(sql_type = Text)]
     class: String,
     #[diesel(sql_type = Text)]
@@ -1258,10 +1258,12 @@ impl From<FieldSpecRow> for FieldSpec {
 
 #[derive(Queryable, Debug)]
 struct MethodSpecRow {
+    #[diesel(sql_type = Integer)]
+    class_id: ClassId,
     #[diesel(sql_type = Text)]
     class: String,
     #[diesel(sql_type = Integer)]
-    id: i32,
+    id: MethodId,
     #[diesel(sql_type = Text)]
     name: String,
     #[diesel(sql_type = Text)]
@@ -1276,6 +1278,7 @@ struct MethodSpecRow {
 
 impl<DB: Backend> Selectable<DB> for MethodSpecRow {
     type SelectExpression = (
+        classes::id,
         classes::name,
         methods::id,
         methods::name,
@@ -1287,6 +1290,7 @@ impl<DB: Backend> Selectable<DB> for MethodSpecRow {
 
     fn construct_selection() -> Self::SelectExpression {
         (
+            classes::id,
             classes::name,
             methods::id,
             methods::name,
@@ -1301,6 +1305,7 @@ impl<DB: Backend> Selectable<DB> for MethodSpecRow {
 impl From<MethodSpecRow> for MethodSpec {
     fn from(value: MethodSpecRow) -> Self {
         MethodSpec {
+            class_id: value.class_id,
             class: value.class.into(),
             name: value.name,
             id: value.id,
@@ -1314,12 +1319,14 @@ impl From<MethodSpecRow> for MethodSpec {
 
 #[derive(QueryableByName, Debug)]
 struct MethodCallRow {
+    #[diesel(sql_type = Integer)]
+    class_id: ClassId,
     #[diesel(sql_type = Text)]
     source: String,
     #[diesel(sql_type = Text)]
     class: String,
     #[diesel(sql_type = Integer)]
-    id: i32,
+    id: MethodId,
     #[diesel(sql_type = Text)]
     name: String,
     #[diesel(sql_type = Text)]
@@ -1335,6 +1342,7 @@ struct MethodCallRow {
 impl From<MethodCallRow> for MethodSpec {
     fn from(value: MethodCallRow) -> Self {
         Self {
+            class_id: value.class_id,
             class: ClassName::from(value.class),
             ret: value.ret,
             id: value.id,

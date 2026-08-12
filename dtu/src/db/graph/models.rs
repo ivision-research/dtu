@@ -5,9 +5,15 @@ use dtu_proc_macro::sql_db_row;
 use serde::Deserialize;
 use smalisa::AccessFlag;
 
-use crate::utils::ClassName;
+use crate::{db::common::database_id, utils::ClassName};
 
 use super::schema::*;
+
+database_id!(ClassId, "Identifies a class in the graph database");
+database_id!(FieldId, "Identifies a field in the graph database");
+database_id!(MethodId, "Identifies a method in the graph database");
+database_id!(SourceId, "Identifies a source in the graph database");
+database_id!(StringId, "Identifies a string in the graph database");
 
 #[derive(
     Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, serde::Serialize, serde::Deserialize,
@@ -61,41 +67,41 @@ impl AsRef<str> for FieldAccessOp {
 #[sql_db_row]
 #[diesel(table_name = calls)]
 pub struct Call {
-    pub caller: i32,
-    pub callee: i32,
+    pub caller: MethodId,
+    pub callee: MethodId,
 }
 
 #[sql_db_row]
 #[diesel(table_name = supers)]
 pub struct Super {
-    pub parent: i32,
-    pub child: i32,
+    pub parent: ClassId,
+    pub child: ClassId,
 }
 
 #[sql_db_row]
 #[diesel(table_name = interfaces)]
 pub struct Interface {
-    pub interface: i32,
-    pub class: i32,
+    pub interface: ClassId,
+    pub class: ClassId,
 }
 
 #[sql_db_row]
 #[diesel(table_name = methods)]
 pub struct Method {
-    pub id: i32,
-    pub class: i32,
+    pub id: MethodId,
+    pub class: ClassId,
     pub name: String,
     pub args: String,
     pub ret: String,
     pub access_flags: i64,
-    pub source: i32,
+    pub source: SourceId,
 }
 
 #[sql_db_row]
 #[diesel(table_name = class_fields)]
 pub struct ClassField {
-    pub id: i32,
-    pub class: i32,
+    pub id: FieldId,
+    pub class: ClassId,
     pub name: String,
     pub ty: String,
     pub access_flags: i64,
@@ -105,46 +111,46 @@ pub struct ClassField {
 #[diesel(table_name = method_field_access)]
 pub struct MethodFieldAccess {
     pub id: i32,
-    pub field: i32,
-    pub method: i32,
+    pub field: FieldId,
+    pub method: MethodId,
     pub action: i32,
 }
 
 #[sql_db_row]
 #[diesel(table_name = method_strings)]
 pub struct MethodString {
-    pub string: i32,
-    pub method: i32,
+    pub string: StringId,
+    pub method: MethodId,
 }
 
 #[sql_db_row]
 #[diesel(table_name = strings)]
 pub struct DiscoveredString {
-    pub id: i32,
+    pub id: StringId,
     pub string: String,
-    pub source: i32,
+    pub source: SourceId,
 }
 
 #[sql_db_row]
 #[diesel(table_name = classes)]
 pub struct Class {
-    pub id: i32,
+    pub id: ClassId,
     pub name: String,
     pub access_flags: i64,
-    pub source: i32,
+    pub source: SourceId,
 }
 
 #[sql_db_row]
 #[diesel(table_name = sources)]
 pub struct Source {
-    pub id: i32,
+    pub id: SourceId,
     pub name: String,
 }
 
 #[sql_db_row]
 #[diesel(table_name = _load_status)]
 pub struct LoadStatus {
-    pub source: i32,
+    pub source: SourceId,
     pub kind: i32,
 }
 
@@ -258,7 +264,7 @@ where
 #[derive(Eq, Clone, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(test, derive(Debug, PartialOrd, Ord))]
 pub struct FieldSpec {
-    pub id: i32,
+    pub id: FieldId,
     pub class: ClassName,
     pub name: String,
     pub ty: String,
@@ -305,7 +311,8 @@ impl PartialEq for FieldSpec {
 #[derive(Eq, Clone, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(test, derive(Debug, PartialOrd, Ord))]
 pub struct MethodSpec {
-    pub id: i32,
+    pub class_id: ClassId,
+    pub id: MethodId,
     pub class: ClassName,
     pub name: String,
     pub signature: String,
@@ -322,6 +329,7 @@ impl Hash for MethodSpec {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         // Intentionally leaving out access_flags here
         self.class.hash(state);
+        self.class_id.hash(state);
         self.name.hash(state);
         self.signature.hash(state);
         self.ret.hash(state);
@@ -333,6 +341,7 @@ impl PartialEq for MethodSpec {
     fn eq(&self, other: &Self) -> bool {
         // Intentionally leaving out access_flags here
         self.source == other.source
+            && self.class_id == other.class_id
             && self.class == other.class
             && self.name == other.name
             && self.signature == other.signature

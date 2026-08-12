@@ -1,9 +1,10 @@
-#[macro_use]
 mod common;
 pub use common::{
-    ApkComponent, ApkIPC, ApkIPCKind, Enablable, Error, Exportable, Idable, PermissionMode,
-    PermissionProtected, Diffable, Result,
+    ApkComponent, ApkIPC, ApkIPCKind, Diffable, Enablable, Error, Exportable, Idable,
+    PermissionMode, PermissionProtected, Result,
 };
+
+pub(crate) use common::query;
 
 pub mod device;
 pub mod meta;

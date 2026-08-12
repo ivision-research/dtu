@@ -48,9 +48,10 @@ pub(crate) fn sql_db_row(
         .collect::<Vec<Field>>();
 
     let has_id = stripped_fields.iter().any(|it| {
-        it.ident.as_ref().map(|id| {
-            id.to_string() == "id"
-        }).unwrap_or(false)
+        it.ident
+            .as_ref()
+            .map(|id| id.to_string() == "id")
+            .unwrap_or(false)
     });
 
     define_insertable(&st, &stripped_fields, &diesel_attrs, &mut tokens);
@@ -262,28 +263,50 @@ impl FieldArg {
     }
 }
 
-fn is_string(f: &Field) -> bool {
-    let ty = &f.ty;
-    let s = match ty {
-        Type::Path(p) => {
-            let s = &p.path;
-            (quote! {#s}).to_string()
-        }
-        _ => return false,
+/// The last segment of a path type, so `std::string::String` and `String` both
+/// answer `String`.
+fn last_segment(ty: &Type) -> Option<&PathSegment> {
+    match ty {
+        Type::Path(p) => p.path.segments.last(),
+        _ => None,
+    }
+}
+
+/// The type inside `Option<..>`, if this is an option
+fn option_inner(ty: &Type) -> Option<&Type> {
+    let seg = last_segment(ty)?;
+    if seg.ident != "Option" {
+        return None;
+    }
+    let PathArguments::AngleBracketed(args) = &seg.arguments else {
+        return None;
     };
-    s.contains("String")
+    match args.args.first() {
+        Some(GenericArgument::Type(inner)) => Some(inner),
+        _ => None,
+    }
+}
+
+/// Whether the field is borrowed as a `&str` in the generated insertable struct.
+///
+/// Match the type exactly rather than by name: an id newtype like `StringId`
+/// would otherwise be rewritten into a `&str` and fail to bind to its column.
+fn is_string(f: &Field) -> bool {
+    is_string_ty(&f.ty)
+}
+
+fn is_string_ty(ty: &Type) -> bool {
+    let Some(seg) = last_segment(ty) else {
+        return false;
+    };
+    if seg.ident == "String" {
+        return true;
+    }
+    option_inner(ty).is_some_and(is_string_ty)
 }
 
 fn is_option(f: &Field) -> bool {
-    let ty = &f.ty;
-    let s = match ty {
-        Type::Path(p) => {
-            let s = &p.path;
-            (quote! {#s}).to_string()
-        }
-        _ => return false,
-    };
-    s.ends_with('>') && s.starts_with("Option")
+    option_inner(&f.ty).is_some()
 }
 
 fn to_table_name(id: &Ident) -> Ident {
@@ -329,7 +352,7 @@ fn transform_string_to_str(f: &Field) -> Field {
     let mut new_field = f.clone();
     new_field.ty = match &f.ty {
         Type::Path(tp) => {
-            let seg = tp.path.segments.first().unwrap();
+            let seg = tp.path.segments.last().unwrap();
             match &seg.arguments {
                 PathArguments::None => make_str_ref_type(lifetime),
                 PathArguments::AngleBracketed(sargs) => {

@@ -5,12 +5,9 @@ use std::{
 
 use dtu::{
     db::graph::{
-        get_default_graphdb,
-        models::{
-            ClassSearch, FieldAccessOp, FieldRef, FieldSearch, FieldSpec, MethodCallPath,
-            MethodSearch, MethodSpec,
-        },
-        ClassSpec, DefaultGraphDatabase, GraphDatabase, StringSearch,
+        ClassSpec, DefaultGraphDatabase, GraphDatabase, StringSearch, get_default_graphdb, models::{
+            ClassSearch, FieldAccessOp, FieldId, FieldRef, FieldSearch, FieldSpec, MethodCallPath, MethodId, MethodSearch, MethodSpec
+        }
     },
     utils::ClassName,
 };
@@ -78,7 +75,7 @@ impl GraphDB {
 
         Ok(self
             .0
-            .get_methods_referencing_field(field, action)?
+            .get_methods_referencing_field(FieldId::new(field), action)?
             .into_iter()
             .map(PyMethodSpec::from)
             .collect())
@@ -88,7 +85,7 @@ impl GraphDB {
     fn get_method_field_refs(&self, method: i32) -> Result<Vec<PyFieldRef>> {
         Ok(self
             .0
-            .get_method_field_refs(method)?
+            .get_method_field_refs(MethodId::new(method))?
             .into_iter()
             .map(PyFieldRef::from)
             .collect())
@@ -121,7 +118,7 @@ impl GraphDB {
 
     /// Find all strings in a given method
     fn get_strings_for_method(&self, method: i32) -> Result<Vec<String>> {
-        Ok(self.0.get_strings_for_method(method)?)
+        Ok(self.0.get_strings_for_method(MethodId::new(method))?)
     }
 
     /// Find all parent classes of the given child class
@@ -440,7 +437,7 @@ impl PyFieldSpec {
     }
     #[getter]
     fn id(&self) -> i32 {
-        self.0.id
+        self.0.id.raw()
     }
 
     #[getter]
@@ -501,7 +498,7 @@ impl PyMethodSpec {
     }
     #[getter]
     fn id(&self) -> i32 {
-        self.0.id
+        self.0.id.raw()
     }
 
     #[getter]
