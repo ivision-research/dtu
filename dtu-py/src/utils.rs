@@ -3,7 +3,6 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use crate::exception::DtuError;
 
-
 pub fn unpickle<T, U>(value: &[u8]) -> PyResult<U>
 where
     T: DeserializeOwned,

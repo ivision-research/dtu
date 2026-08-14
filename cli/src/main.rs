@@ -78,6 +78,9 @@ use selinux::Selinux;
 mod scripting;
 use scripting::Scripting;
 
+mod taint;
+use taint::Taint;
+
 #[cfg(test)]
 mod testing;
 
@@ -269,6 +272,10 @@ enum Commands {
     #[command()]
     Selinux(Selinux),
 
+    /// Taint analysis related commands
+    #[command()]
+    Taint(Taint),
+
     #[command(name = "_scripting")]
     #[command(alias = "_s")]
     #[command(hide = true)]
@@ -292,7 +299,13 @@ impl Cli {
                     };
                     LogSpecification::builder().module("dtu", lvl).build()
                 } else {
-                    LogSpecification::env().with_context(|| "getting log spec from env")?
+                    if ctx.has_env("RUST_LOG") {
+                        LogSpecification::env().with_context(|| "getting log spec from env")?
+                    } else {
+                        LogSpecification::builder()
+                            .module("dtu", LevelFilter::Warn)
+                            .build()
+                    }
                 }
             }
         };
@@ -339,6 +352,7 @@ fn main() -> anyhow::Result<()> {
     let log_handle = cli.configure_loggers(&ctx)?;
 
     let res = match cli.command {
+        Commands::Taint(c) => c.run(),
         Commands::Scripting(c) => c.run(),
         Commands::Pull(c) => c.run(),
         Commands::GenEnvrc(c) => c.run(),

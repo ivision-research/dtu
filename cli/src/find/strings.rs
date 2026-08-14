@@ -134,6 +134,7 @@ impl ByMethod {
             Some(&self.name),
             ostr(&self.signature),
             ostr(&self.source),
+            None,
         ) {
             Ok(v) => v,
             Err(e) => bail!("{e}"),

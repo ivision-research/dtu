@@ -13,7 +13,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "6.1.0"
+version = "7.0.0"
 edition = "2024"
 
 [workspace.dependencies]
@@ -33,9 +33,10 @@ mockall = "0.13"
 base64 = "0.21"
 itertools = "0.13"
 lazy_static = "1.4"
+yoke =  "0.8"
 sha2 = "0.10"
 env_logger = "0.11"
-flexi_logger = "0.30"
+flexi_logger = { version = "0.30", features = ["dont_minimize_extra_stacks"] }
 toml = { version = "0.8", default-features = false, features = ["parse"] }
 postcard = { version = "1.0.0", features = ["alloc", "use-std"] }
 

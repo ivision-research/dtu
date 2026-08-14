@@ -308,8 +308,8 @@ impl PartialEq for FieldSpec {
     }
 }
 
-#[derive(Eq, Clone, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(test, derive(Debug, PartialOrd, Ord))]
+#[derive(Eq, Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(test, derive(PartialOrd, Ord))]
 pub struct MethodSpec {
     pub class_id: ClassId,
     pub id: MethodId,
@@ -327,9 +327,8 @@ pub struct MethodSpec {
 
 impl Hash for MethodSpec {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // Intentionally leaving out access_flags here
+        // Intentionally leaving out access_flags and the database ids here
         self.class.hash(state);
-        self.class_id.hash(state);
         self.name.hash(state);
         self.signature.hash(state);
         self.ret.hash(state);
@@ -339,13 +338,21 @@ impl Hash for MethodSpec {
 
 impl PartialEq for MethodSpec {
     fn eq(&self, other: &Self) -> bool {
-        // Intentionally leaving out access_flags here
+        // Intentionally leaving out access_flags and the database ids here
         self.source == other.source
-            && self.class_id == other.class_id
             && self.class == other.class
             && self.name == other.name
             && self.signature == other.signature
             && self.ret == other.ret
+    }
+}
+
+impl MethodSpec {
+    /// An abstract or native method has no smali instructions to analyze
+    pub fn has_body(&self) -> bool {
+        !self
+            .access_flags
+            .intersects(AccessFlag::ABSTRACT | AccessFlag::NATIVE)
     }
 }
 

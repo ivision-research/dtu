@@ -23,8 +23,26 @@ pub struct ClassName {
     name: String,
 }
 
-impl<T: Into<String>> From<T> for ClassName {
-    fn from(value: T) -> Self {
+impl From<&smalisa::SmaliClassName> for ClassName {
+    fn from(value: &smalisa::SmaliClassName) -> Self {
+        Self::new(value.as_str().to_string())
+    }
+}
+
+impl From<&String> for ClassName {
+    fn from(value: &String) -> Self {
+        Self::new(value.into())
+    }
+}
+
+impl From<String> for ClassName {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<&str> for ClassName {
+    fn from(value: &str) -> Self {
         Self::new(value.into())
     }
 }

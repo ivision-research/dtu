@@ -74,6 +74,18 @@ class CachingGraphDB:
             only_write=only_write,
         )
 
+    def get_method_by_id(self, method: int) -> MethodSpec:
+        """
+        Get a single method by its database id
+        """
+        return self._maybe_cached(self.wrapped.get_method_by_id, method)
+
+    def get_methods_by_id(self, methods: List[int]) -> List[MethodSpec]:
+        """
+        Get multiple methods by their database ids
+        """
+        return self._maybe_cached(self.wrapped.get_methods_by_id, methods)
+
     def get_method_field_refs(self, method: int) -> List[FieldRef]:
         """
         Get all fields referenced by the given method

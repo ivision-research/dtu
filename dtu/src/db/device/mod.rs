@@ -2,6 +2,11 @@ pub mod db;
 pub mod models;
 pub mod schema;
 
+pub use models::{
+    ApkComponent, ApkIPC, ApkIPCKind, Diffable, DiffedApkIPC, Enablable, Exportable,
+    PermissionMode, PermissionProtected,
+};
+
 pub use db::EMULATOR_DIFF_SOURCE;
 
 #[cfg(feature = "setup")]

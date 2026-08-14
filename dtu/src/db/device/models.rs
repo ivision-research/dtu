@@ -8,15 +8,85 @@ use serde::{Deserialize, Serialize};
 
 use dtu_proc_macro::sql_db_row;
 
-use crate::db::common::{
-    ApkComponent, ApkIPC, ApkIPCKind, Diffable, Enablable, Exportable, Idable, PermissionMode,
-    PermissionProtected, FRAMEWORK_SOURCE,
-};
+use crate::db::common::{Idable, FRAMEWORK_SOURCE};
 use crate::manifest::{self, ApktoolManifestResolver};
 use crate::utils::{path_must_str, ClassName, DevicePath};
 use crate::UnknownBool;
 
 use super::schema::*;
+
+pub trait Enablable {
+    fn is_enabled(&self) -> bool;
+}
+
+pub trait Exportable {
+    fn is_exported(&self) -> bool;
+}
+
+pub trait ApkComponent {
+    fn get_apk_id(&self) -> i32;
+}
+
+#[derive(Clone, Copy)]
+pub enum PermissionMode {
+    /// Generic permission on the entire object
+    Generic,
+    /// Separate permission for Read operations
+    Read,
+    /// Separate permission for Write operations
+    Write,
+    /// Get the first of any of the above permissions
+    Any,
+}
+
+pub trait PermissionProtected {
+    /// Return true if at least one permission mode is required
+    fn requires_permission(&self) -> bool {
+        self.get_permission_for_mode(PermissionMode::Any).is_some()
+    }
+
+    /// Gets the permission for the given [PermissionMode]
+    fn get_permission_for_mode(&self, mode: PermissionMode) -> Option<&str> {
+        match mode {
+            PermissionMode::Generic | PermissionMode::Any => self.get_generic_permission(),
+            _ => None,
+        }
+    }
+
+    fn get_generic_permission(&self) -> Option<&str>;
+
+    #[deprecated(note = "Use get_generic_permission")]
+    fn get_permission(&self) -> Option<&str> {
+        self.get_generic_permission()
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum ApkIPCKind {
+    Receiver,
+    Activity,
+    Provider,
+    Service,
+}
+
+/// A trait for anything that can be included in the diff
+pub trait Diffable {
+    /// Whether the item exists in the diff or not
+    fn in_diff(&self) -> bool;
+}
+
+/// A trait for Receivers, Activities, and Services
+pub trait ApkIPC: ApkComponent + Exportable + PermissionProtected + Enablable + Idable {
+    fn get_class_name(&self) -> ClassName;
+    fn get_package(&self) -> Cow<'_, str>;
+    fn get_kind(&self) -> ApkIPCKind;
+}
+
+/// Helper trait for converting Diffed forms of ApkIPCs into the base form
+pub trait DiffedApkIPC {
+    type Inner: ApkIPC;
+    fn into_apk_ipc(self) -> Self::Inner;
+}
 
 #[sql_db_row]
 #[diesel(table_name = device_properties)]
@@ -330,18 +400,6 @@ impl Diffable for DiffedReceiver {
     }
 }
 
-impl Idable for DiffedReceiver {
-    fn get_id(&self) -> i32 {
-        self.receiver.id
-    }
-}
-
-impl Display for DiffedReceiver {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.receiver)
-    }
-}
-
 impl From<(Receiver, ReceiverDiff)> for DiffedReceiver {
     fn from(value: (Receiver, ReceiverDiff)) -> Self {
         let (receiver, diff) = value;
@@ -352,20 +410,6 @@ impl From<(Receiver, ReceiverDiff)> for DiffedReceiver {
             permission_matches_diff: diff.permission_matches_diff,
             diff_permission: diff.diff_permission,
         }
-    }
-}
-
-impl AsRef<Receiver> for DiffedReceiver {
-    fn as_ref(&self) -> &Receiver {
-        &self.receiver
-    }
-}
-
-impl Deref for DiffedReceiver {
-    type Target = Receiver;
-
-    fn deref(&self) -> &Self::Target {
-        &self.receiver
     }
 }
 
@@ -416,18 +460,6 @@ impl Diffable for DiffedService {
     }
 }
 
-impl Idable for DiffedService {
-    fn get_id(&self) -> i32 {
-        self.service.id
-    }
-}
-
-impl Display for DiffedService {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.service)
-    }
-}
-
 impl From<(Service, ServiceDiff)> for DiffedService {
     fn from(value: (Service, ServiceDiff)) -> Self {
         let (service, diff) = value;
@@ -438,20 +470,6 @@ impl From<(Service, ServiceDiff)> for DiffedService {
             permission_matches_diff: diff.permission_matches_diff,
             diff_permission: diff.diff_permission,
         }
-    }
-}
-
-impl AsRef<Service> for DiffedService {
-    fn as_ref(&self) -> &Service {
-        &self.service
-    }
-}
-
-impl Deref for DiffedService {
-    type Target = Service;
-
-    fn deref(&self) -> &Self::Target {
-        &self.service
     }
 }
 
@@ -502,18 +520,6 @@ impl Diffable for DiffedActivity {
     }
 }
 
-impl Idable for DiffedActivity {
-    fn get_id(&self) -> i32 {
-        self.activity.id
-    }
-}
-
-impl Display for DiffedActivity {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.activity)
-    }
-}
-
 impl From<(Activity, ActivityDiff)> for DiffedActivity {
     fn from(value: (Activity, ActivityDiff)) -> Self {
         let (activity, diff) = value;
@@ -527,18 +533,41 @@ impl From<(Activity, ActivityDiff)> for DiffedActivity {
     }
 }
 
-impl AsRef<Activity> for DiffedActivity {
-    fn as_ref(&self) -> &Activity {
-        &self.activity
-    }
-}
+macro_rules! impl_diff_apk_ipc {
+    ($name:ident, $inner:ident, $field:ident) => {
+        impl DiffedApkIPC for $name {
+            type Inner = $inner;
+            fn into_apk_ipc(self) -> Self::Inner {
+                self.$field
+            }
+        }
 
-impl Deref for DiffedActivity {
-    type Target = Activity;
+        impl AsRef<$inner> for $name {
+            fn as_ref(&self) -> &$inner {
+                &self.$field
+            }
+        }
 
-    fn deref(&self) -> &Self::Target {
-        &self.activity
-    }
+        impl Deref for $name {
+            type Target = $inner;
+
+            fn deref(&self) -> &Self::Target {
+                &self.$field
+            }
+        }
+
+        impl Idable for $name {
+            fn get_id(&self) -> i32 {
+                self.$field.id
+            }
+        }
+
+        impl Display for $name {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}", self.$field)
+            }
+        }
+    };
 }
 
 macro_rules! impl_apk_ipc {
@@ -583,8 +612,11 @@ macro_rules! impl_apk_ipc {
 }
 
 impl_apk_ipc!(Receiver);
+impl_diff_apk_ipc!(DiffedReceiver, Receiver, receiver);
 impl_apk_ipc!(Activity);
+impl_diff_apk_ipc!(DiffedActivity, Activity, activity);
 impl_apk_ipc!(Service);
+impl_diff_apk_ipc!(DiffedService, Service, service);
 
 // TODO Eventually the schema should just have another table for authorities
 //  so we can do a join
@@ -705,18 +737,6 @@ impl Diffable for DiffedProvider {
     }
 }
 
-impl Idable for DiffedProvider {
-    fn get_id(&self) -> i32 {
-        self.provider.id
-    }
-}
-
-impl Display for DiffedProvider {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.provider)
-    }
-}
-
 impl From<(Provider, ProviderDiff)> for DiffedProvider {
     fn from(value: (Provider, ProviderDiff)) -> Self {
         let (provider, diff) = value;
@@ -736,19 +756,7 @@ impl From<(Provider, ProviderDiff)> for DiffedProvider {
     }
 }
 
-impl AsRef<Provider> for DiffedProvider {
-    fn as_ref(&self) -> &Provider {
-        &self.provider
-    }
-}
-
-impl Deref for DiffedProvider {
-    type Target = Provider;
-
-    fn deref(&self) -> &Self::Target {
-        &self.provider
-    }
-}
+impl_diff_apk_ipc!(DiffedProvider, Provider, provider);
 
 #[sql_db_row]
 #[derive(Serialize, Deserialize)]

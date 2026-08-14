@@ -1,7 +1,9 @@
 mod common;
-pub use common::{
-    ApkComponent, ApkIPC, ApkIPCKind, Diffable, Enablable, Error, Exportable, Idable,
-    PermissionMode, PermissionProtected, Result,
+pub use common::{DatabaseId, Error, Idable, Result};
+
+pub use device::{
+    ApkComponent, ApkIPC, ApkIPCKind, Diffable, Enablable, Exportable, PermissionMode,
+    PermissionProtected,
 };
 
 pub(crate) use common::query;

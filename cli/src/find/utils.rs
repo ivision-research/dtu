@@ -21,5 +21,6 @@ pub fn get_method_search<'a>(
     Ok(MethodSearch::new(
         get_search_params(name, class, signature)?,
         source,
+        None,
     ))
 }

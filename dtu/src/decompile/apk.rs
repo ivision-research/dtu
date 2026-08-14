@@ -78,12 +78,7 @@ impl<'a> ApkFile<'a> {
     fn decompile_with_apktool(&self, ctx: &dyn Context, out: &Path) -> DecompileResult<bool> {
         let apktool = ctx.get_bin("apktool")?;
         let dest = out.to_string_lossy();
-        let mut args = vec![
-            "d",
-            "--no-debug-info",
-            "-o",
-            &dest,
-        ];
+        let mut args = vec!["d", "--no-debug-info", "-o", &dest];
         if self.force {
             args.push("-f")
         }
@@ -282,8 +277,10 @@ impl<'a> ApkFile<'a> {
                 "d",
                 "--api",
                 api_level,
-                "--debug-info", "false",
-                "--accessor-comments", "false",
+                "--debug-info",
+                "false",
+                "--accessor-comments",
+                "false",
                 "-o",
                 out_arg,
                 name,

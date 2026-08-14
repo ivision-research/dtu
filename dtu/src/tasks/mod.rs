@@ -1,6 +1,10 @@
+#[cfg(feature = "setup")]
 pub mod fuzz;
+#[cfg(feature = "setup")]
 pub mod pull;
+#[cfg(feature = "setup")]
 pub mod selinux;
+#[cfg(feature = "setup")]
 pub mod smalisa;
 
 pub mod task;

@@ -102,7 +102,7 @@ where
     }
 
     let it = f()?;
-    if let Ok(f) = OpenOptions::new()
+    if let Ok(fh) = OpenOptions::new()
         .write(true)
         .read(write_output)
         .create_new(true)
@@ -150,17 +150,24 @@ pub fn bool_hash_key(z: bool) -> &'static [u8] {
 
 pub fn opt_diff_hash_key<'a>(it: &'a Option<DiffSource>) -> &'a [u8] {
     if let Some(v) = it {
-        v.name.as_str().as_bytes()
+        if v.name.len() == 0 {
+            &[0u8]
+        } else {
+            v.name.as_str().as_bytes()
+        }
     } else {
         &[]
     }
 }
 
-#[allow(unused)]
 pub fn opt_asref_hash_key<'a, T: AsRef<str>>(it: &'a Option<T>) -> &'a [u8] {
     if let Some(v) = it {
         let s = v.as_ref();
-        s.as_bytes()
+        if s.len() == 0 {
+            &[0u8]
+        } else {
+            s.as_bytes()
+        }
     } else {
         &[]
     }
@@ -491,6 +498,7 @@ pub fn hook_to_signals(mut cancel: TaskCanceller) -> anyhow::Result<HookedSignal
                 _ = signal_hook::low_level::emulate_default_handler(sig);
             } else {
                 cancel.cancel();
+                log::warn!("cancelling, interrupt again to force an exit");
                 seen_exit = true;
             }
         }

@@ -292,7 +292,8 @@ impl DatabaseSetupHelper for FSDumpAccess {
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
+    use std::collections::HashSet;
 
     use rstest::*;
 

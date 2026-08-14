@@ -17,6 +17,86 @@ options = [
     ["num-threads", "T", "Uncompletable", ""]
 ]
 
+[taint]
+
+[taint.filter-method]
+options = [
+    ["file", "f", "File", ""],
+    ["class", "c", "GraphClass", ""],
+    ["name", "n", "GraphMethod", ""],
+    ["signature", "s", "GraphSignature", ""],
+    ["source", "S", "GraphSource", ""]
+]
+
+[taint.filter-field]
+options = [
+    ["file", "f", "File", ""],
+    ["class", "c", "GraphClass", ""],
+    ["name", "n", "Uncompletable", ""]
+]
+
+[taint.providers]
+options = [
+    ["threads", "j", "Uncompletable", ""],
+    ["depth", "d", "Uncompletable", ""],
+    ["only-new", "n", "None", ""],
+    ["diff-source", "S", "DiffSource", ""],
+    ["only-public", "P", "None", ""],
+    ["only-enabled", "E", "None", ""],
+]
+
+[taint.receiver-intents]
+options = [
+    ["threads", "j", "Uncompletable", ""],
+    ["depth", "d", "Uncompletable", ""],
+    ["only-new", "n", "None", ""],
+    ["diff-source", "S", "DiffSource", ""],
+    ["only-public", "P", "None", ""],
+    ["only-enabled", "E", "None", ""],
+]
+
+[taint.activity-intents]
+options = [
+    ["threads", "j", "Uncompletable", ""],
+    ["depth", "d", "Uncompletable", ""],
+    ["only-new", "n", "None", ""],
+    ["diff-source", "S", "DiffSource", ""],
+    ["only-public", "P", "None", ""],
+    ["only-enabled", "E", "None", ""],
+]
+
+[taint.service-binders]
+options = [
+    ["threads", "j", "Uncompletable", ""],
+    ["depth", "d", "Uncompletable", ""],
+    ["only-new", "n", "None", ""],
+    ["diff-source", "S", "DiffSource", ""],
+    ["only-public", "P", "None", ""],
+    ["only-enabled", "E", "None", ""],
+]
+
+[taint.system-services]
+options = [
+    ["threads", "j", "Uncompletable", ""],
+    ["depth", "d", "Uncompletable", ""],
+    ["only-new", "n", "None", ""],
+    ["diff-source", "S", "DiffSource", ""],
+]
+
+[taint.methods]
+options = [
+    ["threads", "j", "Uncompletable", ""],
+    ["depth", "d", "Uncompletable", ""],
+    ["class", "c", "GraphClass", ""],
+    ["name", "n", "GraphMethod", ""],
+    ["signature", "s", "GraphSignature", ""],
+    ["source", "S", "GraphSource", ""],
+    # TODO: TaintSpec?
+    ["taint", "t", "Uncompletable", ""],
+    ["complex-params", "-C", "None", ""],
+    ["seed-indirect", "", "None", ""]
+]
+
 [db]
 
 [db.update-binder-availability]

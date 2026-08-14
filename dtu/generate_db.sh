@@ -11,6 +11,10 @@ setup_db() {
     diesel --config-file "$config_file" --database-url "sqlite://$db_file" migration run
 }
 
-setup_db "device"
-setup_db "meta"
-setup_db "graph"
+if [ -n "$1" ]; then
+    setup_db "$1"
+else
+    setup_db "device"
+    setup_db "meta"
+    setup_db "graph"
+fi

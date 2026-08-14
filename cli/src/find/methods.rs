@@ -156,7 +156,7 @@ impl ByName {
         ensure_prereq(ctx, Prereq::GraphDatabaseSetup)?;
         let graphdb = get_default_graphdb(ctx)?;
         let search =
-            match MethodSearch::new_from_opts(None, Some(&self.name), None, ostr(&self.source)) {
+            match MethodSearch::new_from_opts(None, Some(&self.name), None, ostr(&self.source), None) {
                 Ok(v) => v,
                 Err(e) => bail!("{e}"),
             };
@@ -182,7 +182,7 @@ impl ByClass {
         ensure_prereq(ctx, Prereq::GraphDatabaseSetup)?;
         let graphdb = get_default_graphdb(ctx)?;
         let search =
-            match MethodSearch::new_from_opts(Some(&self.class), None, None, ostr(&self.source)) {
+            match MethodSearch::new_from_opts(Some(&self.class), None, None, ostr(&self.source), None) {
                 Ok(v) => v,
                 Err(e) => bail!("{e}"),
             };

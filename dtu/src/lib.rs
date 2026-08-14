@@ -1,6 +1,8 @@
 pub mod manifest;
 pub use manifest::Manifest;
 
+pub mod analysis;
+
 pub mod devicefs;
 
 pub mod fsdump;
@@ -24,7 +26,6 @@ pub use command::run_cmd;
 #[cfg(feature = "sql")]
 pub mod prereqs;
 
-#[cfg(feature = "setup")]
 pub mod tasks;
 
 #[cfg(feature = "sql")]

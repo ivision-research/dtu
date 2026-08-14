@@ -76,6 +76,7 @@ impl ByMethod {
             ostr(&self.name),
             ostr(&self.signature),
             ostr(&self.source),
+            None,
         )
         .map_err(|e| anyhow::Error::msg(e))?;
 

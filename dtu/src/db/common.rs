@@ -1,9 +1,9 @@
 #![allow(unused_macros)]
 
-use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
+use std::hash::Hash;
 use std::sync::{Arc, RwLock};
 
 use diesel::connection::SimpleConnection;
@@ -16,7 +16,7 @@ use diesel_migrations::MigrationHarness;
 use lazy_static::lazy_static;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
-use crate::utils::{ensure_dir_exists, ClassName};
+use crate::utils::ensure_dir_exists;
 use crate::Context;
 use dtu_proc_macro::wraps_base_error;
 
@@ -104,86 +104,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Clone)]
 pub(super) struct DBThread(Arc<ThreadPool>);
-
-impl<T> Idable for T
-where
-    for<'a> &'a T: Identifiable<Id = &'a i32>,
-{
-    fn get_id(&self) -> i32 {
-        *self.id()
-    }
-}
-
-pub trait Idable {
-    fn get_id(&self) -> i32;
-}
-
-pub trait Enablable {
-    fn is_enabled(&self) -> bool;
-}
-
-pub trait Exportable {
-    fn is_exported(&self) -> bool;
-}
-
-pub trait ApkComponent {
-    fn get_apk_id(&self) -> i32;
-}
-
-#[derive(Clone, Copy)]
-pub enum PermissionMode {
-    /// Generic permission on the entire object
-    Generic,
-    /// Separate permission for Read operations
-    Read,
-    /// Separate permission for Write operations
-    Write,
-    /// Get the first of any of the above permissions
-    Any,
-}
-
-pub trait PermissionProtected {
-    /// Return true if at least one permission mode is required
-    fn requires_permission(&self) -> bool {
-        self.get_permission_for_mode(PermissionMode::Any).is_some()
-    }
-
-    /// Gets the permission for the given [PermissionMode]
-    fn get_permission_for_mode(&self, mode: PermissionMode) -> Option<&str> {
-        match mode {
-            PermissionMode::Generic | PermissionMode::Any => self.get_generic_permission(),
-            _ => None,
-        }
-    }
-
-    fn get_generic_permission(&self) -> Option<&str>;
-
-    #[deprecated(note = "Use get_generic_permission")]
-    fn get_permission(&self) -> Option<&str> {
-        self.get_generic_permission()
-    }
-}
-
-#[derive(Clone, Copy)]
-pub enum ApkIPCKind {
-    Receiver,
-    Activity,
-    Provider,
-    Service,
-}
-
-/// A trait for anything that can be included in the diff
-pub trait Diffable {
-    /// Whether the item exists in the diff or not
-    fn in_diff(&self) -> bool;
-}
-
-/// A trait for Receivers, Activities, and Services
-pub trait ApkIPC: ApkComponent + Exportable + PermissionProtected + Enablable + Idable {
-    fn get_class_name(&self) -> ClassName;
-    fn get_package(&self) -> Cow<'_, str>;
-    fn get_kind(&self) -> ApkIPCKind;
-}
 
 impl DBThread {
     pub(super) fn new(
@@ -352,6 +272,42 @@ pub(super) fn cleanup_database(url: &String) {
     });
 }
 
+/// Trait for all types that are used as database IDs
+///
+/// Implemented with the [database_id] macro
+pub trait DatabaseId:
+    Clone
+    + Copy
+    + PartialEq
+    + Eq
+    + Hash
+    + PartialOrd
+    + Ord
+    + Debug
+    + serde::Serialize
+    + serde::de::DeserializeOwned
+{
+    fn from_id(id: i32) -> Self;
+    /// Retrieve the raw database id
+    fn id(self) -> i32;
+}
+
+impl<T> Idable for T
+where
+    for<'a> &'a T: Identifiable<Id = &'a i32>,
+{
+    fn get_id(&self) -> i32 {
+        *self.id()
+    }
+}
+
+pub trait Idable {
+    fn get_id(&self) -> i32;
+}
+
+/// Create a database ID type with the given name and doc comment
+///
+/// The returned type is just a wrapper around i32s and used for type safety
 macro_rules! database_id {
     ($name:ident, $doc:literal) => {
         #[doc = $doc]
@@ -379,6 +335,15 @@ macro_rules! database_id {
             }
             pub const fn raw(self) -> i32 {
                 self.0
+            }
+        }
+
+        impl crate::db::common::DatabaseId for $name {
+            fn from_id(id: i32) -> Self {
+                Self::new(id)
+            }
+            fn id(self) -> i32 {
+                self.raw()
             }
         }
 

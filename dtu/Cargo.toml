@@ -8,12 +8,12 @@ dtu_proc_macro = { path = "../dtu_proc_macro" }
 thiserror = "1.0"
 which = "7.0"
 directories = "6.0"
-diesel = { version = "2.0", features = ["sqlite", "returning_clauses_for_sqlite_3_35"], optional = true }
+diesel = { version = "2.0", features = ["sqlite", "returning_clauses_for_sqlite_3_35", "r2d2"], optional = true }
 diesel_migrations = { version = "2.0", optional = true }
 tempfile = "3.19"
 zip = { version = "4.3", default-features = false, features = ["deflate", "deflate64"] }
 rayon = "1.10"
-smalisa = { git = "https://github.com/ivision-research/smalisa.git", rev = "baad397ca45a0d7c558bf5ab707be165b27f22e0", default-features = false }
+smalisa = { git = "https://github.com/ivision-research/smalisa.git", branch = "ssa", default-features = false, version = "1.0.0", features = ["ssa", "yoke", "serde" ] }
 csv = "1.3"
 sha2 = { workspace = true }
 walkdir = "2"
@@ -31,12 +31,15 @@ regex = { workspace = true }
 toml = { workspace = true }
 tar = { workspace = true }
 zstd = { workspace = true }
+yoke = { workspace = true }
+postcard = { workspace = true }
 
 once_cell = "1.21"
 
 # Needed for Apex files :(
 protobuf = "=3.5.1"
 protobuf-json-mapping = "=3.5.1"
+lru = "0.18.2"
 
 [target.'cfg(not(windows))'.dependencies]
 libc = { workspace = true }
@@ -56,10 +59,10 @@ mockall = { workspace = true }
 rstest = { workspace = true }
 rand = { workspace = true }
 env_logger = { workspace = true }
+dtu = { path = ".", features = ["graph", "sql", "filestore", "app", "app-server", "decompile", "setup" ] }
 
 [features]
 default = ["graph", "sql"]
-test = ["graph", "sql", "filestore", "app", "app-server", "decompile", "setup"]
 
 sql = ["reexport_diesel", "dep:diesel", "dep:diesel_migrations"]
 
@@ -79,6 +82,8 @@ decompile = []
 
 # Include setup tasks
 setup = ["graph", "decompile"]
+
+lru_stats = []
 
 reexport_smalisa = []
 reexport_diesel = []

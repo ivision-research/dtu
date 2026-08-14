@@ -925,6 +925,56 @@ ORDER BY r.id, r.depth;
         self.get_calls(CallDirection::From, from, None, depth)
     }
 
+    fn find_interfaces_of(&self, class: &ClassSearch) -> Result<Vec<ClassSpec>> {
+        let get_class_ids_sql = Self::get_class_ids_sql(class);
+
+        // UNION rather than UNION ALL: an interface reachable by more than one
+        // route through the hierarchy would otherwise keep re-expanding
+        let mut q = sql_query(format!(
+            r#"WITH RECURSIVE
+    search_classes(search_class_id) AS ({get_class_ids_sql}),
+
+    ancestors(classid) AS (
+        SELECT search_class_id FROM search_classes
+        UNION
+        SELECT s.parent
+        FROM supers AS s
+        JOIN ancestors AS a
+            ON a.classid = s.child
+        UNION
+        SELECT i.interface
+        FROM interfaces AS i
+        JOIN ancestors AS a
+            ON a.classid = i.class
+    ),
+
+    class_specs(source, name, access_flags) AS (
+        SELECT s.name, c.name, c.access_flags
+        FROM interfaces AS i
+        JOIN ancestors AS a
+            ON a.classid = i.class
+        JOIN classes AS c
+            ON c.id = i.interface
+        JOIN sources AS s
+            ON s.id = c.source
+    )
+
+SELECT DISTINCT source, name, access_flags from class_specs
+    "#
+        ))
+        .into_boxed();
+
+        q = q.bind::<Text, _>(class.class.get_smali_name());
+        if let Some(src) = class.source {
+            q = q.bind::<Text, _>(src);
+        }
+
+        self.with_connection(|c| -> Result<Vec<ClassSpec>> {
+            let rows: Vec<ChildClassRow> = query!(q).get_results(c)?;
+            Ok(rows.into_iter().map(ClassSpec::from).collect())
+        })
+    }
+
     fn find_parent_classes_of(&self, child: &ClassName, source: &str) -> Result<Vec<ClassSpec>> {
         // Same note as the child search with the UNION ALL, there shouldn't be cycles in well
         // formed data
@@ -1467,9 +1517,11 @@ mod test {
             macro_rules! path {
                 ($({ $($name:ident: $val:expr),+ }),*) => {{
 
+                    // The ids are not part of MethodSpec equality
                     let path = vec![$(
                             MethodSpec {
-                                id: 1,
+                                id: MethodId::new(1),
+                                class_id: ClassId::new(1),
                         $(
                                 $name: $val.into()
                         ),+,

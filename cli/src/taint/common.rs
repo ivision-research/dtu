@@ -4,7 +4,7 @@ use clap::{self, Args};
 
 use dtu::{
     analysis::{
-        taint::{TaintAnalyzer, TaintAnalyzerOptions, TaintReport, TaintSeeds},
+        taint::{TaintAnalyzer, TaintAnalyzerOptions, TaintReport, TaintSeedOptions, TaintSeeds},
         SsaClassLoader,
     },
     db::{
@@ -141,7 +141,7 @@ pub fn methods_for_class(
 ) -> anyhow::Result<Vec<MethodSpec>> {
     let mut methods = Vec::new();
     let parents = gdb.find_parent_classes_of(class, source)?;
-    let search = MethodSearch::new(MethodSearchParams::ByClass { class }, Some(source));
+    let search = MethodSearch::new(MethodSearchParams::ByClass { class }, Some(source), None);
 
     methods.extend(gdb.get_methods(&search)?);
     for parent in parents {
@@ -150,6 +150,7 @@ pub fn methods_for_class(
                 class: &parent.name,
             },
             Some(&parent.source),
+            None,
         );
         methods.extend(gdb.get_methods(&search)?);
     }
@@ -161,6 +162,8 @@ pub struct Analysis {
     pub methods: Vec<MethodSpec>,
     pub seeds: Box<dyn TaintSeeds>,
     pub loader: Option<Arc<SsaClassLoader>>,
+    /// Only honored when the run asked for indirect seeding
+    pub seed: Option<TaintSeedOptions>,
 }
 
 impl Analysis {
@@ -169,11 +172,18 @@ impl Analysis {
             methods,
             seeds: Box::new(seeds),
             loader: None,
+            seed: None,
         }
     }
 
     pub fn with_loader(mut self, loader: Arc<SsaClassLoader>) -> Self {
         self.loader = Some(loader);
+        self
+    }
+
+    /// How to look for methods beyond the ones resolved here
+    pub fn with_seed_options(mut self, seed: TaintSeedOptions) -> Self {
+        self.seed = Some(seed);
         self
     }
 }
@@ -194,21 +204,18 @@ where
 {
     project_cacheable_json(ctx, cache, opts.no_cache, true, || {
         let analysis = resolve()?;
-
-        log::info!("Running on {} methods", analysis.methods.len());
         let loader = match analysis.loader {
             Some(v) => v,
-            None => Arc::new(SsaClassLoader::new(ctx)?),
+            None => Arc::new(
+                SsaClassLoader::new(ctx)
+                    .ok_or_else(|| anyhow::anyhow!("failed to open the SSA class cache"))?,
+            ),
         };
         let (_sigs, cancel) = task_canceller()?;
-        let mut taint = TaintAnalyzer::new(
-            ctx,
-            gdb,
-            cancel,
-            opts.analyzer_options(),
-            &*analysis.seeds,
-            loader,
-        );
+        let mut analyzer_opts = opts.analyzer_options();
+        analyzer_opts.seed = analysis.seed;
+        let mut taint =
+            TaintAnalyzer::new(ctx, gdb, cancel, analyzer_opts, &*analysis.seeds, loader);
         let (report, failed) = taint.run(analysis.methods);
         if !failed.is_empty() {
             log::warn!("{} methods failed to analyze", failed.len());

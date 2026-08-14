@@ -67,6 +67,12 @@ pub trait GraphDatabase: Sync + Send {
     /// queried for this to make sense
     fn find_parent_classes_of(&self, child: &ClassName, source: &str) -> Result<Vec<ClassSpec>>;
 
+    /// Find all interfaces implemented by the given class
+    ///
+    /// This is transitive: interfaces picked up from parent classes and
+    /// interfaces extended by those interfaces are included.
+    fn find_interfaces_of(&self, class: &ClassSearch) -> Result<Vec<ClassSpec>>;
+
     /// Find all child classes of the given parent class
     ///
     /// The source is for the source in which the relationship was discovered,

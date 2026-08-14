@@ -5,9 +5,12 @@ use std::{
 
 use dtu::{
     db::graph::{
-        ClassSpec, DefaultGraphDatabase, GraphDatabase, StringSearch, get_default_graphdb, models::{
-            ClassSearch, FieldAccessOp, FieldId, FieldRef, FieldSearch, FieldSpec, MethodCallPath, MethodId, MethodSearch, MethodSpec
-        }
+        get_default_graphdb,
+        models::{
+            ClassSearch, FieldAccessOp, FieldId, FieldRef, FieldSearch, FieldSpec, MethodCallPath,
+            MethodId, MethodSearch, MethodSpec,
+        },
+        ClassSpec, DefaultGraphDatabase, GraphDatabase, StringSearch,
     },
     utils::ClassName,
 };
@@ -76,6 +79,24 @@ impl GraphDB {
         Ok(self
             .0
             .get_methods_referencing_field(FieldId::new(field), action)?
+            .into_iter()
+            .map(PyMethodSpec::from)
+            .collect())
+    }
+
+    /// Get a single method by its database id
+    fn get_method_by_id(&self, method: i32) -> Result<PyMethodSpec> {
+        Ok(PyMethodSpec::from(
+            self.0.get_method_by_id(MethodId::new(method))?,
+        ))
+    }
+
+    /// Get multiple methods by their database ids
+    fn get_methods_by_id(&self, methods: Vec<i32>) -> Result<Vec<PyMethodSpec>> {
+        let ids: Vec<MethodId> = methods.into_iter().map(MethodId::new).collect();
+        Ok(self
+            .0
+            .get_methods_by_id(&ids)?
             .into_iter()
             .map(PyMethodSpec::from)
             .collect())

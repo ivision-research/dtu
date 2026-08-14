@@ -680,7 +680,7 @@ fn on_field_access<F>(
         _ => return,
     };
 
-    if class_ignore_func(fref.class) {
+    if class_ignore_func(fref.class.as_str()) {
         return;
     }
 
@@ -697,7 +697,7 @@ fn on_field_access<F>(
     };
 
     let it = MethodFieldAccess {
-        class: fref.class.into(),
+        class: fref.class.to_string(),
         name: fref.name.into(),
         method_class: class.into(),
         method: method.into(),
@@ -761,20 +761,20 @@ where
         };
         match line {
             Line::Class(flags, clazz) => {
-                if class_ignore_func(clazz) {
+                if class_ignore_func(clazz.as_str()) {
                     return Ok(());
                 }
-                class = clazz;
-                channels.send_class(clazz, flags);
+                class = clazz.as_str();
+                channels.send_class(clazz.as_str(), flags);
             }
 
             Line::Super(sup) => {
-                if !should_ignore_super(sup) {
-                    channels.send_super(class, sup);
+                if !should_ignore_super(sup.as_str()) {
+                    channels.send_super(class, sup.as_str());
                 }
             }
             Line::Interface(iface) => {
-                channels.send_interface(class, iface);
+                channels.send_interface(class, iface.as_str());
             }
             Line::Field(ref field) => {
                 if let RawLiteral::String(s) = field.raw_value {
@@ -841,7 +841,7 @@ where
                             mref.args,
                         );
                     }
-                } else if let InvArgs::RegStr(_, s) = inv.args() {
+                } else if let InvArgs::OneRegLiteral(_, RawLiteral::String(s)) = inv.args() {
                     send_str!(s);
                 }
             }

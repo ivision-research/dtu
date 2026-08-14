@@ -11,6 +11,7 @@ mod graph;
 mod intent_string;
 mod parcel_string;
 mod sql;
+mod taint;
 mod types;
 mod utils;
 mod version;
@@ -38,6 +39,12 @@ mod pydtu {
     #[pymodule_export]
     use super::graph::{
         GraphDB, PyClassSpec, PyFieldRef, PyFieldSpec, PyMethodCallPath, PyMethodSpec,
+    };
+
+    #[pymodule_export]
+    use super::taint::{
+        PyMethodTaint, PyTaintReport, PyTaintSink, PyTaintSinkKind, PyTaintSource,
+        PyTaintSourceAndRoute,
     };
 
     #[pymodule_export]
