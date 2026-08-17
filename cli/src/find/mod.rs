@@ -32,6 +32,9 @@ use class::FindClass;
 mod class_with_method;
 use class_with_method::FindClassWithMethod;
 
+mod by_id;
+use by_id::{ClassById, MethodById};
+
 mod strings;
 use strings::Strings;
 
@@ -110,6 +113,14 @@ enum Command {
     /// Find all classes defining the given method
     #[command()]
     ClassWithMethod(FindClassWithMethod),
+
+    /// Retrieve class metadata via a class ID
+    #[command()]
+    ClassById(ClassById),
+
+    /// Retrieve method metadata via a method ID
+    #[command()]
+    MethodById(MethodById),
 }
 
 fn graph_db(ctx: &dyn Context) -> anyhow::Result<DefaultGraphDatabase> {
@@ -122,6 +133,8 @@ impl Find {
     pub fn run(self) -> anyhow::Result<()> {
         let ctx = DefaultContext::new();
         match self.command {
+            Command::ClassById(c) => c.run(&ctx),
+            Command::MethodById(c) => c.run(&ctx),
             Command::ServiceFile(c) => c.run(&ctx),
             Command::Methods(c) => c.run(&ctx),
             Command::Fields(c) => c.run(&ctx),

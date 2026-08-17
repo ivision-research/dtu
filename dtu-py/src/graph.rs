@@ -173,18 +173,19 @@ impl GraphDB {
     ///
     /// At least one of `class_` or `name` is required for this search. High depth values may
     /// negatively impact performance.
-    #[pyo3(signature = (*, class_ = None, name = None, signature = None, method_source = None, call_source = None, depth = 5))]
+    #[pyo3(signature = (*, class_ = None, name = None, signature = None, return_type = None, method_source = None, call_source = None, depth = 5))]
     fn find_callers(
         &self,
         class_: Option<&str>,
         name: Option<&str>,
         signature: Option<&str>,
+        return_type: Option<&str>,
         method_source: Option<&str>,
         call_source: Option<&str>,
         depth: usize,
     ) -> PyResult<Vec<PyMethodCallPath>> {
         let cn = class_.map(ClassName::from);
-        let search = MethodSearch::new_from_opts(cn.as_ref(), name, signature, method_source)
+        let search = MethodSearch::new_from_opts(cn.as_ref(), name, signature, method_source, return_type)
             .map_err(|_| DtuError::new_err("at least one of `class_` or `name` required"))?;
 
         Ok(self
@@ -198,17 +199,18 @@ impl GraphDB {
     }
 
     /// Find all calls leaving the given method up to a given depth.
-    #[pyo3(signature = (*, class_ = None, name = None, signature = None, source = None, depth = 5))]
+    #[pyo3(signature = (*, class_ = None, name = None, signature = None, source = None, return_type = None, depth = 5))]
     fn find_outgoing_calls(
         &self,
         class_: Option<&str>,
         name: Option<&str>,
         signature: Option<&str>,
         source: Option<&str>,
+        return_type: Option<&str>,
         depth: usize,
     ) -> PyResult<Vec<PyMethodCallPath>> {
         let cn = class_.map(ClassName::from);
-        let search = MethodSearch::new_from_opts(cn.as_ref(), name, signature, source)
+        let search = MethodSearch::new_from_opts(cn.as_ref(), name, signature, source, return_type)
             .map_err(|_| DtuError::new_err("at least one of `class_` or `name` required"))?;
 
         Ok(self
@@ -265,16 +267,17 @@ impl GraphDB {
     /// Find all methods matching the given parameters
     ///
     /// At least one of `class_` or `name` is required for this search
-    #[pyo3(signature = (*, class_ = None, name = None, signature = None, source = None))]
+    #[pyo3(signature = (*, class_ = None, name = None, signature = None, return_type = None, source = None))]
     fn get_methods(
         &self,
         class_: Option<&str>,
         name: Option<&str>,
         signature: Option<&str>,
+        return_type: Option<&str>,
         source: Option<&str>,
     ) -> PyResult<Vec<PyMethodSpec>> {
         let cn = class_.map(ClassName::from);
-        let search = MethodSearch::new_from_opts(cn.as_ref(), name, signature, source)
+        let search = MethodSearch::new_from_opts(cn.as_ref(), name, signature, source, return_type)
             .map_err(|_| DtuError::new_err("at least one of `class_` or `name` required"))?;
         Ok(self
             .0

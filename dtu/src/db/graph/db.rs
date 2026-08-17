@@ -1,13 +1,15 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::iter::repeat;
 
 use diesel::backend::Backend;
 use diesel::connection::SimpleConnection;
+use diesel::dsl::{AsSelect, InnerJoin, InnerJoinOn, IntoBoxed, Select};
 use diesel::sql_query;
 use diesel::sql_types::{BigInt, Integer, Text};
+use diesel::sqlite::Sqlite;
 use diesel::SqliteConnection;
 use diesel_migrations::{embed_migrations, EmbeddedMigrations};
+use itertools::Itertools;
 use smalisa::AccessFlag;
 
 use super::schema::*;
@@ -107,22 +109,6 @@ impl GraphSqliteDatabase {
     impl_get_all!(get_sources, Source, sources);
     impl_delete_by!(delete_source_by_name, &str, sources, name.eq);
 
-    #[inline]
-    fn get_field_ids_with_conn(
-        conn: &mut SqliteConnection,
-        search: &FieldSearch,
-    ) -> Result<Vec<FieldId>> {
-        search.param.get_sql(conn, search.source)
-    }
-
-    #[inline]
-    fn get_method_ids_with_conn(
-        conn: &mut SqliteConnection,
-        search: &MethodSearch,
-    ) -> Result<Vec<MethodId>> {
-        search.param.get_sql(conn, search.source)
-    }
-
     fn get_class_ids_sql(search: &ClassSearch) -> &'static str {
         match search.source {
             Some(_) => "SELECT c.id FROM classes AS c JOIN sources AS s ON c.source = s.id WHERE c.name = ? AND s.name = ?",
@@ -138,10 +124,8 @@ impl GraphSqliteDatabase {
             .inner_join(classes::table.on(classes::id.eq(methods::class)))
             .inner_join(sources::table)
             .select(MethodSpecRow::as_select()));
-        self.with_connection(|c| -> Result<Vec<MethodSpec>> {
-            let rows = q.load::<MethodSpecRow>(c)?;
-            Ok(rows.into_iter().map(MethodSpec::from).collect())
-        })
+        let rows = self.with_connection(|c| q.load::<MethodSpecRow>(c))?;
+        Ok(rows.into_iter().map(MethodSpec::from).collect())
     }
 
     fn get_method_for_string_eq(&self, string: &str) -> Result<Vec<MethodSpec>> {
@@ -152,10 +136,8 @@ impl GraphSqliteDatabase {
             .inner_join(classes::table.on(classes::id.eq(methods::class)))
             .inner_join(sources::table)
             .select(MethodSpecRow::as_select()));
-        self.with_connection(|c| -> Result<Vec<MethodSpec>> {
-            let rows = q.load::<MethodSpecRow>(c)?;
-            Ok(rows.into_iter().map(MethodSpec::from).collect())
-        })
+        let rows = self.with_connection(|c| q.load::<MethodSpecRow>(c))?;
+        Ok(rows.into_iter().map(MethodSpec::from).collect())
     }
 
     fn find_strings_like(&self, string: &str, source: Option<&str>) -> Result<Vec<SourcedString>> {
@@ -221,26 +203,21 @@ impl GraphSqliteDatabase {
             CallDirection::Into => ("caller", "callee"),
             CallDirection::From => ("callee", "caller"),
         };
+        let int_depth: i32 = depth
+            .try_into()
+            .map_err(|_| Error::Generic(format!("invalid depth")))?;
 
-        Ok(self.with_connection(|c| -> Result<Vec<MethodCallPath>> {
-            let method_ids = Self::get_method_ids_with_conn(c, method)?;
+        let mid_query = method.id_query();
+        let method_ids = self.with_connection(|c| mid_query.load::<MethodId>(c))?;
 
-            if method_ids.is_empty() {
-                return Ok(Vec::new());
-            }
+        if method_ids.is_empty() {
+            return Ok(Vec::new());
+        }
 
-            let in_binds = repeat("(?)")
-                .take(method_ids.len())
-                .collect::<Vec<&str>>()
-                .join(",");
-
-            // Note that a UNION ALL would be much better for performance, but since the call graph
-            // can be cyclic that'd potentially run us into infinite loops. Breaking cycles drops
-            // useful information, so we just stick with this.
-
-            let mut q = sql_query(format!(
-                r#"WITH RECURSIVE
-    search_methods(search_method_id) AS (VALUES {in_binds}),
+        // Note that UNION is required over UNION ALL since the call graph can be cyclic.
+        let q = query!(sql_query(format!(
+            r#"WITH RECURSIVE
+    search_methods(search_method_id) AS (SELECT value FROM json_each(?1)),
     calls_to(methodid, distance, path) AS (
         SELECT search_method_id, 0, json_array(search_method_id) FROM search_methods
         UNION
@@ -251,57 +228,69 @@ impl GraphSqliteDatabase {
         FROM calls AS c
         JOIN calls_to AS ct
             ON ct.methodid = c.{dst}
-        WHERE ct.distance < ?
+        WHERE ct.distance < ?2
         ORDER BY 2 DESC
-    ),
-    method_calls(source, class, id, name, args, ret, access_flags, idx) AS (
-        SELECT s.name, c.name, m.id, m.name, m.args, m.ret, m.access_flags, CAST(p.key AS INTEGER)
-        FROM calls_to AS ct
-        JOIN json_each(ct.path) AS p
-        JOIN methods AS m
-            ON m.id = CAST(p.value AS INTEGER)
-        JOIN sources AS s
-            ON s.id = m.source
-        JOIN classes AS c
-            ON c.id = m.class
-        WHERE ct.distance > 0
     )
-SELECT * from method_calls;"#,
-            ))
-            .into_boxed();
+SELECT ct.path FROM calls_to AS ct WHERE ct.distance > 0;"#,
+        ))
+        .bind::<Text, _>(to_json_array(&method_ids))
+        .bind::<Integer, _>(int_depth));
 
-            for mid in method_ids {
-                q = q.bind::<Integer, _>(mid);
+        let rows = self.with_connection(|c| q.get_results::<RouteRow>(c))?;
+        let mut routes = self.hydrate_routes(rows)?;
+
+        // A call-into route is built outwards from the searched method, so it reads backwards
+        if matches!(dir, CallDirection::Into) {
+            for route in routes.iter_mut() {
+                route.reverse();
             }
+        }
 
-            let int_depth: i32 = depth
-                .try_into()
-                .map_err(|_| Error::Generic(format!("invalid depth")))?;
-
-            q = q.bind::<Integer, _>(int_depth);
-
-            let rows: Vec<MethodCallRow> = query!(q).get_results(c)?;
-            let it = PathRowIterator::new(rows.into_iter());
-
-            // Reverse the results only if we're doing call into
-            let res = it
-                .collect::<MethodSpec>(matches!(dir, CallDirection::Into))
-                .into_iter();
-
-            Ok(match call_source {
-                None => res.map(MethodCallPath::from).collect(),
-                Some(src) => res
-                    .filter_map(|it| {
-                        if it.first()?.source == src {
-                            Some(it)
-                        } else {
-                            None
-                        }
-                    })
-                    .map(MethodCallPath::from)
-                    .collect(),
+        Ok(routes
+            .into_iter()
+            .filter(|route| match call_source {
+                None => true,
+                Some(src) => route.first().is_some_and(|it| it.source == src),
             })
-        })?)
+            .map(MethodCallPath::from)
+            .collect())
+    }
+
+    /// Turn routes given as JSON arrays of method ids into their full specs
+    ///
+    /// A method usually appears in many routes, so each distinct id is fetched once and cloned
+    /// into place rather than hydrated once per occurrence.
+    fn hydrate_routes(&self, rows: Vec<RouteRow>) -> Result<Vec<Vec<MethodSpec>>> {
+        let routes = rows
+            .into_iter()
+            .map(|it| it.method_ids())
+            .collect::<Result<Vec<Vec<MethodId>>>>()?;
+
+        // Every method present in the results, so they can be fetched in one go. Bounded by the
+        // distinct methods the routes touch, which is always small relative to the route count,
+        // so `eq_any` can't approach the bind parameter limit.
+        let unique = routes
+            .iter()
+            .flatten()
+            .copied()
+            .unique()
+            .collect::<Vec<MethodId>>();
+
+        let specs = self
+            .get_methods_by_id(&unique)?
+            .into_iter()
+            .map(|it| (it.id, it))
+            .collect::<HashMap<MethodId, MethodSpec>>();
+
+        Ok(routes
+            .into_iter()
+            .map(|route| {
+                route
+                    .into_iter()
+                    .filter_map(|id| specs.get(&id).cloned())
+                    .collect()
+            })
+            .collect())
     }
 }
 
@@ -311,523 +300,177 @@ enum CallDirection {
 }
 
 impl<'a> FieldSearchParams<'a> {
-    fn get_spec_sql(
-        &self,
-        conn: &mut SqliteConnection,
-        source: Option<&str>,
-    ) -> Result<Vec<FieldSpec>> {
+    fn class(&self) -> Option<&'a ClassName> {
         match self {
-            Self::ByClass { class } => {
-                self.spec_sql_by_class(conn, &class.get_smali_name(), source)
-            }
-            Self::ByClassAndName { class, name } => {
-                self.spec_sql_by_class_and_name(conn, &class.get_smali_name(), name, source)
-            }
-            Self::ByFullSpec { class, name, ty } => {
-                self.spec_sql_by_full_spec(conn, &class.get_smali_name(), name, ty, source)
-            }
+            Self::ByClass { class }
+            | Self::ByClassAndName { class, .. }
+            | Self::ByFullSpec { class, .. } => Some(*class),
         }
     }
-    fn get_sql(&self, conn: &mut SqliteConnection, source: Option<&str>) -> Result<Vec<FieldId>> {
+
+    fn name(&self) -> Option<&'a str> {
         match self {
-            Self::ByClass { class } => self.sql_by_class(conn, &class.get_smali_name(), source),
-            Self::ByClassAndName { class, name } => {
-                self.sql_by_class_and_name(conn, &class.get_smali_name(), name, source)
-            }
-            Self::ByFullSpec { class, name, ty } => {
-                self.sql_by_full_spec(conn, &class.get_smali_name(), name, ty, source)
-            }
+            Self::ByClassAndName { name, .. } | Self::ByFullSpec { name, .. } => Some(*name),
+            Self::ByClass { .. } => None,
         }
     }
 
-    fn sql_by_full_spec(
-        &self,
-        conn: &mut SqliteConnection,
-        class: &str,
-        name: &str,
-        ty: &str,
-        source: Option<&str>,
-    ) -> Result<Vec<FieldId>> {
-        Ok(match source {
-            Some(v) => query!(class_fields::table
-                .inner_join(classes::table.on(classes::id.eq(class_fields::class)))
-                .inner_join(sources::table.on(sources::id.eq(classes::source)))
-                .filter(sources::name.eq(v))
-                .filter(classes::name.eq(class))
-                .filter(class_fields::ty.eq(ty))
-                .filter(class_fields::name.eq(name))
-                .select(class_fields::id))
-            .load::<FieldId>(conn),
-            None => query!(class_fields::table
-                .inner_join(classes::table.on(classes::id.eq(class_fields::class)))
-                .filter(classes::name.eq(class))
-                .filter(class_fields::ty.eq(ty))
-                .filter(class_fields::name.eq(name))
-                .select(class_fields::id))
-            .load::<FieldId>(conn),
-        }?)
-    }
-
-    fn sql_by_class_and_name(
-        &self,
-        conn: &mut SqliteConnection,
-        class: &str,
-        name: &str,
-        source: Option<&str>,
-    ) -> Result<Vec<FieldId>> {
-        Ok(match source {
-            Some(v) => query!(class_fields::table
-                .inner_join(classes::table.on(classes::id.eq(class_fields::class)))
-                .inner_join(sources::table.on(sources::id.eq(classes::source)))
-                .filter(sources::name.eq(v))
-                .filter(classes::name.eq(class))
-                .filter(class_fields::name.eq(name))
-                .select(class_fields::id))
-            .load::<FieldId>(conn),
-            None => query!(class_fields::table
-                .inner_join(classes::table.on(classes::id.eq(class_fields::class)))
-                .filter(classes::name.eq(class))
-                .filter(class_fields::name.eq(name))
-                .select(class_fields::id))
-            .load::<FieldId>(conn),
-        }?)
-    }
-
-    fn sql_by_class(
-        &self,
-        conn: &mut SqliteConnection,
-        class: &str,
-        source: Option<&str>,
-    ) -> Result<Vec<FieldId>> {
-        Ok(match source {
-            Some(v) => query!(class_fields::table
-                .inner_join(classes::table.on(classes::id.eq(class_fields::class)))
-                .inner_join(sources::table.on(sources::id.eq(classes::source)))
-                .filter(sources::name.eq(v))
-                .filter(classes::name.eq(class))
-                .select(class_fields::id))
-            .load::<FieldId>(conn),
-            None => query!(class_fields::table
-                .inner_join(classes::table.on(classes::id.eq(class_fields::class)))
-                .filter(classes::name.eq(class))
-                .select(class_fields::id))
-            .load::<FieldId>(conn),
-        }?)
-    }
-
-    fn spec_sql_by_full_spec(
-        &self,
-        conn: &mut SqliteConnection,
-        class: &str,
-        name: &str,
-        ty: &str,
-        source: Option<&str>,
-    ) -> Result<Vec<FieldSpec>> {
-        Ok(match source {
-            Some(v) => query!(class_fields::table
-                .inner_join(classes::table.on(classes::id.eq(class_fields::class)))
-                .inner_join(sources::table.on(sources::id.eq(classes::source)))
-                .filter(sources::name.eq(v))
-                .filter(classes::name.eq(class))
-                .filter(class_fields::ty.eq(ty))
-                .filter(class_fields::name.eq(name))
-                .select(FieldSpecRow::as_select()))
-            .load::<FieldSpecRow>(conn)?,
-            None => query!(class_fields::table
-                .inner_join(classes::table.on(classes::id.eq(class_fields::class)))
-                .inner_join(sources::table.on(classes::source.eq(sources::id)))
-                .filter(classes::name.eq(class))
-                .filter(class_fields::ty.eq(ty))
-                .filter(class_fields::name.eq(name))
-                .select(FieldSpecRow::as_select()))
-            .load::<FieldSpecRow>(conn)?,
+    fn type_(&self) -> Option<&'a str> {
+        match self {
+            Self::ByFullSpec { ty, .. } => Some(*ty),
+            Self::ByClassAndName { .. } | Self::ByClass { .. } => None,
         }
-        .into_iter()
-        .map(FieldSpec::from)
-        .collect())
+    }
+}
+
+type FieldQuerySource = InnerJoinOn<
+    InnerJoin<class_fields::table, classes::table>,
+    sources::table,
+    diesel::dsl::Eq<sources::id, classes::source>,
+>;
+
+type BoxedFieldQuery<'a, S> = IntoBoxed<'a, Select<FieldQuerySource, S>, Sqlite>;
+
+impl<'a> FieldSearch<'a> {
+    /// A query for the ids of every method this search matches
+    fn id_query(&self) -> BoxedFieldQuery<'a, class_fields::id> {
+        let mut q = class_fields::table
+            .inner_join(classes::table)
+            .inner_join(sources::table.on(sources::id.eq(classes::source)))
+            .select(class_fields::id)
+            .into_boxed();
+
+        if let Some(class) = self.param.class() {
+            q = q.filter(classes::name.eq(class.get_smali_name()));
+        }
+
+        if let Some(name) = self.param.name() {
+            q = q.filter(class_fields::name.eq(name));
+        }
+
+        if let Some(ty) = self.param.type_() {
+            q = q.filter(class_fields::ty.eq(ty));
+        }
+        if let Some(source) = self.source {
+            q = q.filter(sources::name.eq(source));
+        }
+        query!(q)
     }
 
-    fn spec_sql_by_class_and_name(
-        &self,
-        conn: &mut SqliteConnection,
-        class: &str,
-        name: &str,
-        source: Option<&str>,
-    ) -> Result<Vec<FieldSpec>> {
-        Ok(match source {
-            Some(v) => query!(class_fields::table
-                .inner_join(classes::table.on(classes::id.eq(class_fields::class)))
-                .inner_join(sources::table.on(sources::id.eq(classes::source)))
-                .filter(sources::name.eq(v))
-                .filter(classes::name.eq(class))
-                .filter(class_fields::name.eq(name))
-                .select(FieldSpecRow::as_select()))
-            .load::<FieldSpecRow>(conn)?,
-            None => query!(class_fields::table
-                .inner_join(classes::table.on(classes::id.eq(class_fields::class)))
-                .inner_join(sources::table.on(classes::source.eq(sources::id)))
-                .filter(classes::name.eq(class))
-                .filter(class_fields::name.eq(name))
-                .select(FieldSpecRow::as_select()))
-            .load::<FieldSpecRow>(conn)?,
-        }
-        .into_iter()
-        .map(FieldSpec::from)
-        .collect())
-    }
+    /// A query for the full spec of every field this search matches
+    fn spec_query(&self) -> BoxedFieldQuery<'a, AsSelect<FieldSpecRow, Sqlite>> {
+        let mut q = class_fields::table
+            .inner_join(classes::table)
+            .inner_join(sources::table.on(sources::id.eq(classes::source)))
+            .select(FieldSpecRow::as_select())
+            .into_boxed();
 
-    fn spec_sql_by_class(
-        &self,
-        conn: &mut SqliteConnection,
-        class: &str,
-        source: Option<&str>,
-    ) -> Result<Vec<FieldSpec>> {
-        Ok(match source {
-            Some(v) => query!(class_fields::table
-                .inner_join(classes::table.on(classes::id.eq(class_fields::class)))
-                .inner_join(sources::table.on(sources::id.eq(classes::source)))
-                .filter(sources::name.eq(v))
-                .filter(classes::name.eq(class))
-                .select(FieldSpecRow::as_select()))
-            .load::<FieldSpecRow>(conn)?,
-            None => query!(class_fields::table
-                .inner_join(classes::table.on(classes::id.eq(class_fields::class)))
-                .inner_join(sources::table.on(sources::id.eq(classes::source)))
-                .filter(classes::name.eq(class))
-                .select(FieldSpecRow::as_select()))
-            .load::<FieldSpecRow>(conn)?,
+        if let Some(class) = self.param.class() {
+            q = q.filter(classes::name.eq(class.get_smali_name()));
         }
-        .into_iter()
-        .map(FieldSpec::from)
-        .collect())
+
+        if let Some(name) = self.param.name() {
+            q = q.filter(class_fields::name.eq(name));
+        }
+
+        if let Some(ty) = self.param.type_() {
+            q = q.filter(class_fields::ty.eq(ty));
+        }
+
+        if let Some(source) = self.source {
+            q = q.filter(sources::name.eq(source));
+        }
+
+        query!(q)
     }
 }
 
 impl<'a> MethodSearchParams<'a> {
-    fn get_spec_sql(
-        &self,
-        conn: &mut SqliteConnection,
-        source: Option<&str>,
-    ) -> Result<Vec<MethodSpec>> {
+    fn class(&self) -> Option<&'a ClassName> {
         match self {
-            Self::ByName { name } => self.spec_sql_by_name(conn, name, source),
-            Self::ByClass { class } => {
-                self.spec_sql_by_class(conn, &class.get_smali_name(), source)
-            }
-            Self::ByClassAndName { class, name } => {
-                self.spec_sql_by_class_and_name(conn, &class.get_smali_name(), name, source)
-            }
-            Self::ByNameAndSignature { name, signature } => {
-                self.spec_sql_by_name_and_sig(conn, name, signature, source)
-            }
-            Self::ByFullSpec {
-                class,
-                name,
-                signature,
-            } => self.spec_sql_by_full_spec(conn, &class.get_smali_name(), name, signature, source),
+            Self::ByClass { class }
+            | Self::ByClassAndName { class, .. }
+            | Self::ByFullSpec { class, .. } => Some(*class),
+            Self::ByName { .. } | Self::ByNameAndSignature { .. } => None,
         }
     }
-    fn get_sql(&self, conn: &mut SqliteConnection, source: Option<&str>) -> Result<Vec<MethodId>> {
+
+    fn name(&self) -> Option<&'a str> {
         match self {
-            Self::ByName { name } => self.sql_by_name(conn, name, source),
-            Self::ByClass { class } => self.sql_by_class(conn, &class.get_smali_name(), source),
-            Self::ByClassAndName { class, name } => {
-                self.sql_by_class_and_name(conn, &class.get_smali_name(), name, source)
+            Self::ByName { name }
+            | Self::ByClassAndName { name, .. }
+            | Self::ByNameAndSignature { name, .. }
+            | Self::ByFullSpec { name, .. } => Some(*name),
+            Self::ByClass { .. } => None,
+        }
+    }
+
+    fn signature(&self) -> Option<&'a str> {
+        match self {
+            Self::ByNameAndSignature { signature, .. } | Self::ByFullSpec { signature, .. } => {
+                Some(*signature)
             }
-            Self::ByNameAndSignature { name, signature } => {
-                self.sql_by_name_and_sig(conn, name, signature, source)
-            }
-            Self::ByFullSpec {
-                class,
-                name,
-                signature,
-            } => self.sql_by_full_spec(conn, &class.get_smali_name(), name, signature, source),
+            Self::ByName { .. } | Self::ByClass { .. } | Self::ByClassAndName { .. } => None,
         }
-    }
-
-    fn sql_by_full_spec(
-        &self,
-        conn: &mut SqliteConnection,
-        class: &str,
-        name: &str,
-        sig: &str,
-        source: Option<&str>,
-    ) -> Result<Vec<MethodId>> {
-        Ok(match source {
-            Some(v) => query!(methods::table
-                .inner_join(sources::table)
-                .inner_join(classes::table)
-                .filter(sources::name.eq(v))
-                .filter(classes::name.eq(class))
-                .filter(methods::args.eq(sig))
-                .filter(methods::name.eq(name))
-                .select(methods::id))
-            .load::<MethodId>(conn),
-            None => query!(methods::table
-                .inner_join(classes::table)
-                .filter(methods::args.eq(sig))
-                .filter(classes::name.eq(class))
-                .filter(methods::name.eq(name))
-                .select(methods::id))
-            .load::<MethodId>(conn),
-        }?)
-    }
-
-    fn sql_by_name_and_sig(
-        &self,
-        conn: &mut SqliteConnection,
-        name: &str,
-        sig: &str,
-        source: Option<&str>,
-    ) -> Result<Vec<MethodId>> {
-        Ok(match source {
-            Some(v) => query!(methods::table
-                .inner_join(sources::table)
-                .filter(sources::name.eq(v))
-                .filter(methods::args.eq(sig))
-                .filter(methods::name.eq(name))
-                .select(methods::id))
-            .load::<MethodId>(conn),
-            None => query!(methods::table
-                .filter(methods::args.eq(sig))
-                .filter(methods::name.eq(name))
-                .select(methods::id))
-            .load::<MethodId>(conn),
-        }?)
-    }
-
-    fn sql_by_class_and_name(
-        &self,
-        conn: &mut SqliteConnection,
-        class: &str,
-        name: &str,
-        source: Option<&str>,
-    ) -> Result<Vec<MethodId>> {
-        Ok(match source {
-            Some(v) => query!(methods::table
-                .inner_join(sources::table)
-                .inner_join(classes::table)
-                .filter(sources::name.eq(v))
-                .filter(classes::name.eq(class))
-                .filter(methods::name.eq(name))
-                .select(methods::id))
-            .load::<MethodId>(conn),
-            None => query!(methods::table
-                .inner_join(classes::table)
-                .filter(classes::name.eq(class))
-                .filter(methods::name.eq(name))
-                .select(methods::id))
-            .load::<MethodId>(conn),
-        }?)
-    }
-
-    fn sql_by_class(
-        &self,
-        conn: &mut SqliteConnection,
-        class: &str,
-        source: Option<&str>,
-    ) -> Result<Vec<MethodId>> {
-        Ok(match source {
-            Some(v) => query!(methods::table
-                .inner_join(sources::table)
-                .inner_join(classes::table)
-                .filter(sources::name.eq(v))
-                .filter(classes::name.eq(class))
-                .select(methods::id))
-            .load::<MethodId>(conn),
-            None => query!(methods::table
-                .inner_join(classes::table)
-                .filter(classes::name.eq(class))
-                .select(methods::id))
-            .load::<MethodId>(conn),
-        }?)
-    }
-
-    fn sql_by_name(
-        &self,
-        conn: &mut SqliteConnection,
-        name: &str,
-        source: Option<&str>,
-    ) -> Result<Vec<MethodId>> {
-        Ok(match source {
-            Some(v) => query!(methods::table
-                .inner_join(sources::table)
-                .filter(sources::name.eq(v))
-                .filter(methods::name.eq(name))
-                .select(methods::id))
-            .load::<MethodId>(conn),
-            None => query!(methods::table
-                .filter(methods::name.eq(name))
-                .select(methods::id))
-            .load::<MethodId>(conn),
-        }?)
-    }
-
-    fn spec_sql_by_full_spec(
-        &self,
-        conn: &mut SqliteConnection,
-        class: &str,
-        name: &str,
-        sig: &str,
-        source: Option<&str>,
-    ) -> Result<Vec<MethodSpec>> {
-        Ok(match source {
-            Some(v) => query!(methods::table
-                .inner_join(sources::table)
-                .inner_join(classes::table)
-                .filter(sources::name.eq(v))
-                .filter(classes::name.eq(class))
-                .filter(methods::args.eq(sig))
-                .filter(methods::name.eq(name))
-                .select(MethodSpecRow::as_select()))
-            .load::<MethodSpecRow>(conn)?,
-            None => query!(methods::table
-                .inner_join(classes::table)
-                .inner_join(sources::table)
-                .filter(methods::args.eq(sig))
-                .filter(classes::name.eq(class))
-                .filter(methods::name.eq(name))
-                .select(MethodSpecRow::as_select()))
-            .load::<MethodSpecRow>(conn)?,
-        }
-        .into_iter()
-        .map(MethodSpec::from)
-        .collect())
-    }
-
-    fn spec_sql_by_name_and_sig(
-        &self,
-        conn: &mut SqliteConnection,
-        name: &str,
-        sig: &str,
-        source: Option<&str>,
-    ) -> Result<Vec<MethodSpec>> {
-        Ok(match source {
-            Some(v) => query!(methods::table
-                .inner_join(sources::table)
-                .inner_join(classes::table)
-                .filter(sources::name.eq(v))
-                .filter(methods::args.eq(sig))
-                .filter(methods::name.eq(name))
-                .select(MethodSpecRow::as_select()))
-            .load::<MethodSpecRow>(conn)?,
-            None => query!(methods::table
-                .inner_join(classes::table)
-                .inner_join(sources::table)
-                .filter(methods::args.eq(sig))
-                .filter(methods::name.eq(name))
-                .select(MethodSpecRow::as_select()))
-            .load::<MethodSpecRow>(conn)?,
-        }
-        .into_iter()
-        .map(MethodSpec::from)
-        .collect())
-    }
-
-    fn spec_sql_by_class_and_name(
-        &self,
-        conn: &mut SqliteConnection,
-        class: &str,
-        name: &str,
-        source: Option<&str>,
-    ) -> Result<Vec<MethodSpec>> {
-        Ok(match source {
-            Some(v) => query!(methods::table
-                .inner_join(sources::table)
-                .inner_join(classes::table)
-                .filter(sources::name.eq(v))
-                .filter(classes::name.eq(class))
-                .filter(methods::name.eq(name))
-                .select(MethodSpecRow::as_select()))
-            .load::<MethodSpecRow>(conn)?,
-            None => query!(methods::table
-                .inner_join(classes::table)
-                .inner_join(sources::table)
-                .filter(classes::name.eq(class))
-                .filter(methods::name.eq(name))
-                .select(MethodSpecRow::as_select()))
-            .load::<MethodSpecRow>(conn)?,
-        }
-        .into_iter()
-        .map(MethodSpec::from)
-        .collect())
-    }
-
-    fn spec_sql_by_class(
-        &self,
-        conn: &mut SqliteConnection,
-        class: &str,
-        source: Option<&str>,
-    ) -> Result<Vec<MethodSpec>> {
-        Ok(match source {
-            Some(v) => query!(methods::table
-                .inner_join(sources::table)
-                .inner_join(classes::table)
-                .filter(sources::name.eq(v))
-                .filter(classes::name.eq(class))
-                .select(MethodSpecRow::as_select()))
-            .load::<MethodSpecRow>(conn)?,
-            None => query!(methods::table
-                .inner_join(classes::table)
-                .inner_join(sources::table)
-                .filter(classes::name.eq(class))
-                .select(MethodSpecRow::as_select()))
-            .load::<MethodSpecRow>(conn)?,
-        }
-        .into_iter()
-        .map(MethodSpec::from)
-        .collect())
-    }
-
-    fn spec_sql_by_name(
-        &self,
-        conn: &mut SqliteConnection,
-        name: &str,
-        source: Option<&str>,
-    ) -> Result<Vec<MethodSpec>> {
-        Ok(match source {
-            Some(v) => query!(methods::table
-                .inner_join(sources::table)
-                .inner_join(classes::table)
-                .filter(sources::name.eq(v))
-                .filter(methods::name.eq(name))
-                .select(MethodSpecRow::as_select()))
-            .load::<MethodSpecRow>(conn)?,
-            None => query!(methods::table
-                .inner_join(classes::table)
-                .inner_join(sources::table)
-                .filter(methods::name.eq(name))
-                .select(MethodSpecRow::as_select()))
-            .load::<MethodSpecRow>(conn)?,
-        }
-        .into_iter()
-        .map(MethodSpec::from)
-        .collect())
     }
 }
 
-fn conn_find_classes_with_method(
-    conn: &mut SqliteConnection,
-    name: &str,
-    args: Option<&str>,
-    source: Option<&str>,
-) -> Result<Vec<ClassSpec>> {
-    let mut q = classes::table
-        .inner_join(sources::table.on(classes::source.eq(sources::id)))
-        .inner_join(methods::table.on(methods::class.eq(classes::id)))
-        .select(ChildClassRow::as_select())
-        .filter(methods::name.eq(name))
-        .into_boxed();
+type MethodQuerySource = InnerJoin<InnerJoin<methods::table, classes::table>, sources::table>;
 
-    if let Some(v) = args {
-        q = q.filter(methods::args.eq(v));
+type BoxedMethodQuery<'a, S> = IntoBoxed<'a, Select<MethodQuerySource, S>, Sqlite>;
+
+impl<'a> MethodSearch<'a> {
+    /// A query for the ids of every method this search matches
+    fn id_query(&self) -> BoxedMethodQuery<'a, methods::id> {
+        let mut q = methods::table
+            .inner_join(classes::table)
+            .inner_join(sources::table)
+            .select(methods::id)
+            .into_boxed();
+
+        if let Some(class) = self.param.class() {
+            q = q.filter(classes::name.eq(class.get_smali_name()));
+        }
+        if let Some(name) = self.param.name() {
+            q = q.filter(methods::name.eq(name));
+        }
+        if let Some(signature) = self.param.signature() {
+            q = q.filter(methods::args.eq(signature));
+        }
+        if let Some(ret) = self.ret {
+            q = q.filter(methods::ret.eq(ret));
+        }
+        if let Some(source) = self.source {
+            q = q.filter(sources::name.eq(source));
+        }
+        query!(q)
     }
 
-    if let Some(s) = source {
-        q = q.filter(sources::name.eq(s));
+    /// A query for the full spec of every method this search matches
+    fn spec_query(&self) -> BoxedMethodQuery<'a, AsSelect<MethodSpecRow, Sqlite>> {
+        let mut q = methods::table
+            .inner_join(classes::table)
+            .inner_join(sources::table)
+            .select(MethodSpecRow::as_select())
+            .into_boxed();
+
+        if let Some(class) = self.param.class() {
+            q = q.filter(classes::name.eq(class.get_smali_name()));
+        }
+        if let Some(name) = self.param.name() {
+            q = q.filter(methods::name.eq(name));
+        }
+        if let Some(signature) = self.param.signature() {
+            q = q.filter(methods::args.eq(signature));
+        }
+        if let Some(ret) = self.ret {
+            q = q.filter(methods::ret.eq(ret));
+        }
+        if let Some(source) = self.source {
+            q = q.filter(sources::name.eq(source));
+        }
+        query!(q)
     }
-    let rows: Vec<ChildClassRow> = query!(q).get_results(conn)?;
-    Ok(rows.into_iter().map(ClassSpec::from).collect())
 }
 
 impl GraphDatabase for GraphSqliteDatabase {
@@ -839,6 +482,222 @@ impl GraphDatabase for GraphSqliteDatabase {
     ) -> Result<Vec<MethodCallPath>> {
         self.get_calls(CallDirection::Into, method, call_source, depth)
     }
+
+    fn find_callers_from(
+        &self,
+        method: &MethodSearch,
+        methods: &[MethodId],
+    ) -> Result<Vec<MethodCallPath>> {
+        if methods.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mid_query = method.id_query();
+        let method_ids = self.with_connection(|c| mid_query.load::<MethodId>(c))?;
+
+        if method_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let entry_json = to_json_array(methods);
+        let targets_json = to_json_array(&method_ids);
+
+        // The first part of this query answers a reachability question and serves to as an initial
+        // filter. This prevents constructing paths for dead ends and allows us to do this without a
+        // depth.
+        //
+        //      entry_reachable_methods - Every method that can be reached from all of the
+        //                                entrypoint methods
+        //
+        //      direct_target_callers - All methods that contain a call to a target method and are also
+        //                              reachable from an entry method. Note that the weird `IN
+        //                              (SELECT ...) is actually important to the performance of
+        //                              this query! Without it the query takes significantly longer,
+        //                              because of the JSON load.
+        //
+        //      dtc_reaching_methods - All methods that can reach the direct target callers
+        //
+        //      relevant_methods - All methods that are reachable from an entrypoint and also
+        //                         reach a direct target caller
+
+        let q = sql_query(
+            r#"WITH RECURSIVE
+
+    entry(id) AS (SELECT value FROM json_each(?1)),
+
+    target_methods(id) AS (SELECT value FROM json_each(?2)),
+
+    entry_reachable_methods(id) AS (
+        SELECT id FROM entry
+        UNION
+        SELECT c.callee
+        FROM calls AS c
+        JOIN entry_reachable_methods AS r 
+            ON c.caller = r.id
+    ),
+
+    direct_target_callers(id) AS (
+        SELECT DISTINCT c.caller
+        FROM calls AS c
+        JOIN entry_reachable_methods AS r
+            ON r.id = c.caller
+        WHERE c.callee IN (SELECT id FROM target_methods)
+    ),
+
+    dtc_reaching_methods(id) AS (
+        SELECT id FROM direct_target_callers
+        UNION
+        SELECT c.caller
+        FROM calls AS c
+        JOIN dtc_reaching_methods AS t
+            ON c.callee = t.id
+    ),
+
+    relevant_methods(id) AS (
+        SELECT id FROM entry_reachable_methods
+        INTERSECT
+        SELECT id FROM dtc_reaching_methods
+    ),
+
+    route(id, path, depth) AS (
+        SELECT e.id, json_array(e.id), 0
+        FROM entry AS e
+        JOIN relevant_methods AS rel
+            ON rel.id = e.id
+        UNION ALL
+        SELECT
+            c.callee,
+            json_insert(r.path, '$[#]', c.callee),
+            r.depth + 1
+        FROM route AS r
+        JOIN calls AS c
+            ON r.id = c.caller
+        JOIN relevant_methods AS rel
+            ON rel.id = c.callee
+        WHERE
+            NOT EXISTS (SELECT 1 FROM json_each(r.path) je WHERE je.value = c.callee)
+    )
+
+SELECT r.path
+FROM route AS r
+JOIN direct_target_callers AS d ON d.id = r.id
+ORDER BY r.id, r.depth;
+    "#,
+        )
+        .bind::<Text, _>(entry_json)
+        .bind::<Text, _>(targets_json);
+
+        let q = query!(q);
+
+        let rows = self.with_connection(|c| q.get_results::<RouteRow>(c))?;
+
+        Ok(self
+            .hydrate_routes(rows)?
+            .into_iter()
+            .map(MethodCallPath::from)
+            .collect())
+    }
+
+    fn find_field_refs_from(
+        &self,
+        field: &FieldSearch,
+        action: FieldAccessOp,
+        methods: &[MethodId],
+    ) -> Result<Vec<MethodCallPath>> {
+        // This implementation is very similar to the method one, the only difference is
+        // `direct_field_users`
+        if methods.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let fid_query = field.id_query();
+        let field_ids = self.with_connection(|c| fid_query.load::<FieldId>(c))?;
+
+        if field_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let entry_json = to_json_array(methods);
+        let targets_json = to_json_array(&field_ids);
+
+        let q = sql_query(
+            r#"WITH RECURSIVE
+
+    entry(id) AS (SELECT value FROM json_each(?1)),
+
+    target_fields(id) AS (SELECT value FROM json_each(?2)),
+
+    entry_reachable_methods(id) AS (
+        SELECT id FROM entry
+        UNION
+        SELECT c.callee
+        FROM calls AS c
+        JOIN entry_reachable_methods AS r 
+            ON c.caller = r.id
+    ),
+
+    direct_field_users(id) AS (
+      SELECT DISTINCT mfa.method
+      FROM method_field_access AS mfa
+      JOIN entry_reachable_methods AS er ON er.id = mfa.method
+      WHERE mfa.field IN (SELECT id FROM target_fields) AND mfa.action = ?3
+    ),
+
+    dfu_reaching_methods(id) AS (
+        SELECT id FROM direct_field_users
+        UNION
+        SELECT c.caller
+        FROM calls AS c
+        JOIN dfu_reaching_methods AS t
+            ON c.callee = t.id
+    ),
+
+    relevant_methods(id) AS (
+        SELECT id FROM entry_reachable_methods
+        INTERSECT
+        SELECT id FROM dfu_reaching_methods
+    ),
+
+    route(id, path, depth) AS (
+        SELECT e.id, json_array(e.id), 0
+        FROM entry AS e
+        JOIN relevant_methods AS rel
+            ON rel.id = e.id
+        UNION ALL
+        SELECT
+            c.callee,
+            json_insert(r.path, '$[#]', c.callee),
+            r.depth + 1
+        FROM route AS r
+        JOIN calls AS c
+            ON r.id = c.caller
+        JOIN relevant_methods AS rel
+            ON rel.id = c.callee
+        WHERE
+            NOT EXISTS (SELECT 1 FROM json_each(r.path) je WHERE je.value = c.callee)
+    )
+
+SELECT r.path
+FROM route AS r
+JOIN direct_field_users AS d ON d.id = r.id
+ORDER BY r.id, r.depth;
+    "#,
+        )
+        .bind::<Text, _>(entry_json)
+        .bind::<Text, _>(targets_json)
+        .bind::<Integer, _>(action as i32);
+
+        let q = query!(q);
+
+        let rows = self.with_connection(|c| q.get_results::<RouteRow>(c))?;
+
+        Ok(self
+            .hydrate_routes(rows)?
+            .into_iter()
+            .map(MethodCallPath::from)
+            .collect())
+    }
+
     fn wipe(&self, ctx: &dyn Context) -> Result<()> {
         let path = ctx.get_sqlite_dir()?;
         for elem in walkdir::WalkDir::new(path) {
@@ -856,31 +715,86 @@ impl GraphDatabase for GraphSqliteDatabase {
         Ok(self.delete_source_by_name(source)?)
     }
 
+    fn get_class_by_id(&self, id: ClassId) -> Result<ClassSpec> {
+        let q = query!(classes::table
+            .filter(classes::id.eq(id))
+            .inner_join(sources::table)
+            .select(ClassSpecRow::as_select()));
+
+        Ok(self
+            .with_connection(|c| q.first::<ClassSpecRow>(c))
+            .map(ClassSpec::from)?)
+    }
+
+    fn get_classes_by_id(&self, ids: &[ClassId]) -> Result<Vec<ClassSpec>> {
+        let q = query!(classes::table
+            .filter(classes::id.eq_any(ids))
+            .inner_join(sources::table)
+            .select(ClassSpecRow::as_select()));
+        Ok(self
+            .with_connection(|c| q.load::<ClassSpecRow>(c))?
+            .into_iter()
+            .map(ClassSpec::from)
+            .collect::<Vec<_>>())
+    }
+
+    fn get_method_by_id(&self, id: MethodId) -> Result<MethodSpec> {
+        let q = query!(methods::table
+            .filter(methods::id.eq(id))
+            .inner_join(classes::table)
+            .inner_join(sources::table)
+            .select(MethodSpecRow::as_select()));
+
+        Ok(self
+            .with_connection(|c| q.first::<MethodSpecRow>(c))
+            .map(MethodSpec::from)?)
+    }
+
+    fn get_methods_by_id(&self, ids: &[MethodId]) -> Result<Vec<MethodSpec>> {
+        let q = query!(methods::table
+            .filter(methods::id.eq_any(ids))
+            .inner_join(classes::table)
+            .inner_join(sources::table)
+            .select(MethodSpecRow::as_select()));
+        Ok(self
+            .with_connection(|c| q.load::<MethodSpecRow>(c))?
+            .into_iter()
+            .map(MethodSpec::from)
+            .collect::<Vec<_>>())
+    }
+
     fn get_method_ids(&self, search: &MethodSearch) -> Result<Vec<MethodId>> {
-        self.with_connection(|c| Self::get_method_ids_with_conn(c, search))
+        let query = search.id_query();
+        Ok(self.with_connection(|c| query.load::<MethodId>(c))?)
     }
 
     fn get_field_ids(&self, search: &FieldSearch) -> Result<Vec<FieldId>> {
-        self.with_connection(|c| Self::get_field_ids_with_conn(c, search))
+        let query = search.id_query();
+        Ok(self.with_connection(|c| query.load::<FieldId>(c))?)
     }
 
     fn get_fields(&self, search: &FieldSearch) -> Result<Vec<FieldSpec>> {
-        self.with_connection(|c| search.param.get_spec_sql(c, search.source))
+        let query = search.spec_query();
+        let rows: Vec<FieldSpecRow> = self.with_connection(|c| query.load::<FieldSpecRow>(c))?;
+        Ok(rows.into_iter().map(FieldSpec::from).collect())
     }
 
     fn get_methods(&self, search: &MethodSearch) -> Result<Vec<MethodSpec>> {
-        self.with_connection(|c| search.param.get_spec_sql(c, search.source))
+        let query = search.spec_query();
+        let rows: Vec<MethodSpecRow> = self.with_connection(|c| query.load::<MethodSpecRow>(c))?;
+        Ok(rows.into_iter().map(MethodSpec::from).collect())
     }
 
     fn get_method_field_refs(&self, method: MethodId) -> Result<Vec<FieldRef>> {
-        self.with_connection(|c| {
-            Ok(query!(method_field_access::table
-                .filter(method_field_access::method.eq(method))
-                .inner_join(class_fields::table.on(class_fields::id.eq(method_field_access::field)))
-                .inner_join(classes::table.on(classes::id.eq(class_fields::class)))
-                .inner_join(sources::table.on(sources::id.eq(classes::source)))
-                .select((FieldSpecRow::as_select(), method_field_access::action)))
-            .load::<(FieldSpecRow, i32)>(c)?
+        let q = query!(method_field_access::table
+            .filter(method_field_access::method.eq(method))
+            .inner_join(class_fields::table.on(class_fields::id.eq(method_field_access::field)))
+            .inner_join(classes::table.on(classes::id.eq(class_fields::class)))
+            .inner_join(sources::table.on(sources::id.eq(classes::source)))
+            .select((FieldSpecRow::as_select(), method_field_access::action)));
+
+        Ok(self
+            .with_connection(|c| q.load::<(FieldSpecRow, i32)>(c))?
             .into_iter()
             .filter_map(|it| {
                 let op = FieldAccessOp::maybe_from_literal(it.1 as u8)?;
@@ -890,7 +804,6 @@ impl GraphDatabase for GraphSqliteDatabase {
                 })
             })
             .collect())
-        })
     }
 
     fn get_methods_referencing_field(
@@ -898,47 +811,42 @@ impl GraphDatabase for GraphSqliteDatabase {
         field: FieldId,
         action: Option<FieldAccessOp>,
     ) -> Result<Vec<MethodSpec>> {
-        self.with_connection(|c| {
-            let mut q = class_fields::table
-                .filter(class_fields::id.eq(field))
-                .inner_join(
-                    method_field_access::table.on(method_field_access::field.eq(class_fields::id)),
-                )
-                .inner_join(methods::table.on(methods::id.eq(method_field_access::method)))
-                .inner_join(classes::table.on(classes::id.eq(methods::class)))
-                .inner_join(sources::table.on(sources::id.eq(classes::source)))
-                .into_boxed();
+        let mut q = class_fields::table
+            .filter(class_fields::id.eq(field))
+            .inner_join(
+                method_field_access::table.on(method_field_access::field.eq(class_fields::id)),
+            )
+            .inner_join(methods::table.on(methods::id.eq(method_field_access::method)))
+            .inner_join(classes::table.on(classes::id.eq(methods::class)))
+            .inner_join(sources::table.on(sources::id.eq(classes::source)))
+            .select(MethodSpecRow::as_select())
+            .into_boxed();
 
-            if let Some(v) = action {
-                q = q.filter(method_field_access::action.eq(v as i32));
-            }
+        if let Some(v) = action {
+            q = q.filter(method_field_access::action.eq(v as i32));
+        }
 
-            Ok(query!(q.select(MethodSpecRow::as_select()))
-                .load::<MethodSpecRow>(c)?
-                .into_iter()
-                .map(MethodSpec::from)
-                .collect())
-        })
+        let q = query!(q);
+
+        let rows = self.with_connection(|c| q.load::<MethodSpecRow>(c))?;
+        Ok(rows.into_iter().map(MethodSpec::from).collect())
     }
 
     fn get_strings_for_method(&self, method: MethodId) -> Result<Vec<String>> {
-        self.with_connection(|c| -> Result<Vec<String>> {
-            Ok(query!(method_strings::table
-                .inner_join(strings::table)
-                .filter(method_strings::method.eq(method))
-                .select(strings::string))
-            .load::<String>(c)?)
-        })
+        let q = query!(method_strings::table
+            .inner_join(strings::table)
+            .filter(method_strings::method.eq(method))
+            .select(strings::string));
+
+        Ok(self.with_connection(|c| q.load::<String>(c))?)
     }
 
     fn get_strings_for_source(&self, source: &str) -> Result<Vec<String>> {
-        self.with_connection(|c| -> Result<Vec<String>> {
-            Ok(query!(strings::table
-                .inner_join(sources::table)
-                .filter(sources::name.eq(source))
-                .select(strings::string))
-            .load::<String>(c)?)
-        })
+        let q = query!(strings::table
+            .inner_join(sources::table)
+            .filter(sources::name.eq(source))
+            .select(strings::string));
+        Ok(self.with_connection(|c| q.load::<String>(c))?)
     }
 
     fn find_strings(
@@ -967,13 +875,11 @@ impl GraphDatabase for GraphSqliteDatabase {
     }
 
     fn get_classes_for(&self, source: &str) -> Result<Vec<ClassName>> {
-        self.with_connection(|c| -> Result<Vec<ClassName>> {
-            Ok(query!(classes::table
-                .inner_join(sources::table)
-                .filter(sources::name.eq(source))
-                .select(classes::name))
-            .load::<ClassName>(c)?)
-        })
+        let q = query!(classes::table
+            .inner_join(sources::table)
+            .filter(sources::name.eq(source))
+            .select(classes::name));
+        Ok(self.with_connection(|c| q.load::<ClassName>(c))?)
     }
 
     fn find_classes_with_method(
@@ -982,21 +888,33 @@ impl GraphDatabase for GraphSqliteDatabase {
         args: Option<&str>,
         source: Option<&str>,
     ) -> Result<Vec<ClassSpec>> {
-        self.with_connection(|c| conn_find_classes_with_method(c, name, args, source))
+        let mut q = classes::table
+            .inner_join(sources::table.on(classes::source.eq(sources::id)))
+            .inner_join(methods::table.on(methods::class.eq(classes::id)))
+            .select(ChildClassRow::as_select())
+            .filter(methods::name.eq(name))
+            .into_boxed();
+
+        if let Some(v) = args {
+            q = q.filter(methods::args.eq(v));
+        }
+
+        if let Some(s) = source {
+            q = q.filter(sources::name.eq(s));
+        }
+        let q = query!(q);
+        let rows: Vec<ChildClassRow> = self.with_connection(|c| q.get_results(c))?;
+        Ok(rows.into_iter().map(ClassSpec::from).collect())
     }
 
     fn get_methods_for(&self, source: &str) -> Result<Vec<MethodSpec>> {
-        self.with_connection(|c| -> Result<Vec<MethodSpec>> {
-            Ok(query!(methods::table
-                .inner_join(sources::table)
-                .inner_join(classes::table)
-                .filter(sources::name.eq(source))
-                .select(MethodSpecRow::as_select()))
-            .load::<MethodSpecRow>(c)?
-            .into_iter()
-            .map(MethodSpec::from)
-            .collect())
-        })
+        let q = query!(methods::table
+            .inner_join(sources::table)
+            .inner_join(classes::table)
+            .filter(sources::name.eq(source))
+            .select(MethodSpecRow::as_select()));
+        let rows = self.with_connection(|c| q.load::<MethodSpecRow>(c))?;
+        Ok(rows.into_iter().map(MethodSpec::from).collect())
     }
 
     fn find_outgoing_calls(
@@ -1048,10 +966,10 @@ SELECT DISTINCT source, name, access_flags from class_specs
         .bind::<Text, _>(child.get_smali_name())
         .bind::<Text, _>(source);
 
-        self.with_connection(|c| -> Result<Vec<ClassSpec>> {
-            let rows: Vec<ChildClassRow> = query!(q).get_results(c)?;
-            Ok(rows.into_iter().map(ClassSpec::from).collect())
-        })
+        let q = query!(q);
+
+        let rows: Vec<ChildClassRow> = self.with_connection(|c| q.get_results(c))?;
+        Ok(rows.into_iter().map(ClassSpec::from).collect())
     }
 
     fn find_child_classes_of(
@@ -1110,11 +1028,10 @@ SELECT DISTINCT source, name, access_flags from class_specs
             q = q.bind::<Text, _>(String::from(s));
         }
 
-        self.with_connection(|c| -> Result<Vec<ClassSpec>> {
-            let rows: Vec<ChildClassRow> = query!(q).get_results(c)?;
+        let q = query!(q);
+        let rows: Vec<ChildClassRow> = self.with_connection(|c| q.get_results(c))?;
 
-            Ok(rows.into_iter().map(ClassSpec::from).collect())
-        })
+        Ok(rows.into_iter().map(ClassSpec::from).collect())
     }
 
     fn find_classes_implementing(
@@ -1189,11 +1106,9 @@ SELECT DISTINCT source, name, access_flags from class_specs"#
             q = q.bind::<Text, _>(String::from(s));
         }
 
-        self.with_connection(|c| {
-            let rows: Vec<ChildClassRow> = query!(q).get_results(c)?;
-
-            Ok(rows.into_iter().map(ClassSpec::from).collect())
-        })
+        let q = query!(q);
+        let rows: Vec<ChildClassRow> = self.with_connection(|c| q.get_results(c))?;
+        Ok(rows.into_iter().map(ClassSpec::from).collect())
     }
 }
 
@@ -1202,6 +1117,34 @@ impl<DB: Backend> Selectable<DB> for SourcedString {
 
     fn construct_selection() -> Self::SelectExpression {
         (strings::string, sources::name)
+    }
+}
+
+#[derive(Queryable, Debug)]
+struct ClassSpecRow {
+    #[diesel(sql_type = Text)]
+    name: ClassName,
+    #[diesel(sql_type = BigInt)]
+    access_flags: i64,
+    #[diesel(sql_type = Text)]
+    source: String,
+}
+
+impl<DB: Backend> Selectable<DB> for ClassSpecRow {
+    type SelectExpression = (classes::name, classes::access_flags, sources::name);
+
+    fn construct_selection() -> Self::SelectExpression {
+        (classes::name, classes::access_flags, sources::name)
+    }
+}
+
+impl From<ClassSpecRow> for ClassSpec {
+    fn from(value: ClassSpecRow) -> Self {
+        ClassSpec {
+            name: value.name,
+            access_flags: AccessFlag::from_bits_truncate(value.access_flags as u64),
+            source: value.source,
+        }
     }
 }
 
@@ -1317,50 +1260,21 @@ impl From<MethodSpecRow> for MethodSpec {
     }
 }
 
+/// One route, as the JSON array of method ids that [GraphDatabase::find_callers_from] builds
+///
+/// Only the ids come back from the query. The specs are fetched separately because the same
+/// method appears in many routes.
 #[derive(QueryableByName, Debug)]
-struct MethodCallRow {
-    #[diesel(sql_type = Integer)]
-    class_id: ClassId,
+struct RouteRow {
     #[diesel(sql_type = Text)]
-    source: String,
-    #[diesel(sql_type = Text)]
-    class: String,
-    #[diesel(sql_type = Integer)]
-    id: MethodId,
-    #[diesel(sql_type = Text)]
-    name: String,
-    #[diesel(sql_type = Text)]
-    args: String,
-    #[diesel(sql_type = Text)]
-    ret: String,
-    #[diesel(sql_type = BigInt)]
-    access_flags: i64,
-    #[diesel(sql_type = Integer)]
-    idx: i32,
+    path: String,
 }
 
-impl From<MethodCallRow> for MethodSpec {
-    fn from(value: MethodCallRow) -> Self {
-        Self {
-            class_id: value.class_id,
-            class: ClassName::from(value.class),
-            ret: value.ret,
-            id: value.id,
-            name: value.name,
-            signature: value.args,
-            source: value.source,
-            access_flags: AccessFlag::from_bits_truncate(value.access_flags as u64),
-        }
-    }
-}
-
-trait Indexable {
-    fn idx(&self) -> i32;
-}
-
-impl Indexable for MethodCallRow {
-    fn idx(&self) -> i32 {
-        self.idx
+impl RouteRow {
+    fn method_ids(&self) -> Result<Vec<MethodId>> {
+        let ids: Vec<i32> = serde_json::from_str(&self.path)
+            .map_err(|e| Error::Generic(format!("bad route {}: {}", self.path, e)))?;
+        Ok(ids.into_iter().map(MethodId::new).collect())
     }
 }
 
@@ -1392,65 +1306,8 @@ impl From<ChildClassRow> for ClassSpec {
     }
 }
 
-struct PathRowIterator<T, I>
-where
-    T: Indexable,
-    I: Iterator<Item = T>,
-{
-    it: I,
-    first: Option<T>,
-}
-
-impl<T, I> PathRowIterator<T, I>
-where
-    T: Indexable,
-    I: Iterator<Item = T>,
-{
-    fn new(mut it: I) -> Self {
-        let first = it.next();
-        Self { it, first }
-    }
-
-    fn next_in_seq(&mut self) -> Option<T> {
-        if let Some(first) = self.first.take() {
-            return Some(first);
-        }
-
-        let next = self.it.next()?;
-        if next.idx() == 0 {
-            self.first = Some(next);
-            None
-        } else {
-            Some(next)
-        }
-    }
-
-    fn collect<U>(mut self, reverse: bool) -> Vec<Vec<U>>
-    where
-        U: From<T>,
-    {
-        let mut results = Vec::new();
-        // This first call always hits the cached row.idx == 0 value, so if it
-        // returns None we're done
-
-        while let Some(row) = self.next_in_seq() {
-            let mut path: Vec<U> = Vec::new();
-            path.push(row.into());
-
-            // When this goes to None, we're just done with the sequence and caching
-            // the row.idx == 0 value
-            while let Some(row) = self.next_in_seq() {
-                if reverse {
-                    path.insert(0, row.into());
-                } else {
-                    path.push(row.into());
-                }
-            }
-            results.push(path);
-        }
-
-        results
-    }
+fn to_json_array<T: DatabaseId>(items: &[T]) -> String {
+    format!("[{}]", items.iter().map(|it| it.id().to_string()).join(","))
 }
 
 #[cfg(test)]
@@ -1604,6 +1461,7 @@ mod test {
                     signature: "JLjava/lang/String;J",
                 },
                 None,
+                None,
             );
 
             macro_rules! path {
@@ -1665,6 +1523,89 @@ mod test {
     }
 
     #[rstest]
+    fn test_find_callers_from(tmp_context: TestContext) {
+        db_test(&tmp_context, |db| {
+            let target_class = ClassName::from("Lbl/bl;");
+            let target = MethodSearch::new(
+                MethodSearchParams::ByFullSpec {
+                    class: &target_class,
+                    name: "by",
+                    signature: "JLjava/lang/String;J",
+                },
+                None,
+                None,
+            );
+
+            macro_rules! path {
+                ($({ $($name:ident: $val:expr),+ }),*) => {{
+                    // The ids are not part of MethodSpec equality
+                    let path = vec![$(
+                            MethodSpec {
+                                id: MethodId::new(1),
+                                class_id: ClassId::new(1),
+                        $(
+                                $name: $val.into()
+                        ),+,
+                                access_flags: AccessFlag::PUBLIC,
+                            }
+                    ),*];
+                    MethodCallPath { path }
+                }};
+            }
+
+            macro_rules! entries {
+                ($class:expr, $name:expr, $sig:expr, $src:expr) => {{
+                    let class = ClassName::from($class);
+                    let search = MethodSearch::new(
+                        MethodSearchParams::ByFullSpec {
+                            class: &class,
+                            name: $name,
+                            signature: $sig,
+                        },
+                        $src,
+                        None,
+                    );
+                    db.get_method_ids(&search).expect("get_method_ids")
+                }};
+            }
+
+            // Reaches the target one hop away, so the route covers the method in between
+            let entry = entries!("Lal/al;", "fi", "IZLjava/lang/String;", None);
+            assert_eq!(
+                db.find_callers_from(&target, &entry)
+                    .expect("find_callers_from"),
+                vec![path!(
+                    {class: "al.al", name: "fi", signature: "IZLjava/lang/String;", source: "C", ret: "C"},
+                    {class: "bs.bs", name: "fe", signature: "J", source: "framework", ret: "C"}
+                )]
+            );
+
+            // An entry that calls the target itself is a route of one
+            let entry = entries!("Lbs/bs;", "fe", "J", None);
+            assert_eq!(
+                db.find_callers_from(&target, &entry)
+                    .expect("find_callers_from"),
+                vec![path!(
+                    {class: "bs.bs", name: "fe", signature: "J", source: "framework", ret: "C"}
+                )]
+            );
+
+            // The same signature in a source that can't reach the target finds nothing
+            let entry = entries!("Lax/ax;", "ds", "FIJ", Some("D"));
+            assert!(db
+                .find_callers_from(&target, &entry)
+                .expect("find_callers_from")
+                .is_empty());
+
+            // No entries means there is nothing to search from
+            assert!(db
+                .find_callers_from(&target, &[])
+                .expect("find_callers_from")
+                .is_empty());
+        });
+    }
+
+    #[rstest]
     fn test_get_method_ids(tmp_context: TestContext) {
         db_test(&tmp_context, |db| {
             macro_rules! get_mids {
@@ -1673,11 +1614,8 @@ mod test {
                 };
 
                 ($sel:ident { $($name:ident: $val:expr),+ }, [$($expected:expr),*], $src:expr) => {
-                    let mids: Vec<i32> = db.with_connection(|c| {
-                        GraphSqliteDatabase::get_method_ids_with_conn(c, &MethodSearch::new(MethodSearchParams::$sel { $($name: $val),+ }, $src))
-
-                    }).expect("get_method_ids call failed");
-                    for id in [$($expected as i32),*] {
+                    let mids: Vec<MethodId> = db.get_method_ids(&MethodSearch::new(MethodSearchParams::$sel { $($name: $val),+ }, $src, None)).expect("get_method_ids call failed");
+                    for id in [$(MethodId::new($expected as i32)),*] {
                         assert!(mids.contains(&id), "expected to find {id} in method ids but it wasn't in {mids:?}");
                     }
                 };

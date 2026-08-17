@@ -219,6 +219,16 @@ options = [
 
 [find]
 
+[find.method-by-id]
+options = [
+    ["json", "j", "None", ""]
+]
+
+[find.class-by-id]
+options = [
+    ["json", "j", "None", ""]
+]
+
 [find.fields.by-method]
 options = [
     ["class", "c", "GraphClass", ""],

@@ -564,6 +564,8 @@ WHERE dst.id != src.id"#
                 CREATE INDEX IF NOT EXISTS method_field_access_method ON method_field_access(method);
 
                 CREATE INDEX IF NOT EXISTS class_fields_class ON class_fields(class);
+
+                ANALYZE;
                 "#,
         )?)
     }

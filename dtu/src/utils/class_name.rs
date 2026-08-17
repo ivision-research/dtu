@@ -9,8 +9,9 @@ use std::str::FromStr;
 use diesel::{
     backend::Backend,
     deserialize::{FromSql, FromSqlRow},
-    serialize::{Output, ToSql},
+    serialize::{IsNull, Output, ToSql},
     sql_types::Text,
+    sqlite::Sqlite,
     AsExpression,
 };
 
@@ -261,14 +262,14 @@ where
     }
 }
 
+// Implementing this for a generic backend would require storing the smali name. I don't have time
+// for this right now.
 #[cfg(feature = "sql")]
-impl<DB> ToSql<Text, DB> for ClassName
-where
-    DB: Backend,
-    String: ToSql<Text, DB>,
-{
-    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, DB>) -> diesel::serialize::Result {
-        self.name.to_sql(out)
+impl ToSql<Text, Sqlite> for ClassName {
+    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Sqlite>) -> diesel::serialize::Result {
+        let smali = self.get_smali_name().into_owned();
+        out.set_value(smali);
+        Ok(IsNull::No)
     }
 }
 

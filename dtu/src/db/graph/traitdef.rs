@@ -104,6 +104,26 @@ pub trait GraphDatabase: Sync + Send {
         depth: usize,
     ) -> Result<Vec<MethodCallPath>>;
 
+    /// Find all callers of the given method within the set of provided methods
+    ///
+    /// This is similar to [GraphDatabase::find_callers] but the results are bounded by the
+    /// originating methods
+    fn find_callers_from(
+        &self,
+        method: &MethodSearch,
+        methods: &[MethodId],
+    ) -> Result<Vec<MethodCallPath>>;
+
+    /// Find any methods that reference the provided field within the set of provided methods
+    ///
+    /// This is the field analogue to [GraphDatabase::find_callers_from]
+    fn find_field_refs_from(
+        &self,
+        field: &FieldSearch,
+        action: FieldAccessOp,
+        methods: &[MethodId],
+    ) -> Result<Vec<MethodCallPath>>;
+
     /// Find all calls leaving the given method up to a given depth.
     fn find_outgoing_calls(&self, from: &MethodSearch, depth: usize)
         -> Result<Vec<MethodCallPath>>;
@@ -147,6 +167,18 @@ pub trait GraphDatabase: Sync + Send {
 
     /// Get all methods defined by the given source
     fn get_methods_for(&self, source: &str) -> Result<Vec<MethodSpec>>;
+
+    /// Retrieve the [MethodSpec] for the given [MethodId]
+    fn get_method_by_id(&self, id: MethodId) -> Result<MethodSpec>;
+
+    /// Retrieve a [Vec<MethodSpec>] for the all given [MethodId]s
+    fn get_methods_by_id(&self, id: &[MethodId]) -> Result<Vec<MethodSpec>>;
+
+    /// Retrieve the [ClassSpec] for the given [ClassId]
+    fn get_class_by_id(&self, id: ClassId) -> Result<ClassSpec>;
+
+    /// Retrieve a [Vec<ClassSpec>] for the all given [ClassId]s
+    fn get_classes_by_id(&self, id: &[ClassId]) -> Result<Vec<ClassSpec>>;
 
     /// Wipe the database
     fn wipe(&self, ctx: &dyn Context) -> Result<()>;

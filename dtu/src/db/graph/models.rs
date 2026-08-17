@@ -181,8 +181,8 @@ pub struct SourcedString {
     pub source: String,
 }
 
-#[derive(PartialEq, Eq, Hash, Clone, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(test, derive(Debug, PartialOrd, Ord))]
+#[derive(PartialEq, Eq, Hash, Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(test, derive(PartialOrd, Ord))]
 pub struct MethodCallPath {
     /// The path of methods that ends up at the target call
     pub path: Vec<MethodSpec>,
@@ -515,12 +515,13 @@ impl<'a> FieldSearch<'a> {
 /// Specify a method to search for
 pub struct MethodSearch<'a> {
     pub param: MethodSearchParams<'a>,
+    pub ret: Option<&'a str>,
     pub source: Option<&'a str>,
 }
 
 impl<'a> From<MethodSearchParams<'a>> for MethodSearch<'a> {
     fn from(value: MethodSearchParams<'a>) -> Self {
-        Self::new(value, None)
+        Self::new(value, None, None)
     }
 }
 
@@ -531,8 +532,18 @@ impl<'a> MethodSearch<'a> {
         self
     }
 
-    pub fn new(param: MethodSearchParams<'a>, source: Option<&'a str>) -> Self {
-        Self { param, source }
+    #[inline]
+    pub fn with_return_type(mut self, ret: &'a str) -> Self {
+        self.ret = Some(ret);
+        self
+    }
+
+    pub fn new(
+        param: MethodSearchParams<'a>,
+        source: Option<&'a str>,
+        ret: Option<&'a str>,
+    ) -> Self {
+        Self { param, source, ret }
     }
 
     pub fn new_from_opts(
@@ -540,9 +551,10 @@ impl<'a> MethodSearch<'a> {
         name: Option<&'a str>,
         signature: Option<&'a str>,
         source: Option<&'a str>,
+        ret: Option<&'a str>,
     ) -> Result<Self, &'static str> {
         let param = MethodSearchParams::new(name, class, signature)?;
-        Ok(Self { param, source })
+        Ok(Self { param, source, ret })
     }
 }
 
