@@ -228,8 +228,8 @@ impl<'a> SystemServiceDiffTask<'a> {
             Some(m) => m,
         };
 
-        let hash_matches = match device_method.smalisa_hash.as_ref() {
-            Some(dev) => match diff_method.signature.as_ref() {
+        let hash_matches = match &device_method.smalisa_hash {
+            Some(dev) => match &diff_method.smalisa_hash {
                 Some(diff) => UnknownBool::from(dev == diff),
                 None => UnknownBool::Unknown,
             },

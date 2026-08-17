@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fs::DirEntry;
+use std::hash::Hash;
 use std::ops::Deref;
 use std::path::PathBuf;
 
@@ -11,7 +12,7 @@ use sha2::{Digest, Sha256};
 use smalisa::instructions::{InvArgs, Invocation};
 use smalisa::{
     parse_class, FieldRef, Lexer, Line, LineParse, Literal, Method, MethodHeader, MethodLine,
-    MethodRef, Parser, Type,
+    MethodRef, Parser, RawLiteral, Type,
 };
 
 use dtu_proc_macro::{define_setters, wraps_base_error};
@@ -532,6 +533,8 @@ impl<'a> AddManifestTask<'a> {
     }
 
     fn service_on_bind_returns_nonnull(&self, class: &ClassName) -> UnknownBool {
+        // TODO: The SSA form would be better to use here now that we have it
+
         let path = match find_smali_file_for_class(self.ctx, class, Some(self.device_path)) {
             None => {
                 log::warn!("couldn't find smali file for {}", class);
@@ -585,7 +588,7 @@ impl<'a> AddManifestTask<'a> {
             .map(|it| it.unwrap())
             .collect::<Vec<&Invocation>>();
 
-        // Returning null is always just 2 lines:
+        // Returning null is often just 2 lines:
         //
         // const/4 v0, 0x0
         // return-object v0
@@ -599,13 +602,20 @@ impl<'a> AddManifestTask<'a> {
             return UnknownBool::True;
         }
 
-        // Continuing with the previous train of thought, if the instruction
-        // invocation doesn't take a register and a number then it is returning
-        // something nonnull
-        match instructions[0].args() {
-            // This _can't_ be anything but 0 to be valid Java code, so it's
-            // returning null
-            InvArgs::OneRegNum(_, _) => UnknownBool::False,
+        let inv = instructions[0];
+
+        // This means that our assumption of two lines meaning "const 0 and then return 0" was
+        // wrong, let's just keep on assuming.. false positives are pretty easy to notice.
+        if !inv.uses_const() {
+            return UnknownBool::True;
+        }
+
+        // Continuing with the previous train of thought, if the instruction invocation doesn't take
+        // a register and a number then it is potentially returning something nonnull
+        match inv.args() {
+            InvArgs::OneRegLiteral(_, lit) if lit.is_null() || lit.is_numeric() => {
+                UnknownBool::False
+            }
             _ => UnknownBool::True,
         }
     }
@@ -981,8 +991,9 @@ impl<'a> AddSystemServiceTask<'a> {
         for line in m.lines.iter() {
             match line {
                 MethodLine::Instruction(ins) => {
-                    let bits = ins.instruction().bits();
-                    hasher.update(bits.to_be_bytes());
+                    // smalisa instruction bit patterns are unstable so we use the instruction name,
+                    // which is stable.
+                    hasher.update(ins.instruction().as_str());
                     let args = ins.args();
                     match args {
                         InvArgs::TwoRegLabel(_, _, _label)
@@ -990,10 +1001,8 @@ impl<'a> AddSystemServiceTask<'a> {
                         | InvArgs::Label(_label) => {
                             // noop, don't care about labels
                         }
-                        InvArgs::OneRegNum(_, s)
-                        | InvArgs::TwoRegNum(_, _, s)
-                        | InvArgs::RegStr(_, s) => {
-                            hasher.update(s);
+                        InvArgs::OneRegLiteral(_, lit) | InvArgs::TwoRegLiteral(_, _, lit) => {
+                            hash_literal(&mut hasher, lit)
                         }
                         InvArgs::VarRegMethod(_, mref) => {
                             hash_method_ref(&mut hasher, mref);
@@ -1001,10 +1010,6 @@ impl<'a> AddSystemServiceTask<'a> {
                         InvArgs::OneRegField(_, fref) | InvArgs::TwoRegField(_, _, fref) => {
                             hash_field_ref(&mut hasher, fref);
                         }
-                        InvArgs::OneRegClass(_, cls) | InvArgs::TwoRegClass(_, _, cls) => {
-                            hash_type(&mut hasher, cls);
-                        }
-
                         InvArgs::VarRegArray(_, arr) | InvArgs::TwoRegArray(_, _, arr) => {
                             hash_type(&mut hasher, arr);
                         }
@@ -1385,6 +1390,22 @@ fn hash_type(sha: &mut Sha256, ty: &Type) {
     }
 }
 
+fn hash_literal(sha: &mut Sha256, lit: &RawLiteral) {
+    match lit {
+        RawLiteral::Null | RawLiteral::Unset | RawLiteral::Type(Type::Unknown) => sha.update(&[]),
+        RawLiteral::Char(s) | RawLiteral::String(s) | RawLiteral::Numeric(s) => sha.update(s),
+        RawLiteral::Bool(z) => sha.update(if *z { &[1u8] } else { &[0u8] }),
+        RawLiteral::Type(Type::Class(name, dim)) => {
+            sha.update(name.as_str());
+            sha.update(&dim.to_le_bytes());
+        }
+        RawLiteral::Type(Type::Primitive(p, dim)) => {
+            sha.update(p.as_java_str());
+            sha.update(&dim.to_le_bytes());
+        }
+    }
+}
+
 fn hash_method_ref(sha: &mut Sha256, mr: &MethodRef) {
     sha.update(mr.class);
     sha.update(mr.name);
@@ -1393,7 +1414,7 @@ fn hash_method_ref(sha: &mut Sha256, mr: &MethodRef) {
 }
 
 fn hash_field_ref(sha: &mut Sha256, mr: &FieldRef) {
-    sha.update(mr.class);
+    sha.update(mr.class.as_str());
     sha.update(mr.name);
     hash_type(sha, &mr.ty);
 }
