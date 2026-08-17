@@ -8,7 +8,7 @@ use which::{which, which_in};
 use crate::adb::{Adb, ExecAdb};
 use crate::config::{GlobalConfig, ProjectConfig};
 use crate::utils::{ensure_dir_exists, path_must_str, read_file};
-use crate::Error;
+use crate::{Error, VERSION};
 
 use crossbeam::atomic::AtomicCell;
 use log;
@@ -121,7 +121,10 @@ pub trait Context: Send + Sync {
 
     /// Get a cache dir relative to the project instead of the user's cache dir
     fn get_project_cache_dir(&self) -> crate::Result<PathBuf> {
-        let cache = self.get_output_dir_child("cache")?;
+        let cache = self.get_output_dir_child("cache")?.join(&format!(
+            "{}.{}.{}",
+            VERSION.major, VERSION.minor, VERSION.patch
+        ));
         ensure_dir_exists(&cache)?;
         Ok(cache)
     }
