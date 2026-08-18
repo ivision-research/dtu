@@ -652,23 +652,23 @@ pub struct CallAppService<'a> {
     pub parcel_data: Option<&'a str>,
 }
 
-pub fn get_server_port(ctx: &dyn Context) -> crate::Result<u16> {
-    let port = if ctx.has_env("DTU_SERVER_PORT") {
-        let port_string = ctx.unchecked_get_env("DTU_SERVER_PORT");
-        match port_string.parse() {
-            Ok(v) => v,
-            Err(_) => {
-                return Err(crate::Error::InvalidEnv(
-                    String::from("DTU_SERVER_PORT"),
-                    port_string,
-                ))
-            }
-        }
-    } else {
-        APP_SERVER_PORT
-    };
+pub fn get_server_args(ctx: &dyn Context) -> crate::Result<(String, u16)> {
+    let port = ctx
+        .get_env("DTU_SERVER_PORT")
+        .and_then(|it| {
+            it.parse::<u16>()
+                .map_err(|_| crate::Error::InvalidEnv("DTU_SERVER_PORT".into(), it))
+        })
+        .or_else(|e| match e {
+            crate::Error::MissingEnv(_) => Ok(APP_SERVER_PORT),
+            _ => Err(e),
+        })?;
 
-    Ok(port)
+    let addr = ctx
+        .get_env("DTU_SERVER_HOST")
+        .unwrap_or_else(|_| "127.0.0.1".into());
+
+    Ok((addr, port))
 }
 
 pub const APP_SERVER_PORT: u16 = 52098;
@@ -679,13 +679,11 @@ impl TcpAppServer {
     }
 
     pub fn from_ctx(ctx: &dyn Context) -> std::result::Result<Self, ConnectError> {
-        let port = if let Ok(v) = get_server_port(ctx) {
-            v
-        } else {
+        let Ok((addr, port)) = get_server_args(ctx) else {
             return Err(ConnectError::InvalidEnvPort);
         };
 
-        Self::connect("127.0.0.1", port)
+        Self::connect(&addr, port)
     }
 
     pub fn connect(addr: &str, port: u16) -> std::result::Result<Self, ConnectError> {

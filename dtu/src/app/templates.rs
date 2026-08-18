@@ -8,7 +8,7 @@ use std::{fmt, io};
 use zstd::Decoder;
 
 use crate::app::AppTestStatus;
-use crate::app_server::{get_server_port, APP_SERVER_PORT};
+use crate::app_server::{get_server_args, APP_SERVER_PORT};
 use crate::db::meta::models::AppActivity;
 use crate::db::{self, MetaDatabase};
 use crate::utils::{ensure_dir_exists, path_must_str, with_working_dir, ClassName};
@@ -340,9 +340,11 @@ impl<'a> TemplateRenderer<'a> {
             .map(|it| it.name.as_str())
             .collect::<Vec<&str>>();
 
+        let (_, app_server_port) = get_server_args(self.ctx)?;
+
         let app_config = Config {
             app_id: self.app_id,
-            app_server_port: get_server_port(self.ctx)?,
+            app_server_port,
         };
 
         let src_dir = get_lib_source_dir(self.ctx)?;

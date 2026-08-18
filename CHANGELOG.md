@@ -1,3 +1,13 @@
+# 7.0.0
+
+- **BREAKING** Updated the GraphDatabase trait and models, IDs are type safe now instead of just i32s. I didn't make these changes on the device database because it just seemed like too much work :)
+- **BREAKING** Moved some traits out of db::common that belonged in db::device::models, might as well since we already made a breaking change
+- **BREAKING** Changed the way smali methods are hashed to be a bit more stable. This will invalidate old device databases!
+- Update some caching behavior
+- Add `DTU_SERVER_HOST` env var for the app server
+- Added an `ANALYZE` call after index creation on the graph database. This fixed some queries that took way longer than they should have.
+- Added initial support for taint analysis. Currently this isn't the fastest in the world, but something is better than nothing. Supports searching interesting calls from most IPC endpoints as well as arbitrary methods. The output is a giant potentially unwieldy JSON that might change in the future. The entrypoint is `dtu taint`
+
 # 6.0.1
 
 - Critical bugfix, 6.0.0 baksmali was broken

@@ -20,7 +20,7 @@ use setup::Setup;
 
 mod create;
 use create::*;
-use dtu::app::server::get_server_port;
+use dtu::app::server::get_server_args;
 use dtu::app::{render_into, AppGradleBuild, AppTestStatus, TemplateRenderer, LIB_PKG_NAME};
 use dtu::db::meta::db::APP_ID_KEY;
 use dtu::db::meta::models::AppActivity;
@@ -285,7 +285,7 @@ impl ForwardServer {
         if let Some(p) = self.device_port {
             return Ok(p);
         }
-        let port = get_server_port(ctx)?;
+        let (_, port) = get_server_args(ctx)?;
         Ok(port)
     }
 
@@ -293,7 +293,7 @@ impl ForwardServer {
         if let Some(p) = self.local_port {
             return Ok(p);
         }
-        let port = get_server_port(ctx)?;
+        let (_, port) = get_server_args(ctx)?;
         Ok(port)
     }
 }
