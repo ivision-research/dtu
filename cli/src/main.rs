@@ -237,6 +237,7 @@ enum Commands {
     /// str <str>     - Writes a string{n}
     /// wfd <str>     - Writes a file descriptor opened r/w{n}
     /// rfd <str>     - Writes a file descriptor opened read only{n}
+    /// bar <hexstr>  - Writes a raw byte array input as hex{n}
     ///{n}
     /// null          - Writes a null{n}
     /// bind          - Writes one of the applicaton's `LoggingBinder`s{n}
