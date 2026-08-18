@@ -11,8 +11,8 @@ use regex::Regex;
 use sha2::{Digest, Sha256};
 use smalisa::instructions::{InvArgs, Invocation};
 use smalisa::{
-    parse_class, FieldRef, Lexer, Line, LineParse, Literal, Method, MethodHeader, MethodLine,
-    MethodRef, Parser, RawLiteral, Type,
+    parse_class, FieldRef, Label, Lexer, Line, LineParse, Literal, Method, MethodHeader,
+    MethodLine, MethodRef, Parser, RawLiteral, Type,
 };
 
 use dtu_proc_macro::{define_setters, wraps_base_error};
@@ -1130,7 +1130,27 @@ impl<'a> AddSystemServiceTask<'a> {
         let stub_lexer = Lexer::new_buffered(&mut stub_file, &arena);
         let mut stub_parser = Parser::new(stub_lexer);
 
-        // Stub file contains the TRANSACTION_{NAME} fields
+        // Stub file contains the TRANSACTION_{NAME} fields or the getDefaultTransactionName method
+        //
+        // Newer aidl backends stop emitting the TRANSACTION_{NAME} fields and instead emit a
+        // getDefaultTransactionName(int) method whose body is a switch returning the method name
+        // for each transaction id.
+        //
+        // The method names are constant strings in this method, but I'm not certain the order will
+        // always be reliable. Instead, we can rely on knowing that the `LAST_CALL_TRANSACTION` is
+        // 0xFFFFFF and the format for the switch looks like:
+        //
+        //   :pswitch_0
+        //   const-string p0, "getInterfaceVersion"
+        //   return-object p0
+        //
+        // Meaning we should be able to always associate switch data with a string and reconstruct
+        // after that.
+
+        let mut extract_from_method = false;
+        let mut txn_names: HashMap<Label, String> = HashMap::new();
+        let mut txn_ids: HashMap<Label, i32> = HashMap::new();
+        let mut last_label = None;
 
         loop {
             self.cancel_check()?;
@@ -1140,6 +1160,47 @@ impl<'a> AddSystemServiceTask<'a> {
                 Ok(v) => v,
             };
             match &line {
+                Line::MethodHeader(_) if methods.len() > 0 || extract_from_method => break,
+                Line::MethodHeader(hdr) if hdr.name == "getDefaultTransactionName" => {
+                    extract_from_method = true
+                }
+
+                Line::LabelDefinition(label) if extract_from_method => {
+                    let Some(parsed) = label.to_label() else {
+                        log::warn!("failed to parse label: {label}");
+                        continue;
+                    };
+                    last_label = Some(parsed);
+                }
+
+                Line::InstructionInvocation(inv) if extract_from_method && inv.uses_const() => {
+                    if let InvArgs::OneRegLiteral(_, RawLiteral::String(s)) = inv.args() {
+                        if let Some(label) = last_label.take() {
+                            txn_names.insert(label, String::from(*s));
+                        } else {
+                            log::warn!(
+                                "saw an unlabeled const string in getDefaultTransactionName"
+                            );
+                        }
+                    }
+                }
+
+                Line::PackedSwitchData(psd) if extract_from_method => {
+                    if let Some(parsed) = psd.to_parsed() {
+                        for case in parsed.cases() {
+                            txn_ids.insert(case.label, case.key);
+                        }
+                    }
+                }
+
+                Line::SparseSwitchData(ssd) if extract_from_method => {
+                    if let Some(parsed) = ssd.to_parsed() {
+                        for case in parsed.cases() {
+                            txn_ids.insert(case.label, case.key);
+                        }
+                    }
+                }
+
                 Line::Field(fld) => {
                     if fld.name.starts_with("TRANSACTION") {
                         if let Some(meta) = MethodData::from_field(fld) {
@@ -1150,6 +1211,35 @@ impl<'a> AddSystemServiceTask<'a> {
                 _ => {}
             }
         }
+
+        if methods.is_empty() {
+            if txn_names.is_empty() {
+                log::warn!("failed to find transactions via TRANSACTION_* fields and via getDefaultTransactionNames");
+                return Ok(methods);
+            }
+
+            for (label, name) in txn_names.into_iter() {
+                let Some(txn_id) = txn_ids.get(&label) else {
+                    log::warn!("missing switch label for {name} in getDefaultTransactionNames");
+                    continue;
+                };
+
+                // Subtract 1 from LAST_CALL_TRANSACTION because that's how it is used I guess
+                if *txn_id >= 0xFFFFFE {
+                    continue;
+                }
+                methods.insert(
+                    name.clone(),
+                    MethodData {
+                        name,
+                        txn_id: *txn_id,
+                        sig: None,
+                        ret: None,
+                    },
+                );
+            }
+        }
+
         Ok(methods)
     }
 
