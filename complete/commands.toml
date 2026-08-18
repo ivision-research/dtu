@@ -52,11 +52,20 @@ options = [
 
 [db.diff-source.list]
 
+[db.add-service]
+options = [
+    ["service", "s", "Uncompletable", ""],
+    ["apk", "a", "Apk", ""],
+    ["iface", "i", "GraphClass", ""],
+    ["no-diff", "n", "None", ""]
+]
+
+
 [db.add-service-impl]
 options = [
     ["service", "s", "Uncompletable", ""],
     ["apk", "a", "Apk", ""],
-    ["class", "c", "Uncompletable", ""],
+    ["class", "c", "GraphClass", ""],
     ["stub-file", "", "File", ""],
     ["no-diff", "n", "None", ""],
     ["no-remove", "", "None", ""],

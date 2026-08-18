@@ -5,6 +5,7 @@ mod emulator_diff;
 mod monitor;
 mod setup;
 mod update_binder_status;
+mod add_service;
 
 use std::path::PathBuf;
 
@@ -52,6 +53,10 @@ enum Commands {
     #[command()]
     AddServiceImpl(AddServiceImpl),
 
+    /// Add a system service that was not discovered automatically
+    #[command()]
+    AddService(add_service::AddService),
+
     /// Manually add an APK to the database
     #[command()]
     AddApk(add_apk::AddApk),
@@ -66,14 +71,15 @@ enum Commands {
 }
 
 impl DB {
-    pub fn run(&self) -> anyhow::Result<()> {
-        match &self.command {
+    pub fn run(self) -> anyhow::Result<()> {
+        match self.command {
             Commands::AddServiceImpl(c) => c.run(),
             Commands::Setup(c) => c.run(),
             Commands::DiffSource(c) => c.run(),
             Commands::EmulatorDiff(c) => c.run(),
             Commands::AddApk(c) => c.run(),
             Commands::UpdateBinderAvailability(c) => c.run(),
+            Commands::AddService(c) => c.run(),
             Commands::Wipe => self.wipe_database(),
         }
     }
@@ -112,14 +118,14 @@ pub(crate) fn get_aosp_database(
 
     let store = get_filestore(ctx)?;
 
-    store.get_file(ctx, &remote_path, path_as_str).context(
-        format!(
+    store
+        .get_file(ctx, &remote_path, path_as_str)
+        .context(format!(
             "failed to copy remote path {} to path {} with store {}",
             remote_path,
             path_as_str,
             store.name(),
-        )
-    )?;
+        ))?;
 
     if !path.exists() {
         bail!(
