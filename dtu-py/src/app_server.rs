@@ -201,12 +201,13 @@ impl PyAppServer {
     /// Send a broadcast from the context of the test application
     ///
     /// The `intent_data` values must be provided as a map of strings to `ParcelValue` instances
-    #[pyo3(signature = (action = None, data = None, package = None, class = None, flags = None, intent_data = None))]
+    #[pyo3(signature = (action = None, data = None, package = None, mime = None, class = None, flags = None, intent_data = None))]
     fn broadcast(
         &mut self,
         action: Option<&str>,
         data: Option<&str>,
         package: Option<&str>,
+        mime: Option<&str>,
         class: Option<&str>,
         flags: Option<Vec<String>>,
         intent_data: Option<HashMap<String, ParcelValue>>,
@@ -215,6 +216,7 @@ impl PyAppServer {
         let payload = IntentData {
             action,
             data,
+            mime,
             package,
             class,
             flags: flags.as_ref(),
@@ -227,12 +229,13 @@ impl PyAppServer {
     /// Start a service from the context of the test application
     ///
     /// The `intent_data` values must be provided as a map of strings to `ParcelValue` instances
-    #[pyo3(signature = (action = None, data = None, package = None, class = None, flags = None, intent_data = None))]
+    #[pyo3(signature = (action = None, data = None, package = None, mime = None, class = None, flags = None, intent_data = None))]
     fn start_service(
         &mut self,
         action: Option<&str>,
         data: Option<&str>,
         package: Option<&str>,
+        mime: Option<&str>,
         class: Option<&str>,
         flags: Option<Vec<String>>,
         intent_data: Option<HashMap<String, ParcelValue>>,
@@ -240,6 +243,7 @@ impl PyAppServer {
         let intent_data = intent_data.as_ref().map(build_intent_string);
         let payload = IntentData {
             action,
+            mime,
             data,
             package,
             class,
@@ -253,12 +257,13 @@ impl PyAppServer {
     /// Start an activity from the context of the test application
     ///
     /// The `intent_data` values must be provided as a map of strings to `ParcelValue` instances
-    #[pyo3(signature = (action = None, data = None, package = None, class = None, flags = None, intent_data = None))]
+    #[pyo3(signature = (action = None, data = None, package = None, mime = None, class = None, flags = None, intent_data = None))]
     fn start_activity(
         &mut self,
         action: Option<&str>,
         data: Option<&str>,
         package: Option<&str>,
+        mime: Option<&str>,
         class: Option<&str>,
         flags: Option<Vec<String>>,
         intent_data: Option<HashMap<String, ParcelValue>>,
@@ -266,6 +271,7 @@ impl PyAppServer {
         let intent_data = intent_data.as_ref().map(build_intent_string);
         let payload = IntentData {
             action,
+            mime,
             data,
             package,
             class,

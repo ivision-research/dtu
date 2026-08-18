@@ -285,6 +285,7 @@ sealed class Request {
         val pkg: String?,
         val clazz: String?,
         val action: String?,
+        val mime: String?,
         val data: Uri?,
         val intentData: IntentString?,
         val flags: List<String>?,
@@ -320,6 +321,7 @@ sealed class Request {
                     pkg,
                     clazz,
                     obj.maybeString("action"),
+                    obj.maybeString("mime"),
                     data,
                     obj.maybeString("intentData")?.let {
                         IntentString.parse(it)
@@ -337,6 +339,10 @@ sealed class Request {
 
                 data?.let { data ->
                     it.data = data
+                }
+
+                mime?.let { mime ->
+                    it.type = mime
                 }
 
                 intentData?.addToIntent(it)

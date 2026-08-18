@@ -65,6 +65,7 @@ pub trait AppServer {
         &mut self,
         action: Option<&str>,
         data: Option<&str>,
+        mime: Option<&str>,
         package: Option<&str>,
         class: Option<&str>,
         flags: Option<&Vec<String>>,
@@ -75,6 +76,7 @@ pub trait AppServer {
         &mut self,
         action: Option<&str>,
         data: Option<&str>,
+        mime: Option<&str>,
         package: Option<&str>,
         class: Option<&str>,
         flags: Option<&Vec<String>>,
@@ -85,6 +87,7 @@ pub trait AppServer {
         &mut self,
         action: Option<&str>,
         data: Option<&str>,
+        mime: Option<&str>,
         package: Option<&str>,
         class: Option<&str>,
         flags: Option<&Vec<String>>,
@@ -476,6 +479,7 @@ impl AppServer for TcpAppServer {
         &mut self,
         action: Option<&str>,
         data: Option<&str>,
+        mime: Option<&str>,
         package: Option<&str>,
         class: Option<&str>,
         flags: Option<&Vec<String>>,
@@ -485,6 +489,7 @@ impl AppServer for TcpAppServer {
         let payload = IntentData {
             action,
             data,
+            mime,
             package,
             class,
             flags,
@@ -498,6 +503,7 @@ impl AppServer for TcpAppServer {
         &mut self,
         action: Option<&str>,
         data: Option<&str>,
+        mime: Option<&str>,
         package: Option<&str>,
         class: Option<&str>,
         flags: Option<&Vec<String>>,
@@ -507,6 +513,7 @@ impl AppServer for TcpAppServer {
         let payload = IntentData {
             action,
             data,
+            mime,
             package,
             class,
             flags,
@@ -520,6 +527,7 @@ impl AppServer for TcpAppServer {
         &mut self,
         action: Option<&str>,
         data: Option<&str>,
+        mime: Option<&str>,
         package: Option<&str>,
         class: Option<&str>,
         flags: Option<&Vec<String>>,
@@ -529,6 +537,7 @@ impl AppServer for TcpAppServer {
         let payload = IntentData {
             action,
             data,
+            mime,
             package,
             class,
             flags,
@@ -622,6 +631,8 @@ pub struct IntentData<'a> {
     pub action: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime: Option<&'a str>,
     #[serde(rename = "pkg")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub package: Option<&'a str>,

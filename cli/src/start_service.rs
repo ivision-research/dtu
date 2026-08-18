@@ -6,7 +6,7 @@ use dtu::prereqs::Prereq;
 use dtu::DefaultContext;
 
 use crate::parsers::parse_intent_string;
-use crate::utils::get_app_server;
+use crate::utils::{get_app_server, ostr};
 
 #[derive(Args)]
 pub struct StartService {
@@ -21,6 +21,10 @@ pub struct StartService {
     /// Data URI to send with the intent
     #[arg(short, long)]
     data: Option<String>,
+
+    /// Set the mime type on the intent
+    #[arg(short, long)]
+    mime: Option<String>,
 
     /// Intent arguments that will be passed through
     #[arg(last = true)]
@@ -52,8 +56,9 @@ impl StartService {
         let mut srv = get_app_server(&ctx)?;
 
         srv.start_service(
-            self.action.as_ref().map(|it| it.as_str()),
-            self.data.as_ref().map(|it| it.as_str()),
+            ostr(&self.action),
+            ostr(&self.data),
+            ostr(&self.mime),
             pkg,
             class,
             None,

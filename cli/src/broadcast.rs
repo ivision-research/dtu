@@ -6,7 +6,7 @@ use dtu::prereqs::Prereq;
 use dtu::DefaultContext;
 
 use crate::parsers::parse_intent_string;
-use crate::utils::get_app_server;
+use crate::utils::{get_app_server, ostr};
 
 #[derive(Args)]
 pub struct Broadcast {
@@ -24,6 +24,10 @@ pub struct Broadcast {
 
     #[arg(short, long)]
     flags: Option<Vec<String>>,
+
+    /// Set the mime type on the intent
+    #[arg(short, long)]
+    mime: Option<String>,
 
     /// Intent arguments that will be passed through
     #[arg(last = true)]
@@ -55,8 +59,9 @@ impl Broadcast {
         let mut srv = get_app_server(&ctx)?;
 
         srv.broadcast(
-            self.action.as_ref().map(|it| it.as_str()),
-            self.data.as_ref().map(|it| it.as_str()),
+            ostr(&self.action),
+            ostr(&self.data),
+            ostr(&self.mime),
             pkg,
             class,
             self.flags.as_ref(),

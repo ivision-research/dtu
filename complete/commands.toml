@@ -558,6 +558,7 @@ options = [
     ["action", "a", "Uncompletable", ""],
     ["component", "c", "Receiver", ""],
     ["data", "d", "Uncompletable", ""],
+    ["mime", "m", "Uncompletable", ""],
     ["flags", "f", "Uncompletable", ""]
 ]
 
@@ -566,6 +567,7 @@ options = [
     ["action", "a", "Uncompletable", ""],
     ["component", "c", "Activity", ""],
     ["data", "d", "Uncompletable", ""],
+    ["mime", "m", "Uncompletable", ""],
     ["flags", "f", "Uncompletable", ""]
 ]
 
@@ -574,6 +576,7 @@ options = [
     ["action", "a", "Uncompletable", ""],
     ["component", "c", "Service", ""],
     ["data", "d", "Uncompletable", ""],
+    ["mime", "m", "Uncompletable", ""],
     ["flags", "f", "Uncompletable", ""]
 ]
 
