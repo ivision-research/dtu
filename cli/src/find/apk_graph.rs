@@ -1,23 +1,22 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
-use std::io::stdout;
 
 use clap::{self, Args};
 use dtu::db::device::models::Activity;
 use dtu::db::device::schema::{activities, apks, providers, receivers, services};
 use itertools::Itertools;
-use sha2::{Digest, Sha256};
 
+use crate::cache_key;
 use crate::find::utils::get_method_search;
 use crate::parsers::DevicePathValueParser;
 use crate::printer::{color, Printer};
-use crate::utils::{oshash, ostr, project_cacheable, tostringshash};
+use crate::utils::{bool_hash_key, ostr, project_cacheable_json};
 use dtu::db::graph::models::MethodCallPath;
 use dtu::db::graph::GraphDatabase;
 use dtu::db::{DeviceDatabase, Enablable, Exportable, PermissionProtected};
 use dtu::diesel::prelude::*;
-use dtu::utils::{hex, ClassName, DevicePath};
+use dtu::utils::{ClassName, DevicePath};
 use dtu::Context;
 
 /// Generic used to search for any ApkIPC call
@@ -202,18 +201,18 @@ impl ApkIPCCallsGeneric {
         let tag = bits_tag(self.only_exported, self.only_enabled);
 
         let cache_file_name = match &self.apk {
-            None => format!("all-{}-{}-{}", self.cache, self.depth, tag),
+            None => format!("{}-all-{}-{}", self.cache, self.depth, tag),
             Some(v) => format!(
                 "{}-{}-{}-{}",
-                v.as_squashed_str_no_ext(),
                 self.cache,
+                v.as_squashed_str_no_ext(),
                 self.depth,
                 tag
             ),
         };
 
-        let res = project_cacheable(ctx, &cache_file_name, self.no_cache, create)?;
-        dump_apk_calls_result(&res, self.json, self.depth > 1)
+        let res = project_cacheable_json(ctx, &cache_file_name, self.no_cache, self.json, create)?;
+        dump_apk_calls_result(&res, self.depth > 1)
     }
 }
 
@@ -233,14 +232,11 @@ fn bits_tag(only_exported: bool, only_enabled: bool) -> &'static str {
 
 impl From<FindIPCCalls> for ApkIPCCallsGeneric {
     fn from(value: FindIPCCalls) -> Self {
-        let mut hasher = Sha256::new();
-        oshash(&mut hasher, &value.name);
-        oshash(&mut hasher, &value.signature);
-        oshash(&mut hasher, &value.class);
-        tostringshash(&mut hasher, &value.no_perms);
-        let res = hasher.finalize();
-        let hex = hex::bytes_to_hex(&res);
-        let cache = format!("ipc-calls-{}", hex);
+        let cache = cache_key!(
+            "ipc-calls",
+            ostrs: [&value.name, &value.signature, &value.class],
+            bool_hash_key(value.no_perms)
+        );
 
         Self {
             apk: value.apk,
@@ -428,8 +424,8 @@ impl FindIntentActivities {
             cache_file_name = Cow::Owned(format!("{}-strict", cache_file_name));
         }
 
-        let res = project_cacheable(ctx, &cache_file_name, self.no_cache, create)?;
-        dump_apk_calls_result(&res, self.json, false)
+        let res = project_cacheable_json(ctx, &cache_file_name, self.no_cache, self.json, create)?;
+        dump_apk_calls_result(&res, false)
     }
 }
 
@@ -478,12 +474,7 @@ pub struct FindIPCCalls {
 
 type ApkCallsResult = HashMap<DevicePath, Vec<MethodCallPath>>;
 
-fn dump_apk_calls_result(data: &ApkCallsResult, json: bool, show_path: bool) -> anyhow::Result<()> {
-    if json {
-        serde_json::to_writer(stdout(), data)?;
-        return Ok(());
-    }
-
+fn dump_apk_calls_result(data: &ApkCallsResult, show_path: bool) -> anyhow::Result<()> {
     let printer = Printer::new();
 
     for (apk, paths) in data {

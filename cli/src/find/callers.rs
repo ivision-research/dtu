@@ -1,15 +1,13 @@
-use std::io;
-
 use clap::{self, Args};
 use dtu::Context;
-use sha2::{Digest, Sha256};
 
+use crate::cache_key;
 use crate::find::utils::get_method_search;
 use crate::parsers::GraphSourceValueParser;
 use crate::printer::{color, Printer};
-use crate::utils::{oshash, ostr, project_cacheable};
+use crate::utils::{num_hash_key, ostr, project_cacheable_json};
 use dtu::db::graph::{GraphDatabase, MethodCallPath};
-use dtu::utils::{hex, ClassName};
+use dtu::utils::ClassName;
 
 #[derive(Args)]
 pub struct FindCallers {
@@ -48,21 +46,13 @@ pub struct FindCallers {
 
 impl FindCallers {
     pub fn run(&self, ctx: &dyn Context, db: &dyn GraphDatabase) -> anyhow::Result<()> {
-        let mut hasher = Sha256::new();
-        oshash(&mut hasher, &self.method_source);
-        oshash(&mut hasher, &self.method_source);
-        oshash(&mut hasher, &self.name);
-        oshash(&mut hasher, &self.signature);
-        oshash(&mut hasher, &self.class);
-        let digest = hasher.finalize();
-        let cache = format!("find-callers-{}-{}", hex::bytes_to_hex(&digest), self.depth);
-        let mpaths = project_cacheable(ctx, &cache, self.no_cache, || self.go(db))?;
+        let cache = cache_key!(
+            "find-callers",
+            ostrs: [&self.method_source, &self.call_source, &self.name, &self.signature, &self.class],
+            num_hash_key(self.depth as u64)
+        );
 
-        if self.json {
-            serde_json::to_writer(io::stdout(), &mpaths)?;
-            return Ok(());
-        }
-
+        let mpaths = project_cacheable_json(ctx, &cache, self.no_cache, self.json, || self.go(db))?;
         // If the name isn't provided we have to show it
         let take_offset = if self.name.is_some() { 1 } else { 0 };
         // If they didn't provide a source, we have to show it
@@ -142,26 +132,16 @@ pub struct FindOutgoingCalls {
 
 impl FindOutgoingCalls {
     pub fn run(&self, ctx: &dyn Context, db: &dyn GraphDatabase) -> anyhow::Result<()> {
-        let mut hasher = Sha256::new();
         // We deliberately leave the `into_source` out of this cache string because the
         // filtering happens here and not in the graph database call. Until one day it
         // does and someone shares this comment with me explaining the soure of a bug.
-        oshash(&mut hasher, &self.leaving_source);
-        oshash(&mut hasher, &self.name);
-        oshash(&mut hasher, &self.signature);
-        oshash(&mut hasher, &self.class);
-        let digest = hasher.finalize();
-        let cache = format!(
-            "find-outgoing-call-{}-{}",
-            hex::bytes_to_hex(&digest),
-            self.depth
-        );
-        let mpaths = project_cacheable(ctx, &cache, self.no_cache, || self.go(db))?;
 
-        if self.json {
-            serde_json::to_writer(io::stdout(), &mpaths)?;
-            return Ok(());
-        }
+        let cache = cache_key!(
+            "find-outgoing-call",
+            ostrs: [&self.leaving_source, &self.name, &self.signature, &self.class],
+            num_hash_key(self.depth as u64)
+        );
+        let mpaths = project_cacheable_json(ctx, &cache, self.no_cache, self.json, || self.go(db))?;
 
         // If the name isn't provided we have to show it :)
         let take_offset = if self.name.is_some() { 1 } else { 0 };

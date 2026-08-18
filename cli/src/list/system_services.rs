@@ -11,7 +11,7 @@ use itertools::Itertools;
 use crate::cache_key;
 use crate::diff::get_diff_source;
 use crate::parsers::DiffSourceValueParser;
-use crate::utils::{bool_hash_key, inum_hash_key, project_cacheable};
+use crate::utils::{bool_hash_key, inum_hash_key, project_cacheable_json};
 
 #[derive(Args)]
 pub struct SystemServices {
@@ -125,7 +125,7 @@ impl SystemServices {
             &inum_hash_key(diff_id.unwrap_or(-1))
         );
 
-        let json = project_cacheable(ctx, &cache_path, false, || {
+        let json = project_cacheable_json(ctx, &cache_path, false, true, || {
             self.get_json_output(db, diff_id, services)
         })?;
 

@@ -82,8 +82,7 @@ impl GenEnvrc {
 
         let mut f = OpenOptions::new()
             .write(true)
-            .truncate(true)
-            .create(true)
+            .create_new(true)
             .open(".envrc")?;
 
         w.write_envrc(&mut f)

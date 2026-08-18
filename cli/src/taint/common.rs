@@ -1,0 +1,218 @@
+use std::sync::Arc;
+
+use clap::{self, Args};
+
+use dtu::{
+    analysis::{
+        taint::{TaintAnalyzer, TaintAnalyzerOptions, TaintReport, TaintSeeds},
+        SsaClassLoader,
+    },
+    db::{
+        device::models::DiffedApkIPC,
+        graph::{GraphDatabase, MethodSearch, MethodSearchParams, MethodSpec},
+        ApkIPC, DeviceDatabase, Diffable,
+    },
+    utils::ClassName,
+    Context,
+};
+
+use crate::{
+    diff::get_diff_source,
+    parsers::DiffSourceValueParser,
+    utils::{
+        bool_hash_key, inum_hash_key, opt_diff_hash_key, project_cacheable_json, task_canceller,
+    },
+};
+
+/// Flags every analysis command shares, independent of what it selects
+#[derive(Args)]
+pub struct RunOpts {
+    /// Ignore the cached results
+    #[arg(long, default_value_t = false)]
+    pub no_cache: bool,
+
+    /// Number of worker threads to analyze with
+    #[arg(short = 'T', long)]
+    pub threads: Option<usize>,
+
+    /// Maximum recursion depth, this is also capped in the library itself
+    #[arg(short = 'd', long)]
+    pub depth: Option<usize>,
+}
+
+impl RunOpts {
+    pub fn hash_key(&self) -> Vec<u8> {
+        let depth = self
+            .depth
+            .map_or(-1, |it| i64::try_from(it).unwrap_or(i64::MAX));
+        Vec::from(inum_hash_key(depth))
+    }
+
+    pub fn analyzer_options(&self) -> TaintAnalyzerOptions {
+        let mut opts = TaintAnalyzerOptions::default();
+        if let Some(threads) = self.threads {
+            opts.num_threads = threads;
+        }
+        if let Some(depth) = self.depth {
+            opts.set_depth(depth);
+        }
+        opts
+    }
+}
+
+#[derive(Args)]
+pub struct ComponentOpts {
+    #[command(flatten)]
+    pub run: RunOpts,
+
+    /// Only show entries that don't exist in the given diff source (or emulator by default)
+    #[arg(short = 'n', long)]
+    pub only_new: bool,
+
+    /// Set the diff source (only valid with -n/--only-new) otherwise the emulator is the default
+    #[arg(short = 'S', long, value_parser = DiffSourceValueParser)]
+    pub diff_source: Option<dtu::db::device::models::DiffSource>,
+
+    /// Only show public entries
+    #[arg(short = 'P', long)]
+    pub only_public: bool,
+
+    /// Only show enabled entries
+    #[arg(short = 'E', long)]
+    pub only_enabled: bool,
+}
+
+impl ComponentOpts {
+    /// Everything that survives the export, enabled and diff filters.
+    pub fn select<T, D>(
+        &self,
+        ctx: &dyn Context,
+        meta: &dyn dtu::db::MetaDatabase,
+        db: &DeviceDatabase,
+        all: impl FnOnce() -> dtu::db::Result<Vec<T>>,
+        diffed: impl FnOnce(i32) -> dtu::db::Result<Vec<D>>,
+    ) -> anyhow::Result<Vec<T>>
+    where
+        T: ApkIPC,
+        D: DiffedApkIPC<Inner = T> + Diffable + AsRef<T>,
+    {
+        if !self.only_new {
+            return Ok(all()?
+                .into_iter()
+                .filter(|it| self.keep(it.is_enabled(), it.is_exported()))
+                .collect());
+        }
+
+        let source = get_diff_source(ctx, meta, db, &self.diff_source)?;
+        Ok(diffed(source.id)?
+            .into_iter()
+            .filter(|it| {
+                let inner = it.as_ref();
+                !it.in_diff() && self.keep(inner.is_enabled(), inner.is_exported())
+            })
+            .map(DiffedApkIPC::into_apk_ipc)
+            .collect())
+    }
+
+    fn keep(&self, enabled: bool, exported: bool) -> bool {
+        (!self.only_enabled || enabled) && (!self.only_public || exported)
+    }
+}
+
+impl ComponentOpts {
+    pub fn hash_key(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend(bool_hash_key(self.only_new));
+        out.extend(bool_hash_key(self.only_public));
+        out.extend(bool_hash_key(self.only_enabled));
+        out.extend(opt_diff_hash_key(&self.diff_source));
+        out.extend(self.run.hash_key());
+        out
+    }
+}
+
+/// Every method the graph database has for the given class
+///
+/// Note that this also searches parent classes
+pub fn methods_for_class(
+    gdb: &dyn GraphDatabase,
+    class: &ClassName,
+    source: &str,
+) -> anyhow::Result<Vec<MethodSpec>> {
+    let mut methods = Vec::new();
+    let parents = gdb.find_parent_classes_of(class, source)?;
+    let search = MethodSearch::new(MethodSearchParams::ByClass { class }, Some(source));
+
+    methods.extend(gdb.get_methods(&search)?);
+    for parent in parents {
+        let search = MethodSearch::new(
+            MethodSearchParams::ByClass {
+                class: &parent.name,
+            },
+            Some(&parent.source),
+        );
+        methods.extend(gdb.get_methods(&search)?);
+    }
+    Ok(methods)
+}
+
+/// What a command resolved to analyze, built only when the cache misses
+pub struct Analysis {
+    pub methods: Vec<MethodSpec>,
+    pub seeds: Box<dyn TaintSeeds>,
+    pub loader: Option<Arc<SsaClassLoader>>,
+}
+
+impl Analysis {
+    pub fn new(methods: Vec<MethodSpec>, seeds: impl TaintSeeds + 'static) -> Self {
+        Self {
+            methods,
+            seeds: Box::new(seeds),
+            loader: None,
+        }
+    }
+
+    pub fn with_loader(mut self, loader: Arc<SsaClassLoader>) -> Self {
+        self.loader = Some(loader);
+        self
+    }
+}
+
+/// Run the taint analysis, reusing a cached report when the inputs match.
+///
+/// `resolve` produces the methods and seeds, and only runs when the cache misses. Resolution is
+/// the expensive part of every command, so nothing about it can appear in the key.
+pub fn analyze<F>(
+    ctx: &dyn Context,
+    gdb: &dyn GraphDatabase,
+    opts: &RunOpts,
+    cache: &str,
+    resolve: F,
+) -> anyhow::Result<TaintReport>
+where
+    F: FnOnce() -> anyhow::Result<Analysis>,
+{
+    project_cacheable_json(ctx, cache, opts.no_cache, true, || {
+        let analysis = resolve()?;
+
+        log::info!("Running on {} methods", analysis.methods.len());
+        let loader = match analysis.loader {
+            Some(v) => v,
+            None => Arc::new(SsaClassLoader::new(ctx)?),
+        };
+        let (_sigs, cancel) = task_canceller()?;
+        let mut taint = TaintAnalyzer::new(
+            ctx,
+            gdb,
+            cancel,
+            opts.analyzer_options(),
+            &*analysis.seeds,
+            loader,
+        );
+        let (report, failed) = taint.run(analysis.methods);
+        if !failed.is_empty() {
+            log::warn!("{} methods failed to analyze", failed.len());
+        }
+        Ok(report)
+    })
+}

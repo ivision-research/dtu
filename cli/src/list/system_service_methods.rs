@@ -1,5 +1,3 @@
-use std::io::stdout;
-
 use clap::Args;
 use dtu::db::device::models::{
     DiffSource, SimpleSystemServiceMethod, SystemService, SystemServiceMethod,
@@ -13,7 +11,7 @@ use itertools::Itertools;
 use crate::cache_key;
 use crate::diff::get_diff_source;
 use crate::parsers::{DiffSourceValueParser, SystemServiceValueParser};
-use crate::utils::{bool_hash_key, inum_hash_key, opt_diff_hash_key, project_cacheable};
+use crate::utils::{bool_hash_key, inum_hash_key, opt_diff_hash_key, project_cacheable_json};
 
 #[derive(Args)]
 pub struct SystemServiceMethods {
@@ -28,6 +26,10 @@ pub struct SystemServiceMethods {
     /// Set the diff source (only valid with -n/--only-new) otherwise the emulator is the default
     #[arg(short = 'S', long, value_parser = DiffSourceValueParser)]
     diff_source: Option<DiffSource>,
+
+    /// Ignore the cached results
+    #[arg(long, default_value_t = false)]
+    no_cache: bool,
 
     /// Print the results as JSON
     #[arg(short, long)]
@@ -48,14 +50,9 @@ impl SystemServiceMethods {
             opt_diff_hash_key(&self.diff_source)
         );
 
-        let methods = project_cacheable(&ctx, &cache_key, false, || {
+        let methods = project_cacheable_json(&ctx, &cache_key, self.no_cache, self.json, || {
             self.get_methods(&ctx, &meta, &db)
         })?;
-
-        if self.json {
-            serde_json::to_writer(stdout(), &methods)?;
-            return Ok(());
-        }
 
         for m in methods {
             println!("{} - {}({}): {}", m.txn_id, m.name, m.args, m.ret);

@@ -3,12 +3,16 @@ use std::ffi::CString;
 use std::fmt::Display;
 use std::fs;
 use std::fs::OpenOptions;
+use std::io;
+use std::io::stdout;
+use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::ErrorKind;
-use std::io::Read;
+use std::io::Seek;
+use std::io::SeekFrom;
 use std::io::Write;
-use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
+use std::process;
 use std::process::{Command, Stdio};
 use std::thread::JoinHandle;
 
@@ -19,8 +23,6 @@ use itertools::Itertools;
 use promptly::prompt;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
 use signal_hook::consts::TERM_SIGNALS;
 use signal_hook::iterator::Handle;
 use signal_hook::iterator::Signals;
@@ -34,7 +36,11 @@ use dtu::{run_cmd, Context};
 
 #[macro_export]
 macro_rules! cache_key {
-    ($ns:literal, $($it:expr),*) => {{
+    ($ns:expr, $($it:expr),*) => {
+        cache_key!($ns, ostrs: [], $($it),*)
+    };
+
+    ($ns:expr, ostrs: [$($ostr:expr),*], $($it:expr),*) => {{
         use sha2::Digest;
         let mut hasher = ::sha2::Sha256::default();
 
@@ -42,56 +48,82 @@ macro_rules! cache_key {
             hasher.update($it);
         )*
 
+        $(
+            hasher.update(crate::utils::opt_asref_hash_key($ostr));
+        )*
+
         ::std::format!("{}:{}", $ns, ::dtu::utils::hex::bytes_to_hex(&hasher.finalize()))
     }};
+
 }
 
 /// Wrapper for functions with a per project cacheable result
 ///
-/// If `force` is false, this will look for the result in a project local cache file
-/// and use that if it exists, otherwise, the passed function is called to create the
-/// object and then written to the cache before being returned.
-pub fn project_cacheable<F, R: Serialize + DeserializeOwned>(
+/// If `force` is false, this will look for the result in a project local cache file and use that if
+/// it exists, otherwise the passed function is called to create the object and then written to the
+/// cache before being returned.
+///
+/// If `write_output` is true the JSON is written to stdout instead of deserialized and the program
+/// will exit. This happens on all paths!
+pub fn project_cacheable_json<F, R: Serialize + DeserializeOwned>(
     ctx: &dyn Context,
     cache_file: &str,
     force: bool,
+    write_output: bool,
     f: F,
 ) -> anyhow::Result<R>
 where
     F: FnOnce() -> anyhow::Result<R>,
 {
-    let cache_bust = is_cachebust(ctx);
-    if cache_bust {
+    if is_cachebust(ctx) {
         return f();
     }
     let cache_path = ctx
         .get_project_cache_dir()?
         .join(cache_file)
-        .with_extension("postcard");
+        .with_extension("json");
 
     if !force && cache_path.exists() {
-        let mut f = dtu::utils::fs::open_file(&cache_path)?;
-        let mut data = match f.metadata() {
-            Ok(v) => {
-                let size = v.size();
-                Vec::with_capacity(size as usize)
+        let mut fh = dtu::utils::fs::open_file(&cache_path)?;
+
+        if write_output {
+            io::copy(&mut fh, &mut stdout())?;
+            process::exit(0);
+        }
+
+        match serde_json::from_reader(BufReader::new(fh)) {
+            Ok(v) => return Ok(v),
+            Err(_) => {
+                // If we can't read the cache remove the file and fall through to the "cache didn't
+                // exist" path
+                _ = std::fs::remove_file(&cache_path);
             }
-            Err(_) => Vec::with_capacity(1024),
         };
-        f.read_to_end(&mut data)
-            .with_context(|| format!("reading cache file: {cache_file}"))?;
-        return Ok(postcard::from_bytes(&data)?);
     }
 
     let it = f()?;
     if let Ok(f) = OpenOptions::new()
         .write(true)
-        .create(true)
-        .truncate(true)
+        .read(write_output)
+        .create_new(true)
         .open(&cache_path)
     {
-        _ = postcard::to_io(&it, BufWriter::new(f));
+        let mut w = BufWriter::new(fh);
+        let wrote = serde_json::to_writer(&mut w, &it).map_err(anyhow::Error::from);
+        if let Err(e) = wrote.and_then(|_| Ok(w.flush()?)) {
+            log::warn!("failed to write cache {cache_file}: {e}");
+            _ = std::fs::remove_file(&cache_path);
+        }
+
+        if write_output {
+            let mut f = w.into_inner()?;
+            f.seek(SeekFrom::Start(0))
+                .with_context(|| "seeking cache file to dump to stdout")?;
+            io::copy(&mut f, &mut stdout()).with_context(|| "dumping cache file to stdout")?;
+            process::exit(1);
+        }
     }
+
     Ok(it)
 }
 
@@ -138,23 +170,6 @@ pub fn opt_asref_hash_key<'a, T: AsRef<str>>(it: &'a Option<T>) -> &'a [u8] {
 pub fn asref_hash_key<'a, T: AsRef<str> + ?Sized>(it: &'a T) -> &'a [u8] {
     let s = it.as_ref();
     s.as_bytes()
-}
-
-pub fn tostringshash<T: ToString + ?Sized>(sha: &mut Sha256, s: &T) {
-    let string = s.to_string();
-    return shash(sha, string.as_str());
-}
-
-pub fn shash<T: AsRef<str> + ?Sized>(sha: &mut Sha256, s: &T) {
-    let as_str = s.as_ref();
-    let bytes = as_str.as_bytes();
-    sha.update(bytes);
-}
-
-pub fn oshash<T: AsRef<str>>(sha: &mut Sha256, opt: &Option<T>) {
-    if let Some(s) = opt {
-        shash(sha, s.as_ref());
-    }
 }
 
 /// Convenience function to get an [AppServer] implementation and give a user
