@@ -81,6 +81,10 @@ After you're setup you can start actually using `dtu` for analysis. How you do t
 - `DTU_CLIPBOARD_EXECUTABLE` - Used by the UI to put some prepopulated commands into your clipboard. If this doesn't exist that functionality will jsut silently fail, see below for more info
 - `DTU_ANDROID_API_LEVEL` - Set the API level, otherwise this is discovered dynamically with ADB
 
+### Taint analysis
+
+`dtu` has support for taint analysis: tracking parameters through method calls in the framework. This is a powerful tool for finding bugs and the CLI comes with some canned queries (see `dtu taint`) for IPC entrypoints that can get you started right away. Taint analysis is currently a work in progress, so it shouldn't be considered comprehensive and it may take a significant amount of time for very busy methods. You can also access the taint analysis functionality via the Python bindings.
+
 ### Diffing and `dtu diff ui`
 
 Note: when you open the diff TUI via `dtu diff ui`, type `?` to get some basic help.
