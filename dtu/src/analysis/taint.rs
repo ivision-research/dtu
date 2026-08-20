@@ -176,7 +176,7 @@ pub struct TaintAnalyzerOptions {
 
 impl Default for TaintAnalyzerOptions {
     fn default() -> Self {
-        let num_threads = rayon::max_num_threads().min(4);
+        let num_threads = rayon::max_num_threads().saturating_div(2).max(1);
         Self {
             num_threads,
             seed: None,
@@ -494,6 +494,17 @@ impl TaintSource {
     }
 }
 
+/// Count a finished method and say so periodically
+///
+/// Counting completions rather than dispatches: the work channel runs ahead of the workers.
+fn log_progress(done: &mut usize, total: usize) {
+    const EVERY: usize = 100;
+    *done += 1;
+    if *done % EVERY == 0 || *done == total {
+        log::info!("analyzed {done}/{total} methods");
+    }
+}
+
 /// What a run will actually analyze
 ///
 /// The methods asked for, plus whatever the call graph reached when seeding is on.
@@ -657,10 +668,15 @@ impl<'a> TaintAnalyzer<'a> {
     /// Run the analysis
     pub fn run(&mut self, methods: Vec<MethodSpec>) -> (TaintReport, Vec<MethodSpec>) {
         let plan = self.plan(methods);
-        log::info!("Running on {} methods", plan.methods.len());
+        let nthreads = self.opts.num_threads.max(1);
+        log::info!(
+            "Running on {} methods with {} threads",
+            plan.methods.len(),
+            nthreads
+        );
 
         let worker_pool = ThreadPoolBuilder::new()
-            .num_threads(self.opts.num_threads.max(1))
+            .num_threads(nthreads)
             .build()
             .expect("building worker pool");
 
@@ -673,6 +689,9 @@ impl<'a> TaintAnalyzer<'a> {
 
         // The analyzed methods are named by the report too, and only this thread
         // sees them. The workers collect the callees they resolve.
+        let total = plan.methods.len();
+        let mut done = 0usize;
+
         let mut collected = MethodCollector::new();
         for method in &plan.referenced {
             collected.add(method);
@@ -691,11 +710,13 @@ impl<'a> TaintAnalyzer<'a> {
                         select! {
                             recv(fail_rx) -> res => {
                                 if let Ok(failed) = res {
+                                    log_progress(&mut done, total);
                                     failures.push(failed);
                                 }
                             },
                             recv(result_rx) -> res => {
                                 if let Ok((method, path)) = res {
+                                    log_progress(&mut done, total);
                                     // A method nothing reached says nothing
                                     if !path.is_empty() {
                                         let origin = plan.origin_for(&method);
@@ -723,17 +744,18 @@ impl<'a> TaintAnalyzer<'a> {
                     select! {
                         recv(fail_rx) -> res => {
                             if let Ok(failed) = res {
+                                log_progress(&mut done, total);
                                 failures.push(failed);
                             }
                         },
                         recv(result_rx) -> res => {
                             if let Ok((method, path)) = res {
+                                log_progress(&mut done, total);
                                 // A method nothing reached says nothing
                                 if !path.is_empty() {
-                                    collected.add(&method);
                                     let origin = plan.origin_for(&method);
-                                        collected.add(&method);
-                                        analysis.push(path.into_taint(method.id, origin));
+                                    collected.add(&method);
+                                    analysis.push(path.into_taint(method.id, origin));
                                 }
                             } else {
                                 break;
@@ -1443,9 +1465,18 @@ impl<'a> TaintAnalyzerWorker<'a> {
         // bit
         const TERMINAL_NAMESPACES: &'static [&'static str] = &[
             "Ljava/",
+            "Ljavax/",
+            "Ldalvik/",
+            "Llibcore/",
+            "Lsun/",
+            "Lkotlin/",
+            "Lkotlinx/",
+            "Landroidx/",
             "Landroid/os/",
             "Landroid/content/res/",
             "Landroid/support/",
+            "Lcom/google/protobuf/",
+            "Lcom/google/common/",
         ];
 
         if TERMINAL_NAMESPACES
@@ -1582,17 +1613,37 @@ fn mutates_receiver(class: &str, name: &str) -> bool {
                 || name.starts_with("remove")
         }
 
+        // JSON built from tainted data, both fluent
+        "Lorg/json/JSONObject;" | "Lorg/json/JSONArray;" => name == "put",
+
+        // Fluent, and the receiver holding taint is what makes commit/apply the sink
+        "Landroid/content/SharedPreferences$Editor;" => name.starts_with("put"),
+
+        // Android's own containers
+        "Landroid/util/SparseArray;" | "Landroid/util/ArrayMap;" | "Landroid/util/ArraySet;" => {
+            matches!(name, "put" | "add" | "append" | "putAll" | "addAll")
+        }
+
+        "Landroid/os/Message;" => matches!(name, "setData" | "copyFrom"),
+
         // Collections hold whatever is put into them
+        "Ljava/util/Map;"
+        | "Ljava/util/HashMap;"
+        | "Ljava/util/LinkedHashMap;"
+        | "Ljava/util/TreeMap;"
+        | "Ljava/util/concurrent/ConcurrentHashMap;" => {
+            matches!(name, "put" | "putAll" | "putIfAbsent" | "merge")
+        }
+
         "Ljava/util/List;"
         | "Ljava/util/ArrayList;"
         | "Ljava/util/LinkedList;"
         | "Ljava/util/Collection;"
         | "Ljava/util/Set;"
-        | "Ljava/util/HashSet;" => {
+        | "Ljava/util/HashSet;"
+        | "Ljava/util/LinkedHashSet;"
+        | "Ljava/util/ArrayDeque;" => {
             matches!(name, "add" | "addAll" | "set" | "offer" | "push")
-        }
-        "Ljava/util/Map;" | "Ljava/util/HashMap;" | "Ljava/util/LinkedHashMap;" => {
-            matches!(name, "put" | "putAll" | "putIfAbsent" | "merge")
         }
 
         // ContentValues sink into a lot of interesting places, SQL in particular
