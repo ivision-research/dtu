@@ -190,6 +190,67 @@ impl GraphDB {
             .collect())
     }
 
+    /// Find every method that calls the given one and is reachable from `from`
+    ///
+    /// Unlike `find_callers` this is not depth bounded: reachability is decided before any route
+    /// is built, so no work is spent on routes that turn out not to exist.
+    #[pyo3(signature = (from_, *, class_ = None, name = None, signature = None, return_type = None, method_source = None))]
+    fn find_callers_from(
+        &self,
+        from_: Vec<i32>,
+        class_: Option<&str>,
+        name: Option<&str>,
+        signature: Option<&str>,
+        return_type: Option<&str>,
+        method_source: Option<&str>,
+    ) -> PyResult<Vec<PyMethodCallPath>> {
+        let cn = class_.map(ClassName::from);
+        let search =
+            MethodSearch::new_from_opts(cn.as_ref(), name, signature, method_source, return_type)
+                .map_err(|_| DtuError::new_err("at least one of `class_` or `name` required"))?;
+        let from = from_.into_iter().map(MethodId::new).collect::<Vec<_>>();
+
+        Ok(self
+            .0
+            .find_callers_from(&search, &from)
+            .map_err(GraphError)?
+            .into_iter()
+            .map(PyMethodCallPath::from)
+            .collect())
+    }
+
+    /// Find every method that references the given field and is reachable from `from`
+    ///
+    /// The field analogue of `find_callers_from`.
+    #[pyo3(signature = (from_, *, class_, name = None, ty = None, field_source = None, only_write = false))]
+    fn find_field_refs_from(
+        &self,
+        from_: Vec<i32>,
+        class_: &str,
+        name: Option<&str>,
+        ty: Option<&str>,
+        field_source: Option<&str>,
+        only_write: bool,
+    ) -> PyResult<Vec<PyMethodCallPath>> {
+        let cn = ClassName::from(class_);
+        let search = FieldSearch::new_from_opts(&cn, name, ty, field_source)
+            .map_err(|e| DtuError::new_err(format!("invalid field search: {e}")))?;
+        let action = if only_write {
+            FieldAccessOp::Write
+        } else {
+            FieldAccessOp::Read
+        };
+        let from = from_.into_iter().map(MethodId::new).collect::<Vec<_>>();
+
+        Ok(self
+            .0
+            .find_field_refs_from(&search, action, &from)
+            .map_err(GraphError)?
+            .into_iter()
+            .map(PyMethodCallPath::from)
+            .collect())
+    }
+
     /// Find all callers of the given class up to a certain depth.
     ///
     /// At least one of `class_` or `name` is required for this search. High depth values may
@@ -206,8 +267,9 @@ impl GraphDB {
         depth: usize,
     ) -> PyResult<Vec<PyMethodCallPath>> {
         let cn = class_.map(ClassName::from);
-        let search = MethodSearch::new_from_opts(cn.as_ref(), name, signature, method_source, return_type)
-            .map_err(|_| DtuError::new_err("at least one of `class_` or `name` required"))?;
+        let search =
+            MethodSearch::new_from_opts(cn.as_ref(), name, signature, method_source, return_type)
+                .map_err(|_| DtuError::new_err("at least one of `class_` or `name` required"))?;
 
         Ok(self
             .0

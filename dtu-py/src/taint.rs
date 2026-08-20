@@ -2,15 +2,25 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+use std::str::FromStr;
+
+use std::sync::Arc;
+use std::time::Duration;
+
 use dtu::analysis::taint::{
-    MethodTaint, TaintReport, TaintSink, TaintSinkKind, TaintSource, TaintSourceAndRoute,
+    MethodTaint, Origin, TaintAnalyzer, TaintAnalyzerOptions, TaintReport, TaintSeedOptions,
+    TaintSeeds, TaintSink, TaintSinkKind, TaintSource, TaintSourceAndRoute,
 };
-use dtu::utils::ClassName;
+use dtu::analysis::SsaClassLoader;
+use dtu::db::graph::models::MethodId;
+use dtu::tasks::TaskCanceller;
+use dtu::utils::{ClassName, Denylist};
 use pyo3::{prelude::*, types::PyTuple};
 
 use crate::{
+    context::PyContext,
     exception::{DtuBaseError, DtuError},
-    graph::PyMethodSpec,
+    graph::{GraphDB, PyMethodSpec},
     types::PyClassName,
     utils::{reduce, unpickle},
 };
@@ -58,8 +68,39 @@ impl From<TaintSource> for PyTaintSource {
     }
 }
 
+impl From<PyTaintSource> for TaintSource {
+    fn from(value: PyTaintSource) -> Self {
+        match value {
+            PyTaintSource::Param { register } => Self::Param { register },
+            PyTaintSource::MethodCall {
+                class_,
+                method,
+                args,
+                ret,
+            } => Self::MethodCall {
+                class: class_.map(Into::into),
+                method,
+                args,
+                ret,
+            },
+            PyTaintSource::Field { class_, name } => Self::Field {
+                class: class_.into(),
+                name,
+            },
+        }
+    }
+}
+
 #[pymethods]
 impl PyTaintSource {
+    /// Parse the text form a report prints, e.g. `p1` or `*->getIntent()Landroid/content/Intent;`
+    #[staticmethod]
+    fn parse(value: &str) -> PyResult<Self> {
+        TaintSource::from_str(value)
+            .map(Self::from)
+            .map_err(DtuError::mapper)
+    }
+
     fn __str__(&self) -> String {
         match self {
             Self::Param { register } => format!("p{register}"),
@@ -253,6 +294,44 @@ impl PyTaintSourceAndRoute {
     }
 }
 
+#[pyclass(module = "dtu", name = "Origin")]
+#[derive(Clone)]
+pub enum PyOrigin {
+    Direct(),
+    /// Each chain runs from the method that was asked for to this one, naming methods by id
+    CallGraph {
+        chains: Vec<Vec<i32>>,
+    },
+}
+
+impl From<Origin> for PyOrigin {
+    fn from(value: Origin) -> Self {
+        match value {
+            Origin::Direct => Self::Direct(),
+            Origin::CallGraph { chains } => Self::CallGraph {
+                chains: chains
+                    .into_iter()
+                    .map(|it| it.into_iter().map(|id| id.raw()).collect())
+                    .collect(),
+            },
+        }
+    }
+}
+
+#[pymethods]
+impl PyOrigin {
+    fn __str__(&self) -> String {
+        match self {
+            Self::Direct() => String::from("direct"),
+            Self::CallGraph { chains } => format!("call graph, {} chain(s)", chains.len()),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Origin({})", self.__str__())
+    }
+}
+
 #[pyclass(module = "dtu", frozen, name = "MethodTaint")]
 #[derive(Clone)]
 pub struct PyMethodTaint(MethodTaint);
@@ -284,6 +363,12 @@ impl PyMethodTaint {
     #[getter]
     fn method(&self) -> i32 {
         self.0.method.raw()
+    }
+
+    /// Why the method was analyzed
+    #[getter]
+    fn origin(&self) -> PyOrigin {
+        PyOrigin::from(self.0.origin.clone())
     }
 
     #[getter]
@@ -377,4 +462,198 @@ impl PyTaintReport {
             self.by_id.len()
         )
     }
+}
+
+/// Where the call graph may look for seeds beyond the methods asked for
+#[pyclass(module = "dtu", name = "TaintSeedOptions")]
+#[derive(Clone, Default)]
+pub struct PyTaintSeedOptions {
+    /// Restrict target lookups to these graph sources, empty for any
+    #[pyo3(get, set)]
+    pub sources: Vec<String>,
+    /// Never seed methods in these classes, even when the graph reaches them
+    #[pyo3(get, set)]
+    pub deny_classes: Vec<PyClassName>,
+}
+
+#[pymethods]
+impl PyTaintSeedOptions {
+    #[new]
+    #[pyo3(signature = (sources = Vec::new(), deny_classes = Vec::new()))]
+    fn new(sources: Vec<String>, deny_classes: Vec<PyClassName>) -> Self {
+        Self {
+            sources,
+            deny_classes,
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "TaintSeedOptions(sources={:?}, deny_classes={})",
+            self.sources,
+            self.deny_classes.len()
+        )
+    }
+}
+
+impl From<PyTaintSeedOptions> for TaintSeedOptions {
+    fn from(value: PyTaintSeedOptions) -> Self {
+        let deny_classes = if value.deny_classes.is_empty() {
+            None
+        } else {
+            let mut deny = Denylist::new();
+            deny.extend(value.deny_classes.into_iter().map(ClassName::from));
+            Some(deny)
+        };
+        Self {
+            sources: value.sources,
+            deny_classes,
+        }
+    }
+}
+
+/// How to run the analysis
+#[pyclass(module = "dtu", name = "TaintOptions")]
+#[derive(Clone, Default)]
+pub struct PyTaintOptions {
+    #[pyo3(get, set)]
+    pub num_threads: Option<usize>,
+    /// Maximum call depth, capped by the analyzer itself
+    #[pyo3(get, set)]
+    pub depth: Option<usize>,
+    /// None to only analyze the methods that were asked for
+    #[pyo3(get, set)]
+    pub seed: Option<PyTaintSeedOptions>,
+}
+
+#[pymethods]
+impl PyTaintOptions {
+    #[new]
+    #[pyo3(signature = (num_threads = None, depth = None, seed = None))]
+    fn new(
+        num_threads: Option<usize>,
+        depth: Option<usize>,
+        seed: Option<PyTaintSeedOptions>,
+    ) -> Self {
+        Self {
+            num_threads,
+            depth,
+            seed,
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "TaintOptions(num_threads={:?}, depth={:?}, seed={})",
+            self.num_threads,
+            self.depth,
+            self.seed.is_some()
+        )
+    }
+}
+
+impl From<PyTaintOptions> for TaintAnalyzerOptions {
+    fn from(value: PyTaintOptions) -> Self {
+        let mut opts = TaintAnalyzerOptions::default();
+        if let Some(threads) = value.num_threads {
+            opts.num_threads = threads;
+        }
+        if let Some(depth) = value.depth {
+            opts.set_depth(depth);
+        }
+        opts.seed = value.seed.map(Into::into);
+        opts
+    }
+}
+
+/// The same list for every method, or one list per method id
+#[derive(FromPyObject)]
+pub enum PySeeds {
+    PerMethod(HashMap<i32, Vec<PyTaintSource>>),
+    Shared(Vec<PyTaintSource>),
+}
+
+fn to_sources(sources: Vec<PyTaintSource>) -> Vec<TaintSource> {
+    sources.into_iter().map(TaintSource::from).collect()
+}
+
+/// Run the taint analysis over `methods`
+///
+/// `seeds` is either one list applied to every method, or a dict keyed by method id. A
+/// [TaintSource::Param] only means something against the signature it was written for, so a
+/// register seed belongs in the dict form.
+#[pyfunction]
+#[pyo3(signature = (gdb, methods, seeds, *, ctx = None, options = None))]
+pub fn run_taint_analysis(
+    py: Python<'_>,
+    gdb: &GraphDB,
+    methods: Vec<PyMethodSpec>,
+    seeds: PySeeds,
+    ctx: Option<&PyContext>,
+    options: Option<PyTaintOptions>,
+) -> PyResult<PyTaintReport> {
+    let owned_ctx;
+    let ctx: &dyn dtu::Context = match ctx {
+        Some(v) => v,
+        None => {
+            owned_ctx = PyContext::default();
+            &owned_ctx
+        }
+    };
+
+    let loader = Arc::new(
+        SsaClassLoader::new(ctx)
+            .ok_or_else(|| DtuError::new_err("failed to open the SSA class cache"))?,
+    );
+
+    let shared;
+    let per_method;
+    let seeds: &dyn TaintSeeds = match seeds {
+        PySeeds::Shared(v) => {
+            shared = to_sources(v);
+            &shared
+        }
+        PySeeds::PerMethod(v) => {
+            per_method = v
+                .into_iter()
+                .map(|(id, sources)| (MethodId::new(id), to_sources(sources)))
+                .collect::<HashMap<_, _>>();
+            &per_method
+        }
+    };
+
+    let methods = methods
+        .into_iter()
+        .map(|it| it.as_ref().clone())
+        .collect::<Vec<_>>();
+
+    let (mut canceller, cancel) = TaskCanceller::new();
+    let opts = TaintAnalyzerOptions::from(options.unwrap_or_default());
+    let mut analyzer = TaintAnalyzer::new(ctx, &**gdb, cancel, opts, seeds, loader);
+
+    // The analysis polls its cancel check from its own threads, but only the main thread ever
+    // sees a signal, so it runs beside us and we do the watching.
+    let mut interrupted: Option<PyErr> = None;
+    let joined = std::thread::scope(|scope| {
+        let handle = scope.spawn(|| analyzer.run(methods));
+        while !handle.is_finished() {
+            py.detach(|| std::thread::sleep(Duration::from_millis(100)));
+            if let Err(e) = py.check_signals() {
+                // Keep waiting: the run stops between methods, it does not stop here
+                interrupted.get_or_insert(e);
+                canceller.cancel();
+            }
+        }
+        handle.join()
+    });
+
+    if let Some(e) = interrupted {
+        return Err(e);
+    }
+
+    let (report, failed) = joined.map_err(|_| DtuError::new_err("the analysis thread panicked"))?;
+    if !failed.is_empty() {
+        eprintln!("{} methods failed to analyze", failed.len());
+    }
+    Ok(PyTaintReport::from(report))
 }

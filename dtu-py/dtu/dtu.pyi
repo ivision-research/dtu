@@ -319,9 +319,32 @@ class GraphDB:
         class_: Optional[str] = ...,
         name: Optional[str] = ...,
         signature: Optional[str] = ...,
+        return_type: Optional[str] = ...,
         method_source: Optional[str] = ...,
         call_source: Optional[str] = ...,
         depth: int = ...,
+    ) -> list[MethodCallPath]: ...
+
+    def find_callers_from(
+        self,
+        from_: Sequence[int],
+        *,
+        class_: Optional[str] = ...,
+        name: Optional[str] = ...,
+        signature: Optional[str] = ...,
+        return_type: Optional[str] = ...,
+        method_source: Optional[str] = ...,
+    ) -> list[MethodCallPath]: ...
+
+    def find_field_refs_from(
+        self,
+        from_: Sequence[int],
+        *,
+        class_: str,
+        name: Optional[str] = ...,
+        ty: Optional[str] = ...,
+        field_source: Optional[str] = ...,
+        only_write: bool = ...,
     ) -> list[MethodCallPath]: ...
 
     def find_outgoing_calls(
@@ -383,6 +406,8 @@ class FieldRef:
 
 class MethodSpec:
     @property
+    def id(self) -> int: ...
+    @property
     def class_(self) -> ClassName: ...
     @property
     def ret(self) -> str: ...
@@ -409,10 +434,17 @@ class TaintSource:
     def Param(*, register: int) -> TaintSource: ...
     @staticmethod
     def MethodCall(
-        *, class_: Optional[ClassName], method: str, args: str
+        *,
+        class_: Optional[ClassName],
+        method: str,
+        args: str,
+        ret: Optional[str],
     ) -> TaintSource: ...
     @staticmethod
     def Field(*, class_: ClassName, name: str) -> TaintSource: ...
+
+    @staticmethod
+    def parse(value: str) -> TaintSource: ...
 
     def __str__(self) -> str: ...
     def __repr__(self) -> str: ...
@@ -456,9 +488,21 @@ class SourceTaint:
     def __repr__(self) -> str: ...
 
 
+class Origin:
+    @staticmethod
+    def Direct() -> Origin: ...
+    @staticmethod
+    def CallGraph(*, chains: Sequence[Sequence[int]]) -> Origin: ...
+
+    def __str__(self) -> str: ...
+    def __repr__(self) -> str: ...
+
+
 class MethodTaint:
     @property
     def method(self) -> int: ...
+    @property
+    def origin(self) -> Origin: ...
     @property
     def taint(self) -> list[SourceTaint]: ...
 
@@ -479,6 +523,44 @@ class TaintReport:
     def method(self, id: int) -> Optional[MethodSpec]: ...
 
     def __repr__(self) -> str: ...
+
+
+class TaintSeedOptions:
+    def __new__(
+        cls,
+        sources: Sequence[str] = ...,
+        deny_classes: Sequence[ClassName] = ...,
+    ) -> TaintSeedOptions: ...
+
+    sources: list[str]
+    deny_classes: list[ClassName]
+
+    def __repr__(self) -> str: ...
+
+
+class TaintOptions:
+    def __new__(
+        cls,
+        num_threads: Optional[int] = ...,
+        depth: Optional[int] = ...,
+        seed: Optional[TaintSeedOptions] = ...,
+    ) -> TaintOptions: ...
+
+    num_threads: Optional[int]
+    depth: Optional[int]
+    seed: Optional[TaintSeedOptions]
+
+    def __repr__(self) -> str: ...
+
+
+def run_taint(
+    gdb: GraphDB,
+    methods: Sequence[MethodSpec],
+    seeds: Sequence[TaintSource] | Mapping[int, Sequence[TaintSource]],
+    *,
+    ctx: Optional[Context] = ...,
+    options: Optional[TaintOptions] = ...,
+) -> TaintReport: ...
 
 
 class DeviceDB:

@@ -43,9 +43,12 @@ mod pydtu {
 
     #[pymodule_export]
     use super::taint::{
-        PyMethodTaint, PyTaintReport, PyTaintSink, PyTaintSinkKind, PyTaintSource,
-        PyTaintSourceAndRoute,
+        PyMethodTaint, PyOrigin, PyTaintOptions, PyTaintReport, PyTaintSeedOptions, PyTaintSink,
+        PyTaintSinkKind, PyTaintSource, PyTaintSourceAndRoute,
     };
+
+    #[pymodule_export]
+    use super::taint::run_taint_analysis;
 
     #[pymodule_export]
     use super::parcel_string::ParcelValue;
