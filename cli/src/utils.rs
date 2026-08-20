@@ -87,12 +87,16 @@ where
         let mut fh = dtu::utils::fs::open_file(&cache_path)?;
 
         if write_output {
+            log::info!("Writing cached result");
             io::copy(&mut fh, &mut stdout())?;
             process::exit(0);
         }
 
         match serde_json::from_reader(BufReader::new(fh)) {
-            Ok(v) => return Ok(v),
+            Ok(v) => {
+                log::info!("Using cached result");
+                return Ok(v);
+            }
             Err(_) => {
                 // If we can't read the cache remove the file and fall through to the "cache didn't
                 // exist" path
