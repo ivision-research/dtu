@@ -75,6 +75,20 @@ impl FlagMap {
     }
 }
 
+/// Whether `flag` is followed by a value, given the subcommands seen so far
+///
+/// An undeclared flag is assumed to take one, which is the safer guess for a flag whose value
+/// would otherwise be mistaken for a subcommand.
+fn takes_value(flag: &str, subcommands: &[String]) -> bool {
+    generated::get_completions(subcommands.iter().cloned())
+        .iter()
+        .find_map(|it| match it {
+            Completable::Flag(f) if f.matches(flag) => Some(!matches!(f.kind, CompleteKind::None)),
+            _ => None,
+        })
+        .unwrap_or(true)
+}
+
 impl CompleteKind {
     /// Given the argument list, excluding the value to be completed, find the [CompleteKind]
     /// that needs to be completed.
@@ -114,6 +128,9 @@ impl CompleteKind {
             }
 
             if arg.starts_with('-') {
+                if !takes_value(&arg, &subcommands) {
+                    continue;
+                }
                 let Some(v) = it.next() else {
                     break;
                 };

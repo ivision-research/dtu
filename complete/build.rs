@@ -190,8 +190,8 @@ pub static BASE_COMPLETIONS: &'static [Completable] = &[
     {base_subcommands},
     Completable::flag("--log-stderr", "-e", "Log to stderr instead of a file", CompleteKind::None),
     Completable::flag("--log-file", "-f", "Send log to the given file", CompleteKind::File),
-    Completable::flag("--log-spec", "-s", "flexi_logger log spec", CompleteKind::None),
-    Completable::flag("--log-level", "-l", "Set the log level, 0 = warn, 1 = info, etc", CompleteKind::None),
+    Completable::flag("--log-spec", "-s", "flexi_logger log spec", CompleteKind::Uncompletable),
+    Completable::flag("--log-level", "-l", "Set the log level, 0 = warn, 1 = info, etc", CompleteKind::Uncompletable),
     Completable::flag("--help", "-h", "Show this help and exit", CompleteKind::None),
 ];
 
