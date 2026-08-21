@@ -191,14 +191,14 @@ impl CompleteContext {
     ) -> anyhow::Result<()>
     where
         R: Into<CompleteResult> + Send,
-        OnEmpty: FnOnce(&mut SqlConnection) -> QueryResult<Vec<R>> + Send,
-        OnPartial: FnOnce(&mut SqlConnection, &str) -> QueryResult<Vec<R>> + Send,
+        OnEmpty: FnOnce(&mut SqlConnection) -> QueryResult<Vec<R>>,
+        OnPartial: FnOnce(&mut SqlConnection, &str) -> QueryResult<Vec<R>>,
     {
         let db = GraphSqliteDatabase::new(&self.ctx)?;
         let results = if self.incomplete.is_empty() {
-            db.with_connection(on_empty)
+            db.query(|c| Ok(on_empty(c)?))
         } else {
-            db.with_connection(|c| on_partial(c, &self.incomplete))
+            db.query(|c| Ok(on_partial(c, &self.incomplete)?))
         }?;
 
         self.show_results(results.into_iter().map(<R as Into<CompleteResult>>::into))
@@ -207,10 +207,10 @@ impl CompleteContext {
     fn conn_simple<Get, R>(&self, get: Get) -> anyhow::Result<()>
     where
         R: Into<CompleteResult> + Send,
-        Get: FnOnce(&mut SqlConnection) -> QueryResult<Vec<R>> + Send,
+        Get: FnOnce(&mut SqlConnection) -> QueryResult<Vec<R>>,
     {
         let db = DeviceDatabase::new(&self.ctx)?;
-        let results = db.with_connection(get)?;
+        let results = db.query(|c| Ok(get(c)?))?;
         self.show_results(results.into_iter().map(<R as Into<CompleteResult>>::into))
     }
 
@@ -221,14 +221,14 @@ impl CompleteContext {
     ) -> anyhow::Result<()>
     where
         R: Into<CompleteResult> + Send,
-        OnEmpty: FnOnce(&mut SqlConnection) -> QueryResult<Vec<R>> + Send,
-        OnPartial: FnOnce(&mut SqlConnection, &str) -> QueryResult<Vec<R>> + Send,
+        OnEmpty: FnOnce(&mut SqlConnection) -> QueryResult<Vec<R>>,
+        OnPartial: FnOnce(&mut SqlConnection, &str) -> QueryResult<Vec<R>>,
     {
         let db = DeviceDatabase::new(&self.ctx)?;
         let results = if self.incomplete.is_empty() {
-            db.with_connection(on_empty)
+            db.query(|c| Ok(on_empty(c)?))
         } else {
-            db.with_connection(|c| on_partial(c, &self.incomplete))
+            db.query(|c| Ok(on_partial(c, &self.incomplete)?))
         }?;
 
         self.show_results(results.into_iter().map(<R as Into<CompleteResult>>::into))
@@ -360,7 +360,7 @@ impl CompleteContext {
 
     fn complete_provider_authority(self) -> anyhow::Result<()> {
         let db = DeviceDatabase::new(&self.ctx)?;
-        let auths = db.with_connection(|c| -> QueryResult<Vec<CompleteResult>> {
+        let auths = db.query(|c| -> db::Result<Vec<CompleteResult>> {
             Ok(providers::table
                 .select(providers::authorities)
                 .get_results::<String>(c)?

@@ -43,12 +43,12 @@ impl FindClass {
         }
     }
     fn do_exact(self, gdb: DefaultGraphDatabase, search: String) -> anyhow::Result<()> {
-        let result = gdb.with_connection(|c| {
-            classes::table
+        let result = gdb.query(|c| {
+            Ok(classes::table
                 .inner_join(sources::table)
                 .select(sources::name)
                 .filter(classes::name.eq(&search))
-                .get_results::<String>(c)
+                .get_results::<String>(c)?)
         })?;
         for source in result {
             println!("{}", source);
@@ -57,12 +57,12 @@ impl FindClass {
     }
 
     fn do_like(self, gdb: DefaultGraphDatabase, search: String) -> anyhow::Result<()> {
-        let result = gdb.with_connection(|c| {
-            classes::table
+        let result = gdb.query(|c| {
+            Ok(classes::table
                 .inner_join(sources::table)
                 .select((classes::name, sources::name))
                 .filter(classes::name.like(&search))
-                .get_results::<(String, String)>(c)
+                .get_results::<(String, String)>(c)?)
         })?;
         for (class, source) in result {
             println!("{} in {}", class, source);

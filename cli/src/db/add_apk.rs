@@ -89,7 +89,9 @@ impl AddApk {
             }
 
             // This should delete everything due to foreign keys and cascades
-            db.with_connection(|c| delete(apks::table.filter(apks::id.eq(id))).execute(c))?;
+            db.write(|c| -> db::Result<usize> {
+                Ok(delete(apks::table.filter(apks::id.eq(id))).execute(c)?)
+            })?;
         }
 
         let (cancel, check) = TaskCanceller::new();
@@ -97,7 +99,7 @@ impl AddApk {
         let (mon, chan) = ChannelEventMonitor::create();
 
         let thread_handle = start_monitor_thread(self.quiet, chan);
-        let res = db.with_transaction(|c| {
+        let res = db.write(|c| {
             let task = AddApkTask::new(
                 &ctx,
                 c,

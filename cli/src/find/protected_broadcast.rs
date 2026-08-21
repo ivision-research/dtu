@@ -20,11 +20,11 @@ impl ProtectedBroadcast {
         let like = format!("%{}%", self.containing);
 
         let db = DeviceDatabase::new(ctx)?;
-        let perms = db.with_connection(|c| {
-            protected_broadcasts::table
+        let perms = db.query(|c| {
+            Ok(protected_broadcasts::table
                 .filter(protected_broadcasts::name.like(like))
                 .select(protected_broadcasts::name)
-                .get_results::<String>(c)
+                .get_results::<String>(c)?)
         })?;
         for p in perms {
             println!("{}", p);

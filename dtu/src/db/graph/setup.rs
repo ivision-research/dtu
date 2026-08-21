@@ -16,6 +16,7 @@ use super::FRAMEWORK_SOURCE;
 use super::{setup::SetupResult, AddDirectoryOptions, SetupEvent};
 use crate::db::graph::models::{InsertDiscoveredString, SourceId};
 use crate::db::graph::schema::strings;
+use crate::db::macros::query;
 use crate::smalisa_wrapper::CSV;
 use crate::utils::DevicePath;
 use crate::{
@@ -33,19 +34,96 @@ impl CSV {
     }
 }
 
+/// Applied to the load connection before its transaction opens, and undone after
+///
+/// `foreign_keys=OFF` is worth about 20% on the staged calls load, which resolves three
+/// foreign keys for every one of millions of rows. Neither pragma can be set inside a
+/// transaction, which is why the load uses [GraphSqliteDatabase::write_with_pragmas].
+/// `synchronous` is already NORMAL on every pooled connection.
+const CSV_LOAD_PRAGMAS: &str = "\
+PRAGMA foreign_keys = OFF;
+PRAGMA temp_store = MEMORY;";
+
+/// Staging tables holding a CSV's rows by name until they are resolved to ids
+///
+/// These are temporary, so they belong to one connection and are only visible for as long
+/// as the load holds it.
+const CREATE_STAGING_TABLES: &str = r#"
+CREATE TEMPORARY TABLE IF NOT EXISTS named_method_field_access(
+    field_class TEXT NOT NULL,
+    field_name TEXT NOT NULL,
+    field_ty TEXT NOT NULL,
+    method_class TEXT NOT NULL,
+    method_name TEXT NOT NULL,
+    method_args TEXT NOT NULL,
+    action INTEGER NOT NULL
+);
+
+CREATE TEMPORARY TABLE IF NOT EXISTS named_class_fields(
+    class TEXT NOT NULL,
+    name TEXT NOT NULL,
+    ty TEXT NOT NULL,
+    access_flags BIGINT NOT NULL
+);
+
+CREATE TEMPORARY TABLE IF NOT EXISTS named_method_strings(
+    string TEXT NOT NULL,
+    method TEXT NOT NULL,
+    method_args TEXT NOT NULL,
+    class TEXT NOT NULL
+);
+
+CREATE TEMPORARY TABLE IF NOT EXISTS named_methods(
+    class TEXT NOT NULL,
+    name TEXT NOT NULL,
+    args TEXT NOT NULL,
+    ret TEXT NOT NULL,
+    access_flags BIGINT NOT NULL
+);
+
+CREATE TEMPORARY TABLE IF NOT EXISTS named_calls(
+    caller_class TEXT NOT NULL,
+    caller_method TEXT NOT NULL,
+    caller_args TEXT NOT NULL,
+
+    callee_class TEXT NOT NULL,
+    callee_method TEXT NOT NULL,
+    callee_args TEXT NOT NULL
+);
+
+CREATE TEMPORARY TABLE IF NOT EXISTS named_supers(
+    parent TEXT NOT NULL,
+    child TEXT NOT NULL
+);
+
+CREATE TEMPORARY TABLE IF NOT EXISTS named_interfaces(
+    interface TEXT NOT NULL,
+    class TEXT NOT NULL
+);
+"#;
+
+const DROP_STAGING_TABLES: &str = r#"
+DROP TABLE IF EXISTS named_method_field_access;
+DROP TABLE IF EXISTS named_class_fields;
+DROP TABLE IF EXISTS named_method_strings;
+DROP TABLE IF EXISTS named_methods;
+DROP TABLE IF EXISTS named_calls;
+DROP TABLE IF EXISTS named_supers;
+DROP TABLE IF EXISTS named_interfaces;
+"#;
+
 struct SetupContext<'a> {
     source: SourceId,
     data: &'a mut CsvReader,
-    db: &'a GraphSqliteDatabase,
 }
 
 impl<'a> SetupContext<'a> {
-    fn new(db: &'a GraphSqliteDatabase, source: SourceId, data: &'a mut CsvReader) -> Self {
-        Self { source, data, db }
+    fn new(source: SourceId, data: &'a mut CsvReader) -> Self {
+        Self { source, data }
     }
 
-    fn stage_methods(self) -> Result<()> {
-        self.do_load(|c, record| -> Result<()> {
+    fn stage_methods(self, conn: &mut SqliteConnection) -> Result<()> {
+        self.do_load(conn, |c, record| -> Result<()> {
             let rp = RecordParser::new(record, CSV::Methods);
             let class = rp.get(0)?;
             let name = rp.get(1)?;
@@ -65,8 +143,8 @@ impl<'a> SetupContext<'a> {
         })
     }
 
-    fn stage_method_field_access(self) -> Result<()> {
-        self.do_load(|c, record| {
+    fn stage_method_field_access(self, conn: &mut SqliteConnection) -> Result<()> {
+        self.do_load(conn, |c, record| {
             let rp = RecordParser::new(record, CSV::MethodFieldAccess);
             let field_class = rp.get(0)?;
             let field_name = rp.get(1)?;
@@ -92,8 +170,8 @@ impl<'a> SetupContext<'a> {
         Ok(())
     }
 
-    fn stage_class_fields(self) -> Result<()> {
-        self.do_load(|c, record| {
+    fn stage_class_fields(self, conn: &mut SqliteConnection) -> Result<()> {
+        self.do_load(conn, |c, record| {
             let rp = RecordParser::new(record, CSV::ClassFields);
             let  class = rp.get(0)?;
             let name = rp.get(1)?;
@@ -112,8 +190,8 @@ impl<'a> SetupContext<'a> {
         Ok(())
     }
 
-    fn stage_method_strings(self) -> Result<()> {
-        self.do_load(|c, record| {
+    fn stage_method_strings(self, conn: &mut SqliteConnection) -> Result<()> {
+        self.do_load(conn, |c, record| {
             let rp = RecordParser::new(record, CSV::MethodStrings);
             let string = rp.get(0)?;
             let method = rp.get(1)?;
@@ -132,18 +210,18 @@ impl<'a> SetupContext<'a> {
         Ok(())
     }
 
-    fn load_classes(self) -> Result<()> {
+    fn load_classes(self, conn: &mut SqliteConnection) -> Result<()> {
         let src = self.source;
-        self.do_load(|c, record| -> Result<()> {
+        self.do_load(conn, |c, record| -> Result<()> {
             let ins = InsertClass::from_record(record, src)?;
             query!(insert_into(classes::table).values(&ins)).execute(c)?;
             Ok(())
         })
     }
 
-    fn load_strings(self) -> Result<()> {
+    fn load_strings(self, conn: &mut SqliteConnection) -> Result<()> {
         let src = self.source;
-        self.do_load(|c, record| -> Result<()> {
+        self.do_load(conn, |c, record| -> Result<()> {
             let ins = InsertDiscoveredString::from_record(record, src)?;
             // We deduplicate over in gen_csvs but I dunno go ahead and do this so no funny
             // business?
@@ -152,8 +230,8 @@ impl<'a> SetupContext<'a> {
         })
     }
 
-    fn stage_calls(self) -> Result<()> {
-        self.do_load(|c, record| -> Result<()> {
+    fn stage_calls(self, conn: &mut SqliteConnection) -> Result<()> {
+        self.do_load(conn, |c, record| -> Result<()> {
             let rp = RecordParser::new(record, CSV::Calls);
             let caller_class = rp.get(0)?;
             let caller_method = rp.get(1)?;
@@ -177,8 +255,8 @@ impl<'a> SetupContext<'a> {
         Ok(())
     }
 
-    fn stage_supers(self) -> Result<()> {
-        self.do_load(|c, record| -> Result<()> {
+    fn stage_supers(self, conn: &mut SqliteConnection) -> Result<()> {
+        self.do_load(conn, |c, record| -> Result<()> {
             let rp = RecordParser::new(record, CSV::Supers);
             let child = rp.get(0)?;
             let parent = rp.get(1)?;
@@ -191,8 +269,8 @@ impl<'a> SetupContext<'a> {
         })
     }
 
-    fn stage_impls(self) -> Result<()> {
-        self.do_load(|c, record| -> Result<()> {
+    fn stage_impls(self, conn: &mut SqliteConnection) -> Result<()> {
+        self.do_load(conn, |c, record| -> Result<()> {
             let rp = RecordParser::new(record, CSV::Interfaces);
             let class = rp.get(0)?;
             let iface = rp.get(1)?;
@@ -202,51 +280,42 @@ impl<'a> SetupContext<'a> {
         })
     }
 
-    fn do_load<F>(self, f: F) -> Result<()>
+    fn do_load<F>(self, conn: &mut SqliteConnection, f: F) -> Result<()>
     where
-        F: Fn(&mut SqliteConnection, &StringRecord) -> Result<()> + Send,
+        F: Fn(&mut SqliteConnection, &StringRecord) -> Result<()>,
     {
-        Ok(self.db.transaction(move |c| -> Result<()> {
-            let mut record = StringRecord::new();
+        let mut record = StringRecord::new();
 
-            loop {
-                match self.data.read_record(&mut record) {
-                    Err(_) if self.data.is_done() => break,
-                    Err(e) => return Err(Error::Generic(e.to_string())),
-                    _ => {}
-                }
-
-                if record.is_empty() {
-                    if self.data.is_done() {
-                        break;
-                    } else {
-                        continue;
-                    }
-                }
-
-                f(c, &record)?;
-
-                record.clear();
+        loop {
+            match self.data.read_record(&mut record) {
+                Err(_) if self.data.is_done() => break,
+                Err(e) => return Err(Error::Generic(e.to_string())),
+                _ => {}
             }
 
-            Ok(())
-        })?)
+            if record.is_empty() {
+                if self.data.is_done() {
+                    break;
+                } else {
+                    continue;
+                }
+            }
+
+            f(conn, &record)?;
+
+            record.clear();
+        }
+
+        Ok(())
     }
 }
 
 impl GraphSqliteDatabase {
     fn finalize(&self, _ctx: &dyn Context) -> Result<()> {
-        Ok(self.with_connection(|c| -> Result<()> {
-            self.add_indices(c)?;
-            Ok(())
-        })?)
+        self.write(|c| Self::add_indices(c))
     }
 
-    fn load_staged_method_field_access_with_conn(
-        &self,
-        conn: &mut SqliteConnection,
-        src: SourceId,
-    ) -> Result<()> {
+    fn load_staged_method_field_access(conn: &mut SqliteConnection, src: SourceId) -> Result<()> {
         // A few separate parts to this query
         //
         // Use the staged raw string based values and do essentially two separate joins:
@@ -281,11 +350,7 @@ JOIN methods AS m
         Ok(())
     }
 
-    fn load_staged_class_fields_with_conn(
-        &self,
-        conn: &mut SqliteConnection,
-        src: SourceId,
-    ) -> Result<()> {
+    fn load_staged_class_fields(conn: &mut SqliteConnection, src: SourceId) -> Result<()> {
         // We can only discover class fields inside the source, so c.source should always give us
         // something unless some funny business has happened.
         query!(sql_query(
@@ -301,11 +366,7 @@ JOIN classes AS c
         Ok(())
     }
 
-    fn load_staged_supers_with_conn(
-        &self,
-        conn: &mut SqliteConnection,
-        src: SourceId,
-    ) -> Result<()> {
+    fn load_staged_supers(conn: &mut SqliteConnection, src: SourceId) -> Result<()> {
         // The `child` will already exist in the database, but the `parent` might not. If the parent
         // doesn't exist, add it to the framework, not the current source.
         query!(sql_query(
@@ -337,11 +398,7 @@ JOIN classes AS parent
         Ok(())
     }
 
-    fn load_staged_impls_with_conn(
-        &self,
-        conn: &mut SqliteConnection,
-        src: SourceId,
-    ) -> Result<()> {
+    fn load_staged_impls(conn: &mut SqliteConnection, src: SourceId) -> Result<()> {
         let flags = AccessFlag::PUBLIC | AccessFlag::INTERFACE;
 
         let raw_flags: i64 = flags.bits() as i64;
@@ -378,11 +435,7 @@ JOIN classes AS interface
         Ok(())
     }
 
-    fn load_staged_methods_with_conn(
-        &self,
-        conn: &mut SqliteConnection,
-        src: SourceId,
-    ) -> Result<()> {
+    fn load_staged_methods(conn: &mut SqliteConnection, src: SourceId) -> Result<()> {
         query!(sql_query(
             r#"INSERT INTO methods(class, name, args, ret, access_flags, source)
     SELECT DISTINCT c.id, nm.name, nm.args, nm.ret, nm.access_flags, ?1
@@ -395,11 +448,7 @@ JOIN classes AS interface
         Ok(())
     }
 
-    fn load_staged_method_strings_with_conn(
-        &self,
-        conn: &mut SqliteConnection,
-        src: SourceId,
-    ) -> Result<()> {
+    fn load_staged_method_strings(conn: &mut SqliteConnection, src: SourceId) -> Result<()> {
         // Since we allow duplicates of strings between sources, we can be sure the string is
         // available in this source: it can't possibly not be in the DB if a method in a given
         // source references it.
@@ -419,11 +468,7 @@ JOIN classes AS interface
         Ok(())
     }
 
-    fn load_staged_calls_with_conn(
-        &self,
-        conn: &mut SqliteConnection,
-        src: SourceId,
-    ) -> Result<()> {
+    fn load_staged_calls(conn: &mut SqliteConnection, src: SourceId) -> Result<()> {
         // The callee class might not exist. When that happens, we should add the class to the
         // database as part of the FRAMEWORK not as part of our current source. If it was part of
         // the current source we should have already added it when we added classes for this source,
@@ -510,35 +555,7 @@ WHERE dst.id != src.id"#
         Ok(())
     }
 
-    fn load_staged_impls(&self, src: SourceId) -> Result<()> {
-        Ok(self.transaction(|c| self.load_staged_impls_with_conn(c, src))?)
-    }
-
-    fn load_staged_method_strings(&self, src: SourceId) -> Result<()> {
-        Ok(self.transaction(|c| self.load_staged_method_strings_with_conn(c, src))?)
-    }
-
-    fn load_staged_method_field_access(&self, src: SourceId) -> Result<()> {
-        Ok(self.transaction(|c| self.load_staged_method_field_access_with_conn(c, src))?)
-    }
-
-    fn load_staged_class_fields(&self, src: SourceId) -> Result<()> {
-        Ok(self.transaction(|c| self.load_staged_class_fields_with_conn(c, src))?)
-    }
-
-    fn load_staged_supers(&self, src: SourceId) -> Result<()> {
-        Ok(self.transaction(|c| self.load_staged_supers_with_conn(c, src))?)
-    }
-
-    fn load_staged_methods(&self, src: SourceId) -> Result<()> {
-        Ok(self.transaction(|c| self.load_staged_methods_with_conn(c, src))?)
-    }
-
-    fn load_staged_calls(&self, src: SourceId) -> Result<()> {
-        Ok(self.transaction(|c| self.load_staged_calls_with_conn(c, src))?)
-    }
-
-    fn add_indices(&self, conn: &mut SqliteConnection) -> Result<()> {
+    fn add_indices(conn: &mut SqliteConnection) -> Result<()> {
         log::debug!("Creating post setup indices");
         Ok(conn.batch_execute(
             r#"
@@ -616,12 +633,12 @@ impl GraphDatabaseSetup for GraphSqliteDatabase {
         monitor: &dyn EventMonitor<SetupEvent>,
         cancel: &TaskCancelCheck,
     ) -> SetupResult<()> {
-        self.with_connection(|c| -> std::result::Result<(), Error> {
+        self.write(|c| -> Result<()> {
             let ins = InsertSource::new(&opts.name);
-            _ = insert_into(sources::table)
+            insert_into(sources::table)
                 .values(&ins)
                 .on_conflict_do_nothing()
-                .execute(c);
+                .execute(c)?;
             Ok(())
         })?;
 
@@ -649,143 +666,67 @@ impl GraphDatabaseSetup for GraphSqliteDatabase {
 
         let src = self.get_source_id(source)?;
 
-        let setup = SetupContext::new(self, src, &mut reader);
+        // One CSV is one write: the staging tables are created, filled, drained into the
+        // real tables and dropped on a single connection inside a single transaction. The
+        // staging tables are per connection, so nothing here may reach for another one.
+        self.write_with_pragmas(CSV_LOAD_PRAGMAS, |conn| {
+            conn.batch_execute(CREATE_STAGING_TABLES)?;
 
-        match kind {
-            CSV::Interfaces => {
-                setup.stage_impls()?;
-                self.load_staged_impls(src)?;
+            let setup = SetupContext::new(src, &mut reader);
+
+            match kind {
+                CSV::Interfaces => {
+                    setup.stage_impls(conn)?;
+                    Self::load_staged_impls(conn, src)?;
+                }
+                CSV::Supers => {
+                    setup.stage_supers(conn)?;
+                    Self::load_staged_supers(conn, src)?;
+                }
+                CSV::Calls => {
+                    setup.stage_calls(conn)?;
+                    Self::load_staged_calls(conn, src)?;
+                }
+                CSV::Methods => {
+                    setup.stage_methods(conn)?;
+                    Self::load_staged_methods(conn, src)?;
+                }
+                CSV::Classes => setup.load_classes(conn)?,
+                CSV::Strings => setup.load_strings(conn)?,
+                CSV::ClassFields => {
+                    setup.stage_class_fields(conn)?;
+                    Self::load_staged_class_fields(conn, src)?;
+                }
+                CSV::MethodFieldAccess => {
+                    setup.stage_method_field_access(conn)?;
+                    Self::load_staged_method_field_access(conn, src)?;
+                }
+                CSV::MethodStrings => {
+                    setup.stage_method_strings(conn)?;
+                    Self::load_staged_method_strings(conn, src)?;
+                }
             }
-            CSV::Supers => {
-                setup.stage_supers()?;
-                self.load_staged_supers(src)?;
-            }
-            CSV::Calls => {
-                setup.stage_calls()?;
-                self.load_staged_calls(src)?;
-            }
-            CSV::Methods => {
-                setup.stage_methods()?;
-                self.load_staged_methods(src)?;
-            }
-            CSV::Classes => {
-                setup.load_classes()?;
-            }
-            CSV::Strings => {
-                setup.load_strings()?;
-            }
-            CSV::ClassFields => {
-                setup.stage_class_fields()?;
-                self.load_staged_class_fields(src)?;
-            }
-            CSV::MethodFieldAccess => {
-                setup.stage_method_field_access()?;
-                self.load_staged_method_field_access(src)?;
-            }
-            CSV::MethodStrings => {
-                setup.stage_method_strings()?;
-                self.load_staged_method_strings(src)?;
-            }
-        }
 
-        Ok(self.with_connection(|c| Self::update_load_status(c, src, kind))?)
-    }
+            Self::update_load_status(conn, src, kind)?;
 
-    fn load_begin(&self, _ctx: &dyn Context) -> Result<()> {
-        log::trace!("Setting up the temporary tables for loading");
-        // When starting the load, we want to change some settings for performance. In particular,
-        // we disable foreign keys. Then we create temporary tables for storing nodes by name
-        self.with_connection(|c| {
-            c.batch_execute(
-                r#"PRAGMA synchronous=NORMAL;
-PRAGMA temp_store=MEMORY;
-PRAGMA foreign_keys=OFF;
-
-CREATE TEMPORARY TABLE IF NOT EXISTS named_method_field_access(
-    field_class TEXT NOT NULL,
-    field_name TEXT NOT NULL,
-    field_ty TEXT NOT NULL,
-    method_class TEXT NOT NULL,
-    method_name TEXT NOT NULL,
-    method_args TEXT NOT NULL,
-    action INTEGER NOT NULL
-);
-
-CREATE TEMPORARY TABLE IF NOT EXISTS named_class_fields(
-    class TEXT NOT NULL,
-    name TEXT NOT NULL,
-    ty TEXT NOT NULL,
-    access_flags BIGINT NOT NULL
-);
-
-CREATE TEMPORARY TABLE IF NOT EXISTS named_method_strings(
-    string TEXT NOT NULL,
-    method TEXT NOT NULL,
-    method_args TEXT NOT NULL,
-    class TEXT NOT NULL
-);
-
-CREATE TEMPORARY TABLE IF NOT EXISTS named_methods(
-    class TEXT NOT NULL,
-    name TEXT NOT NULL,
-    args TEXT NOT NULL,
-    ret TEXT NOT NULL,
-    access_flags BIGINT NOT NULL
-);
-
-CREATE TEMPORARY TABLE IF NOT EXISTS named_calls(
-    caller_class TEXT NOT NULL,
-    caller_method TEXT NOT NULL,
-    caller_args TEXT NOT NULL,
-
-    callee_class TEXT NOT NULL,
-    callee_method TEXT NOT NULL,
-    callee_args TEXT NOT NULL
-);
-
-CREATE TEMPORARY TABLE IF NOT EXISTS named_supers(
-    parent TEXT NOT NULL,
-    child TEXT NOT NULL
-);
-
-CREATE TEMPORARY TABLE IF NOT EXISTS named_interfaces(
-    interface TEXT NOT NULL,
-    class TEXT NOT NULL
-);
-"#,
-            )?;
+            // The connection goes back to the pool, so the staged rows have to go with it
+            conn.batch_execute(DROP_STAGING_TABLES)?;
             Ok(())
         })
     }
 
-    fn load_complete(&self, _ctx: &dyn Context, _success: bool) -> Result<()> {
-        self.with_connection(|c| {
-            c.batch_execute(
-                r#"
-            DELETE FROM named_method_field_access;
-            DELETE FROM named_class_fields;
-            DELETE FROM named_method_strings;
-            DELETE FROM named_calls;
-            DELETE FROM named_methods;
-            DELETE FROM named_supers;
-            DELETE FROM named_interfaces;
-                "#,
-            )?;
-            Ok(())
-        })
-    }
-
-    fn should_load_csv(&self, source: &str, csv: CSV) -> bool {
+    fn should_load_csv(&self, source: &str, csv: CSV) -> Result<bool> {
         let kind = csv.to_kind();
-        self.with_connection(|c| {
-            query!(_load_status::table
+        self.query(|c| {
+            let found = query!(_load_status::table
                 .inner_join(sources::table)
                 .filter(sources::name.eq(source))
                 .filter(_load_status::kind.eq(kind))
                 .select(_load_status::rowid)
                 .limit(1))
             .get_result::<i32>(c)
-            .is_err()
+            .optional()?;
+            Ok(found.is_none())
         })
     }
 }
@@ -840,5 +781,382 @@ impl<'a> InsertClass<'a> {
         let raw_flags = rp.get_parsable::<u64>(1)?;
         let flags = AccessFlag::from_bits_truncate(raw_flags);
         Ok(Self::new(name, flags.bits() as i64, src))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::path::{Path, PathBuf};
+
+    use rstest::*;
+
+    use super::super::models::{
+        ClassId, FieldAccessOp, MethodId, MethodSearch, MethodSearchParams,
+    };
+    use super::super::schema::methods;
+    use super::super::{ClassSearch, GraphDatabase};
+    use super::*;
+    use crate::testing::{tmp_context, TestContext};
+    use crate::utils::ensure_dir_exists;
+    use crate::utils::ClassName;
+
+    fn sorted<I: Iterator<Item = String>>(it: I) -> Vec<String> {
+        let mut out = it.collect::<Vec<String>>();
+        out.sort();
+        out
+    }
+
+    fn write_csv(dir: &Path, name: &str, contents: &str) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, contents).expect("failed to write the test csv");
+        path
+    }
+
+    fn load(db: &GraphSqliteDatabase, ctx: &dyn Context, path: &Path, source: &str, kind: CSV) {
+        db.load_csv(ctx, path.to_str().unwrap(), source, kind)
+            .unwrap_or_else(|e| {
+                panic!("failed to load {} for {}: {}", kind.file_name(), source, e)
+            });
+    }
+
+    /// The methods the source declares on `class`, which the test fixture never touches
+    fn method_names(db: &GraphSqliteDatabase, source: &str, class: &str) -> Vec<String> {
+        db.query(|c| {
+            let sid = sources::table
+                .filter(sources::name.eq(source))
+                .select(sources::id)
+                .first::<SourceId>(c)?;
+            let cid = classes::table
+                .filter(classes::name.eq(class))
+                .filter(classes::source.eq(sid))
+                .select(classes::id)
+                .first::<ClassId>(c)?;
+            Ok(methods::table
+                .filter(methods::class.eq(cid))
+                .select(methods::name)
+                .load::<String>(c)?)
+        })
+        .expect("failed to read back the methods")
+    }
+
+    /// Every CSV for one small source, in the order the importer loads them
+    ///
+    /// `Lz/A;` implements `Lz/Iface;`, `Lz/B;` extends it, `alpha` calls `Lz/B;->gamma`
+    /// and a method on a class this source never declares, reads the string
+    /// `hello-ingest` and writes the field `Lz/A;->field1:I`.
+    const SOURCE: &str = "ingest-apk";
+
+    fn load_all(db: &GraphSqliteDatabase, ctx: &dyn Context, dir: &Path) {
+        for (kind, contents) in [
+            (CSV::Classes, "Lz/A;,1\nLz/B;,1\nLz/Iface;,1536\n"),
+            (CSV::Strings, "hello-ingest\n"),
+            (
+                CSV::Methods,
+                "Lz/A;,alpha,,V,1\nLz/A;,beta,Ljava/lang/String;,Z,1\nLz/B;,gamma,,V,1\n",
+            ),
+            (CSV::Supers, "Lz/B;,Lz/A;\n"),
+            (CSV::Interfaces, "Lz/A;,Lz/Iface;\n"),
+            (
+                CSV::Calls,
+                "Lz/A;,alpha,,Lz/B;,gamma,\nLz/A;,alpha,,Lz/Absent;,missing,\n",
+            ),
+            (CSV::ClassFields, "Lz/A;,field1,I,2\n"),
+            (CSV::MethodStrings, "hello-ingest,alpha,,Lz/A;\n"),
+            (CSV::MethodFieldAccess, "Lz/A;,field1,I,Lz/A;,alpha,,1\n"),
+        ] {
+            let path = write_csv(dir, kind.file_name(), contents);
+            load(db, ctx, &path, SOURCE, kind);
+        }
+    }
+
+    fn import_dir(ctx: &dyn Context) -> PathBuf {
+        let dir = ctx
+            .get_graph_import_dir()
+            .expect("failed to get the import dir");
+        ensure_dir_exists(&dir).expect("failed to make the import dir");
+        dir
+    }
+
+    fn add_source(db: &GraphSqliteDatabase, name: &str) {
+        db.write(|c| -> Result<()> {
+            insert_into(sources::table)
+                .values(&InsertSource::new(name))
+                .execute(c)?;
+            Ok(())
+        })
+        .expect("failed to add the source");
+    }
+
+    fn method_id(db: &GraphSqliteDatabase, source: &str, class: &str, name: &str) -> MethodId {
+        let class = ClassName::from(class);
+        let params = MethodSearchParams::new(Some(name), Some(&class), None)
+            .expect("bad method search params");
+        let search = MethodSearch::from(params).with_source(source);
+        let found = db.get_methods(&search).expect("get_methods failed");
+        assert_eq!(found.len(), 1, "expected one {} in {}", name, source);
+        found[0].id
+    }
+
+    /// Loading two sources must not let one source's staged rows reach the other
+    ///
+    /// The staging tables are temporary, so they belong to whichever pooled connection the
+    /// load ran on. If a load left rows behind, the next load to be handed that connection
+    /// would insert them again under its own source.
+    #[rstest]
+    fn test_load_csv_does_not_leak_staged_rows(tmp_context: TestContext) {
+        let ctx = &tmp_context;
+        let db = GraphSqliteDatabase::new(ctx).expect("failed to open the graph database");
+
+        let dir = ctx
+            .get_graph_import_dir()
+            .expect("failed to get the import dir");
+        ensure_dir_exists(&dir).expect("failed to make the import dir");
+
+        db.write(|c| -> Result<()> {
+            insert_into(sources::table)
+                .values(&InsertSource::new("apk"))
+                .execute(c)?;
+            Ok(())
+        })
+        .expect("failed to add the second source");
+
+        // Both sources declare the same class, and each declares a method the other does
+        // not, so a staged row that outlives its load shows up as an extra method.
+        let classes = write_csv(&dir, "classes.csv", "Lcom/a/A;,1\n");
+        let framework_methods = write_csv(&dir, "fw-methods.csv", "Lcom/a/A;,fromFramework,,V,1\n");
+        let apk_methods = write_csv(&dir, "apk-methods.csv", "Lcom/a/A;,fromApk,,V,1\n");
+
+        load(&db, ctx, &classes, FRAMEWORK_SOURCE, CSV::Classes);
+        load(&db, ctx, &framework_methods, FRAMEWORK_SOURCE, CSV::Methods);
+        load(&db, ctx, &classes, "apk", CSV::Classes);
+        load(&db, ctx, &apk_methods, "apk", CSV::Methods);
+
+        assert_eq!(
+            method_names(&db, FRAMEWORK_SOURCE, "Lcom/a/A;"),
+            vec!["fromFramework"]
+        );
+        assert_eq!(method_names(&db, "apk", "Lcom/a/A;"), vec!["fromApk"]);
+    }
+
+    /// A CSV already recorded as loaded is not loaded again
+    #[rstest]
+    fn test_should_load_csv_tracks_completed_loads(tmp_context: TestContext) {
+        let ctx = &tmp_context;
+        let db = GraphSqliteDatabase::new(ctx).expect("failed to open the graph database");
+        let dir = ctx
+            .get_graph_import_dir()
+            .expect("failed to get the import dir");
+        ensure_dir_exists(&dir).expect("failed to make the import dir");
+
+        assert!(
+            db.should_load_csv(FRAMEWORK_SOURCE, CSV::Classes)
+                .expect("should_load_csv failed"),
+            "nothing is loaded yet"
+        );
+
+        let classes = write_csv(&dir, "classes.csv", "Lcom/a/A;,1\n");
+        load(&db, ctx, &classes, FRAMEWORK_SOURCE, CSV::Classes);
+
+        assert!(
+            !db.should_load_csv(FRAMEWORK_SOURCE, CSV::Classes)
+                .expect("should_load_csv failed"),
+            "the load was recorded"
+        );
+        assert!(
+            db.should_load_csv(FRAMEWORK_SOURCE, CSV::Methods)
+                .expect("should_load_csv failed"),
+            "a different csv for the same source is untouched"
+        );
+    }
+
+    /// Every CSV kind resolves its names to the right ids
+    #[rstest]
+    fn test_ingest_resolves_every_csv_kind(tmp_context: TestContext) {
+        let ctx = &tmp_context;
+        let db = GraphSqliteDatabase::new(ctx).expect("failed to open the graph database");
+        let dir = import_dir(ctx);
+        add_source(&db, SOURCE);
+
+        load_all(&db, ctx, &dir);
+
+        let classes = db.get_classes_for(SOURCE).expect("get_classes_for failed");
+        assert_eq!(
+            sorted(classes.iter().map(|it| it.get_smali_name().to_string())),
+            vec!["Lz/A;", "Lz/B;", "Lz/Iface;"]
+        );
+
+        let methods = db.get_methods_for(SOURCE).expect("get_methods_for failed");
+        assert_eq!(
+            sorted(methods.iter().map(|it| it.name.clone())),
+            vec!["alpha", "beta", "gamma", "missing"],
+            "the callee this source never declares is added to it"
+        );
+
+        let child = ClassName::from("Lz/B;");
+        let parents = db
+            .find_parent_classes_of(&child, SOURCE)
+            .expect("find_parent_classes_of failed");
+        assert_eq!(
+            sorted(
+                parents
+                    .iter()
+                    .map(|it| it.name.get_smali_name().to_string())
+            ),
+            vec!["Lz/A;"]
+        );
+
+        let class = ClassName::from("Lz/A;");
+        let ifaces = db
+            .find_interfaces_of(&ClassSearch::new(&class, Some(SOURCE)))
+            .expect("find_interfaces_of failed");
+        assert_eq!(
+            sorted(ifaces.iter().map(|it| it.name.get_smali_name().to_string())),
+            vec!["Lz/Iface;"]
+        );
+
+        let alpha = method_id(&db, SOURCE, "Lz/A;", "alpha");
+
+        let strings = db
+            .get_strings_for_method(alpha)
+            .expect("get_strings_for_method failed");
+        assert_eq!(strings, vec!["hello-ingest"]);
+        assert!(db
+            .get_strings_for_source(SOURCE)
+            .expect("get_strings_for_source failed")
+            .contains(&String::from("hello-ingest")));
+
+        let refs = db
+            .get_method_field_refs(alpha)
+            .expect("get_method_field_refs failed");
+        assert_eq!(refs.len(), 1, "one field access");
+        assert_eq!(refs[0].field.name, "field1");
+        assert_eq!(refs[0].op, FieldAccessOp::Write);
+
+        let callees = sorted(
+            db.find_outgoing_calls(
+                &MethodSearch::from(
+                    MethodSearchParams::new(Some("alpha"), Some(&class), None).unwrap(),
+                )
+                .with_source(SOURCE),
+                1,
+            )
+            .expect("find_outgoing_calls failed")
+            .into_iter()
+            .filter_map(|path| path.path.last().map(|it| it.name.clone())),
+        );
+        assert_eq!(callees, vec!["gamma", "missing"]);
+    }
+
+    /// A callee's class that the source never declares belongs to the framework
+    #[rstest]
+    fn test_ingest_puts_unknown_callee_classes_in_the_framework(tmp_context: TestContext) {
+        let ctx = &tmp_context;
+        let db = GraphSqliteDatabase::new(ctx).expect("failed to open the graph database");
+        let dir = import_dir(ctx);
+        add_source(&db, SOURCE);
+
+        load_all(&db, ctx, &dir);
+
+        let owned = db.get_classes_for(SOURCE).expect("get_classes_for failed");
+        assert!(
+            !owned.iter().any(|it| it.get_smali_name() == "Lz/Absent;"),
+            "the source does not gain a class it never declared"
+        );
+
+        let framework = db
+            .get_classes_for(FRAMEWORK_SOURCE)
+            .expect("get_classes_for failed");
+        assert!(
+            framework
+                .iter()
+                .any(|it| it.get_smali_name() == "Lz/Absent;"),
+            "the unknown callee class lands in the framework"
+        );
+    }
+
+    /// A load must not leave `foreign_keys=OFF` behind on the connection it borrowed
+    ///
+    /// r2d2 only customises a connection when it opens it, so a pragma the load changes
+    /// outlives the load unless it is put back.
+    #[rstest]
+    fn test_load_csv_restores_foreign_keys(tmp_context: TestContext) {
+        let ctx = &tmp_context;
+        let db = GraphSqliteDatabase::new(ctx).expect("failed to open the graph database");
+        let dir = import_dir(ctx);
+        add_source(&db, SOURCE);
+
+        let classes = write_csv(&dir, "classes.csv", "Lz/A;,1\n");
+        load(&db, ctx, &classes, SOURCE, CSV::Classes);
+
+        let enforced = db.query(|c| {
+            Ok(
+                diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>("(SELECT 1)"))
+                    .get_result::<i32>(c)?,
+            )
+        });
+        assert!(enforced.is_ok(), "the connection still works");
+
+        // A row pointing at a class id that cannot exist is only rejected with foreign key
+        // enforcement on
+        let res = db.write(|c| -> Result<()> {
+            insert_into(classes::table)
+                .values((
+                    classes::name.eq("Lz/Orphan;"),
+                    classes::source.eq(SourceId::new(9999)),
+                ))
+                .execute(c)?;
+            Ok(())
+        });
+        assert!(
+            matches!(res, Err(Error::ForeignKeyViolation(_))),
+            "expected a foreign key violation, got {:?}",
+            res
+        );
+    }
+
+    /// A load that fails part way through leaves nothing behind and can be retried
+    ///
+    /// Each CSV is one transaction, which is what makes the recorded load status usable for
+    /// restarting an import that died in the middle.
+    #[rstest]
+    fn test_failed_load_rolls_back_and_stays_retryable(tmp_context: TestContext) {
+        let ctx = &tmp_context;
+        let db = GraphSqliteDatabase::new(ctx).expect("failed to open the graph database");
+        let dir = import_dir(ctx);
+        add_source(&db, SOURCE);
+
+        // The first row is well formed, the second is missing its access flags
+        let classes = write_csv(&dir, "classes.csv", "Lz/Rollback;,1\nLz/Truncated;\n");
+        let res = db.load_csv(ctx, classes.to_str().unwrap(), SOURCE, CSV::Classes);
+        assert!(
+            res.is_err(),
+            "a malformed row fails the load, got {:?}",
+            res
+        );
+
+        let classes = db.get_classes_for(SOURCE).expect("get_classes_for failed");
+        assert!(
+            classes.is_empty(),
+            "the row before the bad one is rolled back, found {:?}",
+            classes
+        );
+        assert!(
+            db.should_load_csv(SOURCE, CSV::Classes)
+                .expect("should_load_csv failed"),
+            "the failed load is not recorded, so an import can retry it"
+        );
+
+        // And the retry, against a good file, works on a connection the failed load used
+        let classes = write_csv(&dir, "classes.csv", "Lz/Rollback;,1\n");
+        load(&db, ctx, &classes, SOURCE, CSV::Classes);
+        assert_eq!(
+            sorted(
+                db.get_classes_for(SOURCE)
+                    .expect("get_classes_for failed")
+                    .iter()
+                    .map(|it| it.get_smali_name().to_string())
+            ),
+            vec!["Lz/Rollback;"]
+        );
     }
 }

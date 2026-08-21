@@ -1,20 +1,19 @@
-#![allow(unused_macros)]
-
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
-use std::sync::{Arc, RwLock};
+use std::num::NonZeroUsize;
+use std::sync::{Arc, Mutex, RwLock};
 
 use diesel::connection::SimpleConnection;
 use diesel::migration::MigrationSource;
 use diesel::prelude::*;
+use diesel::r2d2::{ConnectionManager, CustomizeConnection, Pool, PoolError};
 use diesel::result::{DatabaseErrorInformation, DatabaseErrorKind, Error as DieselError};
 use diesel::sqlite::Sqlite;
 use diesel::{ConnectionError, SqliteConnection};
 use diesel_migrations::MigrationHarness;
 use lazy_static::lazy_static;
-use rayon::{ThreadPool, ThreadPoolBuilder};
 
 use crate::utils::ensure_dir_exists;
 use crate::Context;
@@ -72,8 +71,18 @@ pub enum Error {
     ForeignKeyViolation(DBErrorInfo),
     #[error("{0}")]
     NonNullViolation(DBErrorInfo),
+    #[error("connection pool error: {0}")]
+    Pool(PoolError),
+    #[error("attempted a write inside another write on the same database")]
+    ReentrantWrite,
     #[error("generic database error: {0}")]
     Generic(String),
+}
+
+impl From<PoolError> for Error {
+    fn from(value: PoolError) -> Self {
+        Self::Pool(value)
+    }
 }
 
 impl From<DieselError> for Error {
@@ -102,15 +111,186 @@ impl From<DieselError> for Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Clone)]
-pub(super) struct DBThread(Arc<ThreadPool>);
+/// The state every pooled connection is expected to be in
+///
+/// WAL is what allows readers to run concurrently with a writer. `busy_timeout` is per
+/// connection and must be set here, otherwise contention returns `SQLITE_BUSY` immediately.
+/// `synchronous=NORMAL` is the usual pairing with WAL: a crash can cost the last
+/// transactions but cannot corrupt the database.
+///
+/// Every pragma any part of the crate changes must appear here at its baseline value, since
+/// this is also what [Db::write_with_pragmas] restores afterwards.
+const CONNECTION_PRAGMAS: &str = "\
+PRAGMA journal_mode = WAL;
+PRAGMA foreign_keys = ON;
+PRAGMA busy_timeout = 5000;
+PRAGMA synchronous = NORMAL;
+PRAGMA temp_store = DEFAULT;";
 
-impl DBThread {
+/// Applies [CONNECTION_PRAGMAS] to connections as the pool opens them
+#[derive(Debug)]
+struct SqlitePragmas;
+
+impl CustomizeConnection<SqliteConnection, diesel::r2d2::Error> for SqlitePragmas {
+    fn on_acquire(
+        &self,
+        conn: &mut SqliteConnection,
+    ) -> std::result::Result<(), diesel::r2d2::Error> {
+        conn.batch_execute(CONNECTION_PRAGMAS)
+            .map_err(diesel::r2d2::Error::QueryError)
+    }
+}
+
+type PooledSqlite = diesel::r2d2::PooledConnection<ConnectionManager<SqliteConnection>>;
+
+/// A pool of connections to a single sqlite database
+///
+/// Cloning is cheap: all clones of a [Db] for the same file share the pool and the write
+/// lock.
+#[derive(Clone)]
+pub(super) struct Db(Arc<DbInner>);
+
+struct DbInner {
+    pool: Pool<ConnectionManager<SqliteConnection>>,
+    /// Serialises writers so only one connection is in a write transaction at a time
+    write_lock: Mutex<()>,
+}
+
+impl Db {
+    /// Read using any available connection
+    ///
+    /// Runs concurrently with other reads and with a write.
+    pub(super) fn query<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&mut SqliteConnection) -> Result<R>,
+    {
+        let mut conn = self.get_connection()?;
+        f(&mut conn)
+    }
+
+    /// Write, holding one connection for the whole closure inside a transaction
+    ///
+    /// Serialised against other writers. Because the connection is held, temporary tables
+    /// and per-connection state stay valid for the duration.
+    ///
+    /// The closure error is generic, unlike [Db::query], because a write can wrap work
+    /// that is not itself a database operation and fails for its own reasons.
+    ///
+    /// Calling this from inside itself would deadlock, so it fails with
+    /// [Error::ReentrantWrite] instead. A [Db::query] inside the closure is allowed but
+    /// will not see the uncommitted writes.
+    pub(super) fn write<F, R, E>(&self, f: F) -> std::result::Result<R, E>
+    where
+        F: FnOnce(&mut SqliteConnection) -> std::result::Result<R, E>,
+        E: From<Error> + From<DieselError>,
+    {
+        self.write_with_pragmas("", f)
+    }
+
+    /// [Db::write], with `pragmas` applied to the connection before the transaction opens
+    ///
+    /// For settings a transaction cannot change, `foreign_keys` in particular, which is a
+    /// silent no-op inside one.
+    ///
+    /// The connection is put back to [CONNECTION_PRAGMAS] on the way out, however this
+    /// returns. r2d2 customises a connection only when it opens it, so without that reset
+    /// the change would outlive this call on whichever connection happened to serve it.
+    pub(super) fn write_with_pragmas<F, R, E>(
+        &self,
+        pragmas: &str,
+        f: F,
+    ) -> std::result::Result<R, E>
+    where
+        F: FnOnce(&mut SqliteConnection) -> std::result::Result<R, E>,
+        E: From<Error> + From<DieselError>,
+    {
+        let _reentry = ReentryGuard::acquire(self.key()).map_err(E::from)?;
+        let _writing = self.0.write_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = self.get_connection().map_err(E::from)?;
+
+        if pragmas.is_empty() {
+            let mut conn = conn;
+            let conn: &mut SqliteConnection = &mut conn;
+            return conn.transaction(f);
+        }
+
+        let mut guard = PragmaReset(conn);
+        let conn: &mut SqliteConnection = &mut guard.0;
+        conn.batch_execute(pragmas).map_err(DieselError::from)?;
+        conn.transaction(f)
+    }
+
+    fn get_connection(&self) -> Result<PooledSqlite> {
+        self.0.pool.get().map_err(Error::from)
+    }
+
+    /// Identifies the database this handle points at, shared by all clones
+    fn key(&self) -> usize {
+        Arc::as_ptr(&self.0) as usize
+    }
+}
+
+thread_local! {
+    /// The databases this thread is currently inside a [Db::write] on
+    static ACTIVE_WRITES: RefCell<Vec<usize>> = RefCell::new(Vec::new());
+}
+
+/// Returns a connection to [CONNECTION_PRAGMAS] when the write that changed them ends
+///
+/// A guard rather than a statement at the end of the write so that a panic inside the
+/// closure cannot put a connection back in the pool with, say, foreign keys still off.
+struct PragmaReset(PooledSqlite);
+
+impl Drop for PragmaReset {
+    fn drop(&mut self) {
+        if let Err(e) = self.0.batch_execute(CONNECTION_PRAGMAS) {
+            // Nothing here can evict the connection from the pool, so all this can do is
+            // say so as loudly as it can
+            log::error!("failed to restore the connection pragmas: {}", e);
+        }
+    }
+}
+
+/// Detects a [Db::write] entered while this thread is already inside one on the same
+/// database, which would otherwise deadlock on the write lock with no output
+struct ReentryGuard(usize);
+
+impl ReentryGuard {
+    fn acquire(key: usize) -> Result<Self> {
+        ACTIVE_WRITES.with(|active| {
+            let mut active = active.borrow_mut();
+            if active.contains(&key) {
+                return Err(Error::ReentrantWrite);
+            }
+            active.push(key);
+            Ok(Self(key))
+        })
+    }
+}
+
+impl Drop for ReentryGuard {
+    fn drop(&mut self) {
+        ACTIVE_WRITES.with(|active| {
+            let mut active = active.borrow_mut();
+            if let Some(idx) = active.iter().rposition(|it| *it == self.0) {
+                active.swap_remove(idx);
+            }
+        });
+    }
+}
+
+// One pool per database file, so that the write lock covers every writer to that file and
+// migrations run exactly once no matter how many handles are created.
+lazy_static! {
+    static ref DATABASES: RwLock<HashMap<String, Db>> = RwLock::new(HashMap::new());
+}
+
+impl Db {
     pub(super) fn new(
         ctx: &dyn Context,
         file_name: &str,
-        migrations: impl MigrationSource<Sqlite> + Send,
-        #[cfg(test)] test_migrations: impl MigrationSource<Sqlite> + Send,
+        migrations: impl MigrationSource<Sqlite>,
+        #[cfg(test)] test_migrations: impl MigrationSource<Sqlite>,
     ) -> Result<Self> {
         let mut path = ctx.get_sqlite_dir()?;
         ensure_dir_exists(&path)?;
@@ -126,8 +306,8 @@ impl DBThread {
 
     pub(super) fn new_from_path<S: AsRef<str> + ?Sized>(
         path: &S,
-        migrations: impl MigrationSource<Sqlite> + Send,
-        #[cfg(test)] test_migrations: impl MigrationSource<Sqlite> + Send,
+        migrations: impl MigrationSource<Sqlite>,
+        #[cfg(test)] test_migrations: impl MigrationSource<Sqlite>,
     ) -> Result<Self> {
         let url = format!("sqlite://{}", path.as_ref());
         Self::new_from_url(
@@ -140,136 +320,85 @@ impl DBThread {
 
     pub(super) fn new_from_url(
         url: &String,
-        migrations: impl MigrationSource<Sqlite> + Send,
-        #[cfg(test)] test_migrations: impl MigrationSource<Sqlite> + Send,
+        migrations: impl MigrationSource<Sqlite>,
+        #[cfg(test)] test_migrations: impl MigrationSource<Sqlite>,
     ) -> Result<Self> {
-        let db_thread = get_database_threadpool(
+        if let Some(db) = DATABASES.read().unwrap().get(url) {
+            return Ok(db.clone());
+        }
+
+        let mut map = DATABASES.write().unwrap();
+        // Another thread may have created it between dropping the read lock and taking
+        // the write lock
+        if let Some(db) = map.get(url) {
+            return Ok(db.clone());
+        }
+
+        let db = Self::connect(
             url,
             migrations,
             #[cfg(test)]
             test_migrations,
         )?;
-        Ok(Self(db_thread))
+        map.insert(url.clone(), db.clone());
+        Ok(db)
     }
 
-    pub(super) fn transaction<F, T, E>(&self, f: F) -> std::result::Result<T, E>
-    where
-        T: Send,
-        E: From<diesel::result::Error> + Send,
-        F: FnOnce(&mut SqliteConnection) -> std::result::Result<T, E> + Send,
-    {
-        self.0.install(|| {
-            CONNECTION.with(|c| {
-                let mut borrowed = c.borrow_mut();
-                let conn = borrowed.as_mut().unwrap();
-                conn.transaction(f)
-            })
-        })
-    }
+    fn connect(
+        url: &String,
+        migrations: impl MigrationSource<Sqlite>,
+        #[cfg(test)] test_migrations: impl MigrationSource<Sqlite>,
+    ) -> Result<Self> {
+        log::debug!("connecting to the database at {}", url);
 
-    pub(super) fn with_connection<F, R>(&self, f: F) -> R
-    where
-        R: Send,
-        F: FnOnce(&mut SqliteConnection) -> R + Send,
-    {
-        self.0.install(|| {
-            CONNECTION.with(|c| {
-                let mut borrowed = c.borrow_mut();
-                let conn = borrowed.as_mut().unwrap();
+        let pool = Pool::builder()
+            // Enough for every thread to hold a reader with headroom left for a writer, so
+            // a bulk load can't be starved into a checkout timeout by a busy analysis
+            .max_size(max_connections())
+            // Connections are opened on demand, not all at once up front
+            .min_idle(Some(1))
+            // Same as the r2d2 default, stated here because a starved pool surfaces as a
+            // checkout error after this long rather than as a hang
+            .connection_timeout(std::time::Duration::from_secs(30))
+            .connection_customizer(Box::new(SqlitePragmas))
+            .build(ConnectionManager::<SqliteConnection>::new(url))
+            .map_err(Error::from)?;
 
-                f(conn)
-            })
-        })
-    }
-}
-
-// To be a bit lazy with the design here, we're going to maintain a global
-// map of database URLs -> single threaded thread pool. Then, when a new
-// database is opened, we'll create a thread local connection to the database
-// in that thread pool's thread. Then every database operation will happen
-// via calls to that connection in that single thread
-//
-// This is basically a memory leak, but whatever
-lazy_static! {
-    static ref DB_THREADS: RwLock<HashMap<String, Arc<ThreadPool>>> = RwLock::new(HashMap::new());
-}
-
-thread_local! {
-    static CONNECTION: RefCell<Option<SqliteConnection>> = RefCell::new(None);
-}
-
-pub(super) fn get_database_threadpool(
-    url: &String,
-    migrations: impl MigrationSource<Sqlite> + Send,
-    #[cfg(test)] test_migrations: impl MigrationSource<Sqlite> + Send,
-) -> Result<Arc<ThreadPool>> {
-    match try_get_database_threadpool(url) {
-        Some(v) => return Ok(v),
-        None => {}
-    };
-    let mut map = DB_THREADS.write().unwrap();
-    // Have to check again after getting the write lock. This won't
-    // happen often
-    if let Some(v) = map.get(url) {
-        return Ok(Arc::clone(v));
-    }
-    // Otherwise we're creating it
-    new_database_threadpool(
-        url,
-        &mut map,
-        migrations,
+        // Migrations run once, before the pool serves anyone else. Several connections
+        // running them on one file concurrently is not safe.
+        let mut conn = pool.get().map_err(Error::from)?;
+        conn.run_pending_migrations(migrations)?;
         #[cfg(test)]
-        test_migrations,
-    )
+        conn.run_pending_migrations(test_migrations)
+            .expect("failed to load test migrations");
+        drop(conn);
+
+        Ok(Self(Arc::new(DbInner {
+            pool,
+            write_lock: Mutex::new(()),
+        })))
+    }
 }
 
-fn try_get_database_threadpool(url: &String) -> Option<Arc<ThreadPool>> {
-    let map = DB_THREADS.read().unwrap();
-    map.get(url).map(|v| Arc::clone(v))
-}
-
-fn new_database_threadpool(
-    url: &String,
-    map: &mut HashMap<String, Arc<ThreadPool>>,
-    migrations: impl MigrationSource<Sqlite> + Send,
-    #[cfg(test)] test_migrations: impl MigrationSource<Sqlite> + Send,
-) -> Result<Arc<ThreadPool>> {
-    let tp = ThreadPoolBuilder::new()
-        .num_threads(1)
-        .build()
-        .expect("failed to build sqlite threadpool");
-    // Connect to the database
-    tp.install(|| {
-        CONNECTION.with(|c| -> Result<()> {
-            log::debug!("connecting to the database at {}", url);
-            let mut conn = SqliteConnection::establish(url)?;
-            conn.batch_execute("PRAGMA foreign_keys = ON;")?;
-            conn.run_pending_migrations(migrations)?;
-            #[cfg(test)]
-            conn.run_pending_migrations(test_migrations)
-                .expect("failed to load test migrations");
-            *c.borrow_mut() = Some(conn);
-            Ok(())
-        })
-    })?;
-    let arc = Arc::new(tp);
-    let cloned = Arc::clone(&arc);
-    map.insert(url.clone(), arc);
-    Ok(cloned)
-}
-
+/// Drop the pool for `url`, closing its connections
+///
+/// A later [Db::new_from_url] for the same file creates a fresh pool.
 #[allow(dead_code)]
 pub(super) fn cleanup_database(url: &String) {
-    let mut map = DB_THREADS.write().unwrap();
-    let tp = match map.remove(url) {
-        None => return,
-        Some(v) => v,
-    };
-    tp.install(|| {
-        CONNECTION.with(|c| {
-            *c.borrow_mut() = None;
-        })
-    });
+    DATABASES.write().unwrap().remove(url);
+}
+
+fn max_connections() -> u32 {
+    // Two spare: one for a writer and one for whatever opportunistic read the writer
+    // itself needs.
+    const SPARE: u32 = 2;
+    // Used when the parallelism is unavailable or absurd
+    const FALLBACK: u32 = 4;
+
+    let parallelism = std::thread::available_parallelism()
+        .map(NonZeroUsize::get)
+        .unwrap_or(FALLBACK as usize);
+    u32::try_from(parallelism).unwrap_or(FALLBACK) + SPARE
 }
 
 /// Trait for all types that are used as database IDs
@@ -304,359 +433,3 @@ where
 pub trait Idable {
     fn get_id(&self) -> i32;
 }
-
-/// Create a database ID type with the given name and doc comment
-///
-/// The returned type is just a wrapper around i32s and used for type safety
-macro_rules! database_id {
-    ($name:ident, $doc:literal) => {
-        #[doc = $doc]
-        #[derive(
-            Copy,
-            Clone,
-            PartialEq,
-            Eq,
-            Hash,
-            PartialOrd,
-            Ord,
-            Debug,
-            serde::Serialize,
-            serde::Deserialize,
-            diesel::expression::AsExpression,
-            diesel::FromSqlRow,
-        )]
-        #[diesel(sql_type = diesel::sql_types::Integer)]
-        #[serde(transparent)]
-        pub struct $name(i32);
-
-        impl $name {
-            pub const fn new(id: i32) -> Self {
-                Self(id)
-            }
-            pub const fn raw(self) -> i32 {
-                self.0
-            }
-        }
-
-        impl crate::db::common::DatabaseId for $name {
-            fn from_id(id: i32) -> Self {
-                Self::new(id)
-            }
-            fn id(self) -> i32 {
-                self.raw()
-            }
-        }
-
-        impl From<i32> for $name {
-            fn from(id: i32) -> Self {
-                Self(id)
-            }
-        }
-
-        impl From<$name> for i32 {
-            fn from(id: $name) -> i32 {
-                id.0
-            }
-        }
-
-        impl std::fmt::Display for $name {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, "{}", self.0)
-            }
-        }
-
-        impl diesel::serialize::ToSql<diesel::sql_types::Integer, diesel::sqlite::Sqlite>
-            for $name
-        {
-            fn to_sql<'b>(
-                &'b self,
-                out: &mut diesel::serialize::Output<'b, '_, diesel::sqlite::Sqlite>,
-            ) -> diesel::serialize::Result {
-                out.set_value(self.0);
-                Ok(diesel::serialize::IsNull::No)
-            }
-        }
-
-        impl diesel::deserialize::FromSql<diesel::sql_types::Integer, diesel::sqlite::Sqlite>
-            for $name
-        {
-            fn from_sql(
-                value: diesel::sqlite::SqliteValue<'_, '_, '_>,
-            ) -> diesel::deserialize::Result<Self> {
-                <i32 as diesel::deserialize::FromSql<
-                    diesel::sql_types::Integer,
-                    diesel::sqlite::Sqlite,
-                >>::from_sql(value)
-                .map(Self)
-            }
-        }
-    };
-}
-
-pub(super) use database_id;
-
-macro_rules! def_get_multi {
-    ($name:ident, $ret:ty) => {
-        fn $name(&self) -> Result<Vec<$ret>>;
-    };
-}
-
-pub(super) use def_get_multi;
-
-macro_rules! def_delete_by {
-    ($name:ident, $sel:ty) => {
-        fn $name(&self, sel: $sel) -> Result<()>;
-    };
-}
-
-pub(super) use def_delete_by;
-
-macro_rules! def_get_one_by {
-    ($name:ident, $sel:ty, $ret:ty) => {
-        fn $name(&self, sel: $sel) -> Result<$ret>;
-    };
-}
-
-pub(super) use def_get_one_by;
-
-macro_rules! def_get_multi_by {
-    ($name:ident, $sel:ty, $ret:ty) => {
-        fn $name(&self, sel: $sel) -> Result<Vec<$ret>>;
-    };
-}
-
-#[allow(unused)]
-pub(super) use def_get_multi_by;
-
-macro_rules! def_insert_one {
-    ($name:ident, $ty:ty) => {
-        fn $name(&self, val: &$ty) -> Result<i32>;
-    };
-}
-
-pub(super) use def_insert_one;
-
-macro_rules! def_update_one {
-    ($name:ident, $ty:ty) => {
-        fn $name(&self, val: &$ty) -> Result<()>;
-    };
-}
-
-pub(super) use def_update_one;
-
-macro_rules! def_insert_multi {
-    ($name:ident, $ty:ty) => {
-        fn $name(&self, values: &[$ty]) -> Result<()>;
-    };
-}
-
-pub(super) use def_insert_multi;
-
-macro_rules! def_insert {
-    (
-        $ins_one:ident,
-        $ins_multi:ident,
-        $ins_type:ty
-    ) => {
-        def_insert_one!($ins_one, $ins_type);
-        def_insert_multi!($ins_multi, $ins_type);
-    };
-}
-
-#[allow(unused)]
-pub(super) use def_insert;
-
-macro_rules! def_standard_crud {
-    (
-        $ins_one:ident,
-        $ins_multi:ident,
-        $ins_type:ty,
-        $get_all:ident,
-        $get_by_id:ident,
-        $update_one:ident,
-        $read_update_type:ty,
-        $delete_by_id:ident
-    ) => {
-        def_insert_one!($ins_one, $ins_type);
-        def_insert_multi!($ins_multi, $ins_type);
-        def_get_one_by!($get_by_id, i32, $read_update_type);
-        def_get_multi!($get_all, $read_update_type);
-        def_update_one!($update_one, $read_update_type);
-        def_delete_by!($delete_by_id, i32);
-    };
-}
-
-#[allow(unused)]
-pub(super) use def_standard_crud;
-
-#[cfg(feature = "trace_db")]
-macro_rules! query {
-    ($q:expr) => {{
-        let __dbg_query = $q;
-        ::log::trace!(
-            "{}",
-            diesel::debug_query::<::diesel::sqlite::Sqlite, _>(&__dbg_query)
-        );
-
-        __dbg_query
-    }};
-}
-
-#[cfg(not(feature = "trace_db"))]
-macro_rules! query {
-    ($q:expr) => {
-        $q
-    };
-}
-
-pub(crate) use query;
-
-macro_rules! impl_delete_by {
-     ($vis:vis $name:ident, $sel:ty, $table:ident, $($filter:tt)+) => {
-        $vis fn $name(&self, sel: $sel) -> Result<()> {
-            let __query = query!(::diesel::delete(
-                super::schema::$table::dsl::$table.filter(
-                    super::schema::$table::dsl::$($filter)+(sel)
-            )));
-            self.with_connection(|conn| {
-                __query.execute(conn)
-            })?;
-            Ok(())
-        }
-    }
-}
-
-pub(super) use impl_delete_by;
-
-macro_rules! impl_get_by {
-    ($vis:vis $retrieve:ident, $name:ident, $sel:ty, $ret:ty, $ty:ident, $($filter:tt)+) => {
-        $vis fn $name(&self, sel: $sel) -> Result<$ret> {
-            let __query = query!(super::schema::$ty::dsl::$ty.filter(
-                super::schema::$ty::dsl::$($filter)+(sel)
-            ));
-            Ok(self.with_connection(|conn| {
-                __query.$retrieve(conn)
-            })?)
-        }
-    }
-}
-
-pub(super) use impl_get_by;
-
-macro_rules! impl_get {
-        ($vis:vis $retrieve:ident, $name:ident, $ret:ty, $ty:ident, $($filter:tt)+) => {
-        $vis fn $name(&self) -> Result<$ret> {
-            let __query = query!(super::schema::$ty::dsl::$ty.filter(
-                super::schema::$ty::dsl::$($filter)+
-            ));
-            Ok(self.with_connection(|conn| { __query.$retrieve(conn)})?)
-        }
-    }
-}
-
-pub(super) use impl_get;
-
-macro_rules! impl_get_one {
-    ($vis:vis $name:ident, $ret:ty, $ty:ident, $($filter:tt)+) => {
-        impl_get!($vis get_result, $name, $ret, $ty, $($filter)+);
-    }
-}
-
-#[allow(unused)]
-pub(super) use impl_get_one;
-
-macro_rules! impl_get_multi {
-    ($vis:vis $name:ident, $ret:ty, $ty:ident, $($filter:tt)+) => {
-        impl_get!($vis get_results, $name, Vec<$ret>, $ty, $($filter)+);
-    }
-}
-
-pub(super) use impl_get_multi;
-
-macro_rules! impl_get_one_by {
-    ($vis:vis $name:ident, $sel:ty, $ret:ty, $ty:ident, $($filter:tt)+) => {
-        impl_get_by!($vis get_result, $name, $sel, $ret, $ty, $($filter)+);
-    }
-
-}
-
-pub(super) use impl_get_one_by;
-
-macro_rules! impl_get_multi_by {
-    ($vis:vis $name:ident, $sel:ty, $ret:ty, $ty:ident, $($filter:tt)+) => {
-        impl_get_by!($vis get_results, $name, $sel, Vec<$ret>, $ty, $($filter)+);
-    }
-}
-
-pub(super) use impl_get_multi_by;
-
-macro_rules! impl_get_all {
-    ($vis:vis $name:ident, $ret:ty, $ty:ident) => {
-        $vis fn $name(&self) -> Result<Vec<$ret>> {
-            let __query = query!(super::schema::$ty::dsl::$ty);
-            Ok(self.with_connection(|conn| __query.load(conn))?)
-        }
-    };
-}
-
-pub(super) use impl_get_all;
-
-macro_rules! impl_update_one {
-    ($vis:vis $name:ident, $ty:ty, $dsl:ident) => {
-        $vis fn $name(&self, value: &$ty) -> Result<()> {
-            let __query = query!(::diesel::update(value).set(value));
-            self.with_connection(|conn| { __query.execute(conn) })?;
-            Ok(())
-        }
-    };
-}
-
-pub(super) use impl_update_one;
-
-macro_rules! impl_insert_one {
-    ($vis:vis $name:ident, $ty:ty, $dsl:ident) => {
-        $vis fn $name(&self, values: &$ty) -> Result<i32> {
-            let __query = query!(::diesel::insert_into(super::schema::$dsl::dsl::$dsl)
-                .values(values)
-                .returning(super::schema::$dsl::id));
-            Ok(self.with_connection(|conn| { __query.get_result(conn)})?)
-        }
-    };
-}
-
-pub(super) use impl_insert_one;
-
-macro_rules! impl_insert_multi {
-    ($vis:vis $name:ident, $ty:ty, $dsl:ident) => {
-        $vis fn $name(&self, values: &[$ty]) -> Result<()> {
-            let __query = query!(::diesel::insert_into(super::schema::$dsl::dsl::$dsl).values(values));
-            self.with_connection(|conn| { __query.execute(conn) })?;
-            Ok(())
-        }
-    };
-}
-
-pub(super) use impl_insert_multi;
-
-macro_rules! impl_simple_gets {
-    ($vis:vis $table:ident, $ty:ty, $get_all:ident, $get_by_id:ident) => {
-        impl_get_all!($vis $get_all, $ty, $table);
-        impl_get_one_by!($vis $get_by_id, i32, $ty, $table, id.eq);
-    };
-}
-
-pub(super) use impl_simple_gets;
-
-macro_rules! impl_standard_crud {
-    ($vis:vis $table:ident, $ins_one:ident, $ins_multi:ident, $ins_type:ty, $get_all:ident, $get_by_id:ident, $update_one:ident, $read_update_type:ty, $delete_by_id:ident) => {
-        impl_insert_one!($vis $ins_one, $ins_type, $table);
-        impl_insert_multi!($vis $ins_multi, $ins_type, $table);
-        impl_get_all!($vis $get_all, $read_update_type, $table);
-        impl_update_one!($vis $update_one, $read_update_type, $table);
-        impl_get_one_by!($vis $get_by_id, i32, $read_update_type, $table, id.eq);
-        impl_delete_by!($vis $delete_by_id, i32, $table, id.eq);
-    };
-}
-
-#[allow(unused)]
-pub(super) use impl_standard_crud;

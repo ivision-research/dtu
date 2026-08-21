@@ -162,13 +162,13 @@ where
         Ok(self.ctx.get_graph_import_dir()?.join(&self.opts.name))
     }
 
-    fn should_load(&self, kind: CSV) -> bool {
-        self.graph.should_load_csv(&self.opts.name, kind)
+    fn should_load(&self, kind: CSV) -> SetupResult<bool> {
+        Ok(self.graph.should_load_csv(&self.opts.name, kind)?)
     }
 
     fn import_csv(&self, import_dir_name: &str, csv: CSV) -> SetupResult<()> {
         let csv_file = csv.in_dir(import_dir_name);
-        if !self.should_load(csv) {
+        if !self.should_load(csv)? {
             return Ok(());
         }
         log::info!("Adding classes...");
@@ -185,22 +185,11 @@ where
     fn import_smalisa_files(&self) -> SetupResult<()> {
         let import_dir_name = String::from(path_must_str(&self.get_import_dir()?));
 
-        self.graph.load_begin(self.ctx)?;
-
         self.monitor.on_event(SetupEvent::SourceStarted {
             source: self.opts.name.clone(),
         });
 
-        let mut res = self.do_smalisa_imports(&import_dir_name);
-
-        if res.is_ok() {
-            res = self
-                .graph
-                .load_complete(self.ctx, true)
-                .map_err(SetupError::from)
-        } else {
-            _ = self.graph.load_complete(self.ctx, false);
-        }
+        let res = self.do_smalisa_imports(&import_dir_name);
 
         self.monitor.on_event(SetupEvent::SourceDone {
             source: self.opts.name.clone(),
@@ -251,27 +240,12 @@ pub trait GraphDatabaseSetup: Sync + Send + GraphDatabase {
 
     /// Check whether the given CSV kind should be loaded for the given source
     ///
-    /// This is used for restarting loads on failures. Ideally, the graph database would
-    /// ensure either a given CSV is entirely loaded or at all, so that we can
-    /// restart after fixing the file manually if needed.
-    fn should_load_csv(&self, source: &str, csv: CSV) -> bool;
+    /// This is used for restarting loads on failures. Each CSV load is all or nothing, so
+    /// a load that failed part way through leaves the CSVs before it loaded and this one
+    /// not.
+    fn should_load_csv(&self, source: &str, csv: CSV) -> db::Result<bool>;
 
     /// Load the CSV into the database. This should be an all or nothing operation: if the
     /// CSV load fails there should be no partial data from that CSV in the database.
     fn load_csv(&self, ctx: &dyn Context, path: &str, source: &str, csv: CSV) -> db::Result<()>;
-
-    /// Called when all loading begins
-    fn load_begin(&self, ctx: &dyn Context) -> db::Result<()> {
-        _ = ctx;
-        Ok(())
-    }
-
-    /// Called when all loading is completed
-    ///
-    /// This is called even on failure just in case any cleanup is needed.
-    fn load_complete(&self, ctx: &dyn Context, success: bool) -> db::Result<()> {
-        _ = ctx;
-        _ = success;
-        Ok(())
-    }
 }

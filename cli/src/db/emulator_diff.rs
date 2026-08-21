@@ -83,7 +83,9 @@ impl EmulatorDiff {
         let ds = db.get_diff_source_by_name(EMULATOR_DIFF_SOURCE)?;
         db.delete_diff_source_by_id(ds.id)?;
         let ins = models::InsertDiffSource { name: &ds.name };
-        db.with_connection(|c| insert_into(diff_sources::table).values(&ins).execute(c))?;
+        db.write(|c| -> dtu::db::Result<usize> {
+            Ok(insert_into(diff_sources::table).values(&ins).execute(c)?)
+        })?;
         Ok(())
     }
 

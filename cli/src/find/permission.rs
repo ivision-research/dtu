@@ -40,13 +40,13 @@ impl Permission {
             }
 
             let results = db
-                .with_connection(|c| q.get_results::<(String, String, String)>(c))?
+                .query(|c| Ok(q.get_results::<(String, String, String)>(c)?))?
                 .into_iter()
                 .map(|(apk, name, level)| JsonOutput { apk, name, level })
                 .collect::<Vec<JsonOutput>>();
             serde_json::to_writer(io::stdout(), &results)?;
         } else {
-            let results = db.with_connection(|c| q.get_results::<(String, String, String)>(c))?;
+            let results = db.query(|c| Ok(q.get_results::<(String, String, String)>(c)?))?;
 
             for (apk, perm, level) in results {
                 println!("{apk} | {perm} - {level}");

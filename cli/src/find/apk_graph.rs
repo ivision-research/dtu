@@ -158,17 +158,16 @@ impl ApkIPCCallsGeneric {
 
         let class_query = rcvq.union_all(svcq).union_all(actq).union_all(provq);
 
-        let classes =
-            db.with_connection(move |c| class_query.get_results::<(i32, ClassName)>(c))?;
+        let classes = db.query(move |c| Ok(class_query.get_results::<(i32, ClassName)>(c)?))?;
 
         let apk_ids = classes.iter().map(|it| it.0).unique();
 
         let mut map = db
-            .with_connection(|c| {
-                apks::table
+            .query(|c| {
+                Ok(apks::table
                     .select((apks::id, apks::device_path))
                     .filter(apks::id.eq_any(apk_ids))
-                    .get_results::<(i32, DevicePath)>(c)
+                    .get_results::<(i32, DevicePath)>(c)?)
             })?
             .into_iter()
             .map(|(id, apk_path)| {

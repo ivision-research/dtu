@@ -42,7 +42,7 @@ impl Idable for DiffedSystemServiceMethodData {
 impl DiffedSystemServiceMethodData {
     pub fn vec_from_db(db: &DeviceDatabase, diffid: i32) -> anyhow::Result<Vec<Self>> {
         Ok(
-            db.with_connection(|c| -> db::Result<Vec<DiffedSystemServiceMethodData>> {
+            db.query(|c| -> db::Result<Vec<DiffedSystemServiceMethodData>> {
                 let res = system_service_method_diffs::table
                     .filter(
                         system_service_method_diffs::exists_in_diff

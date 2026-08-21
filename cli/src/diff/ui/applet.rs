@@ -356,10 +356,10 @@ impl<'a> Applet<'a> {
         service_ids.extend(methods.iter().map(|it| it.system_service_id));
         let hidden_services = self.state.hidden_system_services.clone();
 
-        let services = self.db.with_connection(|c| {
-            system_services::table
+        let services = self.db.query(|c| {
+            Ok(system_services::table
                 .filter(system_services::id.eq_any(&service_ids))
-                .get_results::<SystemService>(c)
+                .get_results::<SystemService>(c)?)
         })?;
         let container = self.new_tab_container(
             methods,

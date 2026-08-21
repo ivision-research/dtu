@@ -11,10 +11,14 @@ use crate::Context;
 
 use super::common::*;
 use super::models::*;
+use crate::db::macros::{
+    impl_delete_by, impl_get_all, impl_get_multi, impl_get_multi_by, impl_get_one_by,
+    impl_insert_one, impl_simple_gets,
+};
 
 #[derive(Clone)]
 pub struct DeviceDatabase {
-    db_thread: DBThread,
+    db: Db,
 }
 
 pub type SqlConnection = SqliteConnection;
@@ -29,7 +33,7 @@ pub static DEVICE_DATABASE_FILE_NAME: &'static str = "device.db";
 impl DeviceDatabase {
     pub fn new(ctx: &dyn Context) -> Result<Self> {
         Ok(Self {
-            db_thread: DBThread::new(
+            db: Db::new(
                 ctx,
                 DEVICE_DATABASE_FILE_NAME,
                 MIGRATIONS,
@@ -41,7 +45,7 @@ impl DeviceDatabase {
 
     pub fn new_from_path<S: AsRef<str> + ?Sized>(path: &S) -> Result<Self> {
         Ok(Self {
-            db_thread: DBThread::new_from_path(
+            db: Db::new_from_path(
                 path,
                 MIGRATIONS,
                 #[cfg(test)]
@@ -53,7 +57,7 @@ impl DeviceDatabase {
     #[cfg(test)]
     fn new_from_url(url: &String) -> Result<Self> {
         Ok(Self {
-            db_thread: DBThread::new_from_url(
+            db: Db::new_from_url(
                 url,
                 MIGRATIONS,
                 #[cfg(test)]
@@ -62,23 +66,23 @@ impl DeviceDatabase {
         })
     }
 
+    /// Read using any available connection
     #[inline]
-    pub fn with_connection<F, R>(&self, f: F) -> R
+    pub fn query<F, R>(&self, f: F) -> Result<R>
     where
-        R: Send,
-        F: FnOnce(&mut SqlConnection) -> R + Send,
+        F: FnOnce(&mut SqlConnection) -> Result<R>,
     {
-        self.db_thread.with_connection(f)
+        self.db.query(f)
     }
 
+    /// Write, holding one connection for the whole closure inside a transaction
     #[inline]
-    pub fn with_transaction<F, T, E>(&self, f: F) -> std::result::Result<T, E>
+    pub fn write<F, R, E>(&self, f: F) -> std::result::Result<R, E>
     where
-        T: Send,
-        E: From<diesel::result::Error> + Send,
-        F: FnOnce(&mut SqlConnection) -> std::result::Result<T, E> + Send,
+        F: FnOnce(&mut SqlConnection) -> std::result::Result<R, E>,
+        E: From<Error> + From<diesel::result::Error>,
     {
-        self.db_thread.transaction(f)
+        self.db.write(f)
     }
 }
 
@@ -103,7 +107,7 @@ macro_rules! impl_diff_item {
         }
 
         $vis fn $get_all_by_diff_id(&self, id: i32) -> Result<Vec<$get_type>> {
-            self.with_connection(|conn| {
+            self.query(|conn| {
                 let __query = super::schema::$table::table
                     .inner_join(super::schema::$diff_table::table)
                     .filter(super::schema::$diff_table::dsl::diff_source.eq(id));
@@ -149,7 +153,7 @@ macro_rules! impl_diff_item {
         );
 
         $vis fn $get_all_by_two_ids(&self, owner_id: i32, diff_id: i32) -> Result<Vec<$get_type>> {
-                        self.with_connection(|conn| {
+            self.query(|conn| {
                 let __query = super::schema::$table::table
                     .inner_join(super::schema::$diff_table::table)
                     .filter(super::schema::$diff_table::dsl::diff_source.eq(diff_id))
@@ -223,7 +227,7 @@ impl DeviceDatabase {
     );
 
     pub fn get_permissions_for_apk(&self, apk: &Apk) -> Result<Vec<ApkPermission>> {
-        self.with_connection(|conn| {
+        self.query(|conn| {
             let perms = ApkPermission::belonging_to(apk)
                 .select(ApkPermission::as_select())
                 .load(conn)?;
@@ -232,7 +236,7 @@ impl DeviceDatabase {
     }
     pub fn get_all_apks_with_permsissions(&self) -> Result<Vec<ApkWithPermissions>> {
         let apks = self.get_apks()?;
-        self.with_connection(|conn| {
+        self.query(|conn| {
             let perms = ApkPermission::belonging_to(&apks)
                 .select(ApkPermission::as_select())
                 .load(conn)?;
@@ -250,7 +254,7 @@ impl DeviceDatabase {
     }
 
     pub fn get_all_system_service_impls(&self) -> Result<HashMap<String, Vec<SystemServiceImpl>>> {
-        self.with_connection(|c| {
+        self.query(|c| {
             let mut result: HashMap<String, Vec<SystemServiceImpl>> = HashMap::new();
 
             let rows = system_service_impls::table
@@ -378,7 +382,7 @@ impl DeviceDatabase {
         let like_middle = format!("%:{}:%", sel);
         let like_left = format!("{}:%", sel);
         let like_right = format!("%:{}", sel);
-        self.with_connection(|c| {
+        self.query(|c| {
             Ok(providers
                 .filter(
                     authorities
@@ -562,6 +566,8 @@ impl From<ConnectionError> for Error {
 #[cfg(test)]
 mod test {
     use super::*;
+    use diesel::dsl::sql;
+    use diesel::sql_types::BigInt;
     use rstest::*;
     use std::panic;
     use std::panic::AssertUnwindSafe;
@@ -626,6 +632,38 @@ mod test {
                 middle.authorities,
                 "left.not.middle.authority:middle.authority:right.not.middle.authority"
             );
+        });
+    }
+
+    #[rstest]
+    fn test_write_rejects_reentry(tmp_context: TestContext) {
+        db_test(&tmp_context, |db| {
+            let res: Result<()> = db.write(|_| db.write(|_| Ok(())));
+            assert_err!(res, ReentrantWrite);
+        });
+    }
+
+    #[rstest]
+    fn test_sequential_writes_are_allowed(tmp_context: TestContext) {
+        db_test(&tmp_context, |db| {
+            for _ in 0..2 {
+                let res: Result<()> = db.write(|_| Ok(()));
+                res.expect("the guard should be released when the write returns");
+            }
+        });
+    }
+
+    #[rstest]
+    fn test_query_inside_write_is_allowed(tmp_context: TestContext) {
+        db_test(&tmp_context, |db| {
+            let res: Result<i64> = db.write(|_| {
+                db.query(|conn| {
+                    diesel::select(sql::<BigInt>("1"))
+                        .get_result::<i64>(conn)
+                        .map_err(Error::from)
+                })
+            });
+            assert_eq!(res.expect("a read inside a write should work"), 1);
         });
     }
 

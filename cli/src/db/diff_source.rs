@@ -64,11 +64,11 @@ impl Add {
         let name = self.name.clone();
         let ins = models::InsertDiffSource { name: &name };
 
-        let id = db.with_connection(|c| {
-            insert_into(diff_sources::table)
+        let id = db.write(|c| -> dtu::db::Result<i32> {
+            Ok(insert_into(diff_sources::table)
                 .values(&ins)
                 .returning(diff_sources::id)
-                .get_result(c)
+                .get_result(c)?)
         })?;
 
         let new_source = models::DiffSource { id, name };

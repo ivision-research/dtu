@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 
 use diesel::backend::Backend;
-use diesel::connection::SimpleConnection;
 use diesel::dsl::{AsSelect, InnerJoin, InnerJoinOn, IntoBoxed, Select};
 use diesel::sql_query;
 use diesel::sql_types::{BigInt, Integer, Text};
@@ -13,7 +12,7 @@ use itertools::Itertools;
 use smalisa::AccessFlag;
 
 use super::schema::*;
-use crate::db::common::DBThread;
+use crate::db::common::Db;
 use crate::db::common::*;
 use crate::db::graph::models::{
     ClassId, ClassSearch, FieldId, FieldRef, FieldSearchParams, MethodCallPath, MethodId,
@@ -21,6 +20,7 @@ use crate::db::graph::models::{
 };
 use crate::db::graph::models::{FieldAccessOp, FieldSearch, FieldSpec, Source};
 use crate::db::graph::{ClassSpec, GraphDatabase, StringSearch};
+use crate::db::macros::{impl_delete_by, impl_get_all, query};
 use crate::utils::{path_must_name, path_must_str, ClassName};
 use crate::Context;
 use diesel::prelude::*;
@@ -32,13 +32,13 @@ const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations/graph_migra
 const TEST_MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations/test_graph_migrations/");
 
 pub struct GraphSqliteDatabase {
-    db_thread: DBThread,
+    db: Db,
 }
 
 impl GraphSqliteDatabase {
     pub fn new(ctx: &dyn Context) -> Result<Self> {
         let db = Self {
-            db_thread: DBThread::new(
+            db: Db::new(
                 ctx,
                 GRAPH_DATABASE_FILE_NAME,
                 MIGRATIONS,
@@ -46,28 +46,25 @@ impl GraphSqliteDatabase {
                 TEST_MIGRATIONS,
             )?,
         };
-
-        db.with_connection(|c| c.batch_execute("PRAGMA journal_mode=WAL"))?;
         Ok(db)
     }
 
     pub fn new_from_path<S: AsRef<str> + ?Sized>(path: &S) -> Result<Self> {
         let db = Self {
-            db_thread: DBThread::new_from_path(
+            db: Db::new_from_path(
                 path,
                 MIGRATIONS,
                 #[cfg(test)]
                 TEST_MIGRATIONS,
             )?,
         };
-        db.with_connection(|c| c.batch_execute("PRAGMA journal_mode=WAL"))?;
         Ok(db)
     }
 
     #[cfg(test)]
     fn new_from_url(url: &String) -> Result<Self> {
         Ok(Self {
-            db_thread: DBThread::new_from_url(
+            db: Db::new_from_url(
                 url,
                 MIGRATIONS,
                 #[cfg(test)]
@@ -76,34 +73,48 @@ impl GraphSqliteDatabase {
         })
     }
 
+    /// Read using any available connection
     #[inline]
-    pub fn with_connection<F, R>(&self, f: F) -> R
+    pub fn query<F, R>(&self, f: F) -> Result<R>
     where
-        R: Send,
-        F: FnOnce(&mut SqliteConnection) -> R + Send,
+        F: FnOnce(&mut SqliteConnection) -> Result<R>,
     {
-        self.db_thread.with_connection(f)
+        self.db.query(f)
     }
 
+    /// Write, holding one connection for the whole closure inside a transaction
     #[inline]
-    pub fn transaction<F, T, E>(&self, f: F) -> std::result::Result<T, E>
+    pub fn write<F, R, E>(&self, f: F) -> std::result::Result<R, E>
     where
-        T: Send,
-        E: From<diesel::result::Error> + Send,
-        F: FnOnce(&mut SqliteConnection) -> std::result::Result<T, E> + Send,
+        F: FnOnce(&mut SqliteConnection) -> std::result::Result<R, E>,
+        E: From<Error> + From<diesel::result::Error>,
     {
-        self.db_thread.transaction(f)
+        self.db.write(f)
+    }
+
+    /// [GraphSqliteDatabase::write], with `pragmas` applied before the transaction opens
+    #[inline]
+    pub(super) fn write_with_pragmas<F, R, E>(
+        &self,
+        pragmas: &str,
+        f: F,
+    ) -> std::result::Result<R, E>
+    where
+        F: FnOnce(&mut SqliteConnection) -> std::result::Result<R, E>,
+        E: From<Error> + From<diesel::result::Error>,
+    {
+        self.db.write_with_pragmas(pragmas, f)
     }
 
     #[allow(unused)]
     pub(super) fn get_source_id(&self, source: &str) -> Result<SourceId> {
-        Ok(self.with_connection(|c| {
-            query!(sources::table
+        self.query(|c| {
+            Ok(query!(sources::table
                 .filter(sources::name.eq(source))
                 .select(sources::id)
                 .limit(1))
-            .get_result::<SourceId>(c)
-        })?)
+            .get_result::<SourceId>(c)?)
+        })
     }
 
     impl_get_all!(get_sources, Source, sources);
@@ -124,7 +135,7 @@ impl GraphSqliteDatabase {
             .inner_join(classes::table.on(classes::id.eq(methods::class)))
             .inner_join(sources::table)
             .select(MethodSpecRow::as_select()));
-        let rows = self.with_connection(|c| q.load::<MethodSpecRow>(c))?;
+        let rows = self.query(|c| Ok(q.load::<MethodSpecRow>(c)?))?;
         Ok(rows.into_iter().map(MethodSpec::from).collect())
     }
 
@@ -136,7 +147,7 @@ impl GraphSqliteDatabase {
             .inner_join(classes::table.on(classes::id.eq(methods::class)))
             .inner_join(sources::table)
             .select(MethodSpecRow::as_select()));
-        let rows = self.with_connection(|c| q.load::<MethodSpecRow>(c))?;
+        let rows = self.query(|c| Ok(q.load::<MethodSpecRow>(c)?))?;
         Ok(rows.into_iter().map(MethodSpec::from).collect())
     }
 
@@ -148,7 +159,7 @@ impl GraphSqliteDatabase {
                     .inner_join(sources::table)
                     .select(SourcedString::as_select()));
                 Ok(self
-                    .with_connection(|c| q.load(c))?
+                    .query(|c| Ok(q.load(c)?))?
                     .into_iter()
                     .collect::<Vec<_>>())
             }
@@ -159,7 +170,7 @@ impl GraphSqliteDatabase {
                     .filter(sources::name.eq(v))
                     .select(SourcedString::as_select()));
                 Ok(self
-                    .with_connection(|c| q.load(c))?
+                    .query(|c| Ok(q.load(c)?))?
                     .into_iter()
                     .collect::<Vec<_>>())
             }
@@ -174,7 +185,7 @@ impl GraphSqliteDatabase {
                     .inner_join(sources::table)
                     .select(SourcedString::as_select()));
                 Ok(self
-                    .with_connection(|c| q.load(c))?
+                    .query(|c| Ok(q.load(c)?))?
                     .into_iter()
                     .collect::<Vec<_>>())
             }
@@ -185,7 +196,7 @@ impl GraphSqliteDatabase {
                     .filter(sources::name.eq(v))
                     .select(SourcedString::as_select()));
                 Ok(self
-                    .with_connection(|c| q.load(c))?
+                    .query(|c| Ok(q.load(c)?))?
                     .into_iter()
                     .collect::<Vec<_>>())
             }
@@ -208,7 +219,7 @@ impl GraphSqliteDatabase {
             .map_err(|_| Error::Generic(format!("invalid depth")))?;
 
         let mid_query = method.id_query();
-        let method_ids = self.with_connection(|c| mid_query.load::<MethodId>(c))?;
+        let method_ids = self.query(|c| Ok(mid_query.load::<MethodId>(c)?))?;
 
         if method_ids.is_empty() {
             return Ok(Vec::new());
@@ -236,7 +247,7 @@ SELECT ct.path FROM calls_to AS ct WHERE ct.distance > 0;"#,
         .bind::<Text, _>(to_json_array(&method_ids))
         .bind::<Integer, _>(int_depth));
 
-        let rows = self.with_connection(|c| q.get_results::<RouteRow>(c))?;
+        let rows = self.query(|c| Ok(q.get_results::<RouteRow>(c)?))?;
         let mut routes = self.hydrate_routes(rows)?;
 
         // A call-into route is built outwards from the searched method, so it reads backwards
@@ -493,7 +504,7 @@ impl GraphDatabase for GraphSqliteDatabase {
         }
 
         let mid_query = method.id_query();
-        let method_ids = self.with_connection(|c| mid_query.load::<MethodId>(c))?;
+        let method_ids = self.query(|c| Ok(mid_query.load::<MethodId>(c)?))?;
 
         if method_ids.is_empty() {
             return Ok(Vec::new());
@@ -589,7 +600,7 @@ ORDER BY r.id, r.depth;
 
         let q = query!(q);
 
-        let rows = self.with_connection(|c| q.get_results::<RouteRow>(c))?;
+        let rows = self.query(|c| Ok(q.get_results::<RouteRow>(c)?))?;
 
         Ok(self
             .hydrate_routes(rows)?
@@ -611,7 +622,7 @@ ORDER BY r.id, r.depth;
         }
 
         let fid_query = field.id_query();
-        let field_ids = self.with_connection(|c| fid_query.load::<FieldId>(c))?;
+        let field_ids = self.query(|c| Ok(fid_query.load::<FieldId>(c)?))?;
 
         if field_ids.is_empty() {
             return Ok(Vec::new());
@@ -689,7 +700,7 @@ ORDER BY r.id, r.depth;
 
         let q = query!(q);
 
-        let rows = self.with_connection(|c| q.get_results::<RouteRow>(c))?;
+        let rows = self.query(|c| Ok(q.get_results::<RouteRow>(c)?))?;
 
         Ok(self
             .hydrate_routes(rows)?
@@ -722,7 +733,7 @@ ORDER BY r.id, r.depth;
             .select(ClassSpecRow::as_select()));
 
         Ok(self
-            .with_connection(|c| q.first::<ClassSpecRow>(c))
+            .query(|c| Ok(q.first::<ClassSpecRow>(c)?))
             .map(ClassSpec::from)?)
     }
 
@@ -732,7 +743,7 @@ ORDER BY r.id, r.depth;
             .inner_join(sources::table)
             .select(ClassSpecRow::as_select()));
         Ok(self
-            .with_connection(|c| q.load::<ClassSpecRow>(c))?
+            .query(|c| Ok(q.load::<ClassSpecRow>(c)?))?
             .into_iter()
             .map(ClassSpec::from)
             .collect::<Vec<_>>())
@@ -746,7 +757,7 @@ ORDER BY r.id, r.depth;
             .select(MethodSpecRow::as_select()));
 
         Ok(self
-            .with_connection(|c| q.first::<MethodSpecRow>(c))
+            .query(|c| Ok(q.first::<MethodSpecRow>(c)?))
             .map(MethodSpec::from)?)
     }
 
@@ -757,7 +768,7 @@ ORDER BY r.id, r.depth;
             .inner_join(sources::table)
             .select(MethodSpecRow::as_select()));
         Ok(self
-            .with_connection(|c| q.load::<MethodSpecRow>(c))?
+            .query(|c| Ok(q.load::<MethodSpecRow>(c)?))?
             .into_iter()
             .map(MethodSpec::from)
             .collect::<Vec<_>>())
@@ -765,24 +776,69 @@ ORDER BY r.id, r.depth;
 
     fn get_method_ids(&self, search: &MethodSearch) -> Result<Vec<MethodId>> {
         let query = search.id_query();
-        Ok(self.with_connection(|c| query.load::<MethodId>(c))?)
+        Ok(self.query(|c| Ok(query.load::<MethodId>(c)?))?)
     }
 
     fn get_field_ids(&self, search: &FieldSearch) -> Result<Vec<FieldId>> {
         let query = search.id_query();
-        Ok(self.with_connection(|c| query.load::<FieldId>(c))?)
+        Ok(self.query(|c| Ok(query.load::<FieldId>(c)?))?)
     }
 
     fn get_fields(&self, search: &FieldSearch) -> Result<Vec<FieldSpec>> {
         let query = search.spec_query();
-        let rows: Vec<FieldSpecRow> = self.with_connection(|c| query.load::<FieldSpecRow>(c))?;
+        let rows: Vec<FieldSpecRow> = self.query(|c| Ok(query.load::<FieldSpecRow>(c)?))?;
         Ok(rows.into_iter().map(FieldSpec::from).collect())
     }
 
     fn get_methods(&self, search: &MethodSearch) -> Result<Vec<MethodSpec>> {
         let query = search.spec_query();
-        let rows: Vec<MethodSpecRow> = self.with_connection(|c| query.load::<MethodSpecRow>(c))?;
+        let rows: Vec<MethodSpecRow> = self.query(|c| Ok(query.load::<MethodSpecRow>(c)?))?;
         Ok(rows.into_iter().map(MethodSpec::from).collect())
+    }
+
+    fn get_method_source_or_framework(
+        &self,
+        class: &ClassName,
+        name: &str,
+        args: &str,
+        return_type: &str,
+        source: &str,
+    ) -> Result<Option<MethodSpec>> {
+        let is_framework = source == FRAMEWORK_SOURCE;
+
+        if is_framework {
+            let q = query!(methods::table
+                .inner_join(sources::table)
+                .inner_join(classes::table)
+                .select(MethodSpecRow::as_select())
+                .filter(methods::name.eq(name))
+                .filter(methods::args.eq(args))
+                .filter(methods::ret.eq(return_type))
+                .filter(classes::name.eq(class.get_smali_name()))
+                .filter(sources::name.eq(source)));
+            return self.query(|c| {
+                Ok(q.first::<MethodSpecRow>(c)
+                    .optional()?
+                    .map(MethodSpec::from))
+            });
+        }
+
+        let q = query!(methods::table
+            .inner_join(sources::table)
+            .inner_join(classes::table)
+            .select(MethodSpecRow::as_select())
+            .filter(methods::name.eq(name))
+            .filter(methods::args.eq(args))
+            .filter(methods::ret.eq(return_type))
+            .filter(classes::name.eq(class.get_smali_name()))
+            .filter(sources::name.eq_any([source, FRAMEWORK_SOURCE]))
+            .order((sources::name.eq(source).desc(), methods::id.asc())));
+
+        self.query(|c| {
+            Ok(q.first::<MethodSpecRow>(c)
+                .optional()?
+                .map(MethodSpec::from))
+        })
     }
 
     fn get_method_field_refs(&self, method: MethodId) -> Result<Vec<FieldRef>> {
@@ -794,7 +850,7 @@ ORDER BY r.id, r.depth;
             .select((FieldSpecRow::as_select(), method_field_access::action)));
 
         Ok(self
-            .with_connection(|c| q.load::<(FieldSpecRow, i32)>(c))?
+            .query(|c| Ok(q.load::<(FieldSpecRow, i32)>(c)?))?
             .into_iter()
             .filter_map(|it| {
                 let op = FieldAccessOp::maybe_from_literal(it.1 as u8)?;
@@ -828,7 +884,7 @@ ORDER BY r.id, r.depth;
 
         let q = query!(q);
 
-        let rows = self.with_connection(|c| q.load::<MethodSpecRow>(c))?;
+        let rows = self.query(|c| Ok(q.load::<MethodSpecRow>(c)?))?;
         Ok(rows.into_iter().map(MethodSpec::from).collect())
     }
 
@@ -838,7 +894,7 @@ ORDER BY r.id, r.depth;
             .filter(method_strings::method.eq(method))
             .select(strings::string));
 
-        Ok(self.with_connection(|c| q.load::<String>(c))?)
+        Ok(self.query(|c| Ok(q.load::<String>(c)?))?)
     }
 
     fn get_strings_for_source(&self, source: &str) -> Result<Vec<String>> {
@@ -846,7 +902,7 @@ ORDER BY r.id, r.depth;
             .inner_join(sources::table)
             .filter(sources::name.eq(source))
             .select(strings::string));
-        Ok(self.with_connection(|c| q.load::<String>(c))?)
+        Ok(self.query(|c| Ok(q.load::<String>(c)?))?)
     }
 
     fn find_strings(
@@ -879,7 +935,7 @@ ORDER BY r.id, r.depth;
             .inner_join(sources::table)
             .filter(sources::name.eq(source))
             .select(classes::name));
-        Ok(self.with_connection(|c| q.load::<ClassName>(c))?)
+        Ok(self.query(|c| Ok(q.load::<ClassName>(c)?))?)
     }
 
     fn find_classes_with_method(
@@ -903,7 +959,7 @@ ORDER BY r.id, r.depth;
             q = q.filter(sources::name.eq(s));
         }
         let q = query!(q);
-        let rows: Vec<ChildClassRow> = self.with_connection(|c| q.get_results(c))?;
+        let rows: Vec<ChildClassRow> = self.query(|c| Ok(q.get_results(c)?))?;
         Ok(rows.into_iter().map(ClassSpec::from).collect())
     }
 
@@ -913,7 +969,7 @@ ORDER BY r.id, r.depth;
             .inner_join(classes::table)
             .filter(sources::name.eq(source))
             .select(MethodSpecRow::as_select()));
-        let rows = self.with_connection(|c| q.load::<MethodSpecRow>(c))?;
+        let rows = self.query(|c| Ok(q.load::<MethodSpecRow>(c)?))?;
         Ok(rows.into_iter().map(MethodSpec::from).collect())
     }
 
@@ -969,7 +1025,7 @@ SELECT DISTINCT source, name, access_flags from class_specs
             q = q.bind::<Text, _>(src);
         }
 
-        self.with_connection(|c| -> Result<Vec<ClassSpec>> {
+        self.query(|c| {
             let rows: Vec<ChildClassRow> = query!(q).get_results(c)?;
             Ok(rows.into_iter().map(ClassSpec::from).collect())
         })
@@ -1018,7 +1074,7 @@ SELECT DISTINCT source, name, access_flags from class_specs
 
         let q = query!(q);
 
-        let rows: Vec<ChildClassRow> = self.with_connection(|c| q.get_results(c))?;
+        let rows: Vec<ChildClassRow> = self.query(|c| Ok(q.get_results(c)?))?;
         Ok(rows.into_iter().map(ClassSpec::from).collect())
     }
 
@@ -1079,7 +1135,7 @@ SELECT DISTINCT source, name, access_flags from class_specs
         }
 
         let q = query!(q);
-        let rows: Vec<ChildClassRow> = self.with_connection(|c| q.get_results(c))?;
+        let rows: Vec<ChildClassRow> = self.query(|c| Ok(q.get_results(c)?))?;
 
         Ok(rows.into_iter().map(ClassSpec::from).collect())
     }
@@ -1157,7 +1213,7 @@ SELECT DISTINCT source, name, access_flags from class_specs"#
         }
 
         let q = query!(q);
-        let rows: Vec<ChildClassRow> = self.with_connection(|c| q.get_results(c))?;
+        let rows: Vec<ChildClassRow> = self.query(|c| Ok(q.get_results(c)?))?;
         Ok(rows.into_iter().map(ClassSpec::from).collect())
     }
 }

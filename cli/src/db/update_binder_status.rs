@@ -46,11 +46,11 @@ impl UpdateBinderAvailability {
             })
             .collect::<Vec<String>>();
 
-        db.with_connection(|c| {
-            update(system_services::table)
+        db.write(|c| -> dtu::db::Result<usize> {
+            Ok(update(system_services::table)
                 .filter(system_services::name.eq_any(&services))
                 .set(system_services::can_get_binder.eq(UnknownBool::True.to_numeric()))
-                .execute(c)
+                .execute(c)?)
         })?;
 
         Ok(())

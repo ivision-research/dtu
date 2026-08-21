@@ -8,6 +8,11 @@ use crate::Context;
 use super::common::*;
 use super::models::*;
 use super::schema;
+use crate::db::macros::{
+    def_delete_by, def_get_multi, def_get_one_by, def_insert_multi, def_insert_one, def_update_one,
+    impl_delete_by, impl_get_all, impl_get_multi, impl_get_one_by, impl_insert_multi,
+    impl_insert_one, impl_update_one, query,
+};
 use crate::prereqs::Prereq;
 
 pub const APP_ID_KEY: &'static str = "app_id";
@@ -59,13 +64,13 @@ pub trait Database: Sync + Sync {
 }
 
 pub struct MetaSqliteDatabase {
-    db_thread: DBThread,
+    db: Db,
 }
 
 impl MetaSqliteDatabase {
     pub fn new(ctx: &dyn Context) -> Result<Self> {
         Ok(Self {
-            db_thread: DBThread::new(
+            db: Db::new(
                 ctx,
                 META_DATABASE_FILE_NAME,
                 MIGRATIONS,
@@ -77,7 +82,7 @@ impl MetaSqliteDatabase {
 
     pub fn new_from_path<S: AsRef<str> + ?Sized>(path: &S) -> Result<Self> {
         Ok(Self {
-            db_thread: DBThread::new_from_path(
+            db: Db::new_from_path(
                 path,
                 MIGRATIONS,
                 #[cfg(test)]
@@ -89,7 +94,7 @@ impl MetaSqliteDatabase {
     #[allow(dead_code)]
     fn new_from_url(url: &String) -> Result<Self> {
         Ok(Self {
-            db_thread: DBThread::new_from_url(
+            db: Db::new_from_url(
                 url,
                 MIGRATIONS,
                 #[cfg(test)]
@@ -100,13 +105,23 @@ impl MetaSqliteDatabase {
 }
 
 impl MetaSqliteDatabase {
+    /// Read using any available connection
     #[inline]
-    fn with_connection<F, R>(&self, f: F) -> R
+    fn query<F, R>(&self, f: F) -> Result<R>
     where
-        R: Send,
-        F: FnOnce(&mut SqliteConnection) -> R + Send,
+        F: FnOnce(&mut SqliteConnection) -> Result<R>,
     {
-        self.db_thread.with_connection(f)
+        self.db.query(f)
+    }
+
+    /// Write, holding one connection for the whole closure inside a transaction
+    #[inline]
+    fn write<F, R, E>(&self, f: F) -> std::result::Result<R, E>
+    where
+        F: FnOnce(&mut SqliteConnection) -> std::result::Result<R, E>,
+        E: From<Error> + From<diesel::result::Error>,
+    {
+        self.db.write(f)
     }
 }
 
@@ -127,18 +142,18 @@ impl Database for MetaSqliteDatabase {
     impl_delete_by!(delete_decompile_status_by_id, i32, decompile_status, id.eq);
 
     fn get_progress(&self, sel: Prereq) -> Result<ProgressStep> {
-        Ok(self.with_connection(|conn| {
-            query!(progress::table.filter(progress::step.eq(sel)).limit(1))
-                .get_result::<(i32, Prereq, bool)>(conn)
-                .map(|it| ProgressStep {
-                    step: it.1,
-                    completed: it.2,
-                })
-        })?)
+        self.query(|conn| {
+            let row = query!(progress::table.filter(progress::step.eq(sel)).limit(1))
+                .get_result::<(i32, Prereq, bool)>(conn)?;
+            Ok(ProgressStep {
+                step: row.1,
+                completed: row.2,
+            })
+        })
     }
 
     fn get_all_progress(&self) -> Result<Vec<ProgressStep>> {
-        self.with_connection(|conn| {
+        self.query(|conn| {
             Ok(progress::table
                 .load::<(i32, Prereq, bool)>(conn)?
                 .into_iter()
@@ -151,7 +166,7 @@ impl Database for MetaSqliteDatabase {
     }
 
     fn update_progress(&self, prog: &ProgressStep) -> Result<()> {
-        self.with_connection(|conn| {
+        self.write(|conn| {
             query!(update(progress::table.filter(progress::step.eq(prog.step)))
                 .set(progress::completed.eq(prog.completed)))
             .execute(conn)?;
@@ -183,7 +198,7 @@ impl Database for MetaSqliteDatabase {
     }
 
     fn set_app_permission_usability(&self, name: &str, is_usable: bool) -> Result<()> {
-        self.with_connection(|conn| {
+        self.write(|conn| {
             query!(
                 update(app_permissions::table.filter(app_permissions::permission.eq(name)))
                     .set(app_permissions::usable.eq(is_usable))
@@ -218,7 +233,7 @@ impl Database for MetaSqliteDatabase {
     );
 
     fn app_activity_name_taken(&self, check_name: &str) -> Result<bool> {
-        self.with_connection(|c| {
+        self.query(|c| {
             match query!(app_activities::table.filter(app_activities::name.eq(check_name)))
                 .get_result::<AppActivity>(c)
             {
@@ -230,43 +245,44 @@ impl Database for MetaSqliteDatabase {
     }
 
     fn wipe_app_data(&self) -> Result<()> {
-        self.with_connection(|conn| {
-            conn.transaction(|txn| {
-                delete(schema::app_activities::dsl::app_activities).execute(txn)?;
-                delete(schema::app_permissions::dsl::app_permissions).execute(txn)?;
-                Ok(())
-            })
+        self.write(|conn| {
+            delete(schema::app_activities::dsl::app_activities).execute(conn)?;
+            delete(schema::app_permissions::dsl::app_permissions).execute(conn)?;
+            Ok(())
         })
     }
 
     fn add_key_value(&self, key: &str, value: &str) -> Result<()> {
         let ins = InsertKeyValue { key, value };
-        self.with_connection(|c| query!(insert_into(key_values::table).values(&ins)).execute(c))?;
-        Ok(())
+        self.write(|c| {
+            query!(insert_into(key_values::table).values(&ins)).execute(c)?;
+            Ok(())
+        })
     }
 
     fn update_key_value(&self, key: &str, value: &str) -> Result<()> {
         use super::schema::key_values::dsl;
-        self.with_connection(|c| {
+        self.write(|c| {
             query!(update(dsl::key_values)
                 .filter(dsl::key.eq(key))
                 .set(dsl::value.eq(value)))
-            .execute(c)
-        })?;
-        Ok(())
+            .execute(c)?;
+            Ok(())
+        })
     }
 
     fn get_key_value(&self, key: &str) -> Result<String> {
-        let res: KeyValue = self.with_connection(|c| {
-            query!(key_values::table.filter(key_values::key.eq(key))).get_result(c)
-        })?;
-        Ok(res.value)
+        self.query(|c| {
+            let res: KeyValue =
+                query!(key_values::table.filter(key_values::key.eq(key))).get_result(c)?;
+            Ok(res.value)
+        })
     }
 
     fn delete_key_value(&self, key: &str) -> Result<()> {
-        self.with_connection(|c| {
-            query!(delete(key_values::table.filter(key_values::key.eq(key)))).execute(c)
-        })?;
-        Ok(())
+        self.write(|c| {
+            query!(delete(key_values::table.filter(key_values::key.eq(key)))).execute(c)?;
+            Ok(())
+        })
     }
 }

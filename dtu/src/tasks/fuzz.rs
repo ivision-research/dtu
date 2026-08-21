@@ -115,10 +115,11 @@ where
         })
         .collect::<Vec<InsertFuzzResult>>();
 
-    dev_db.with_connection(|c| {
+    dev_db.write(|c| -> db::Result<()> {
         insert_into(fuzz_results::table)
             .values(fuzz_results.as_slice())
-            .execute(c)
+            .execute(c)?;
+        Ok(())
     })?;
 
     Ok(())

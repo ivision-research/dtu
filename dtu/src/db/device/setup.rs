@@ -797,7 +797,7 @@ impl<'a> AddSystemServiceTask<'a> {
             }
         );
 
-        let res = self.db.with_transaction(|c| self.add_service(c));
+        let res = self.db.write(|c| self.add_service(c));
         on_event!(
             &self.monitor,
             SetupEvent::DoneAddingSystemService {
@@ -1656,14 +1656,12 @@ impl<'a> DBSetupTask<'a> {
             .map(|(name, value)| InsertDeviceProperty { name, value })
             .collect::<Vec<InsertDeviceProperty>>();
 
-        let res = self
-            .db
-            .with_connection(|c| {
-                insert_into(device_properties::table)
-                    .values(ins.as_slice())
-                    .execute(c)
-            })
-            .map_err(Error::from);
+        let res = self.db.write(|c| {
+            insert_into(device_properties::table)
+                .values(ins.as_slice())
+                .execute(c)?;
+            Ok(())
+        });
 
         match res {
             Err(Error::UniqueViolation(_)) => Ok(()),
@@ -1780,7 +1778,7 @@ impl<'a> DBSetupTask<'a> {
         let monitor = self.monitor;
         let cancel = &self.cancel;
 
-        self.db.with_transaction(|conn| {
+        self.db.write(|conn| {
             let task = AddApkTask::new(
                 ctx,
                 conn,

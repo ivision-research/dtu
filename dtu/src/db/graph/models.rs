@@ -5,7 +5,7 @@ use dtu_proc_macro::sql_db_row;
 use serde::Deserialize;
 use smalisa::AccessFlag;
 
-use crate::{db::common::database_id, utils::ClassName};
+use crate::{db::macros::database_id, utils::ClassName};
 
 use super::schema::*;
 

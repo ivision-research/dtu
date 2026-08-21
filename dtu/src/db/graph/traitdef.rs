@@ -40,6 +40,18 @@ pub trait GraphDatabase: Sync + Send {
     /// Find all methods matching the given search critera
     fn get_methods(&self, search: &MethodSearch) -> Result<Vec<MethodSpec>>;
 
+    /// Get the fully specified method from the database in either the provided source or the
+    /// framework. If source is [Some] and the method isn't found in that source but does exist in
+    /// the framework, the framework version will be returned
+    fn get_method_source_or_framework(
+        &self,
+        class: &ClassName,
+        name: &str,
+        args: &str,
+        return_type: &str,
+        source: &str,
+    ) -> Result<Option<MethodSpec>>;
+
     /// Find all methods matching the given search criteria returning only the database IDs
     fn get_method_ids(&self, search: &MethodSearch) -> Result<Vec<MethodId>> {
         Ok(self
