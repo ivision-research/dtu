@@ -3,21 +3,17 @@ use std::collections::HashMap;
 use clap::{self, Args};
 use dtu::{
     analysis::{
+        db::GraphTaintAnalysisDb,
         taint::{TaintSeedOptions, TaintSource},
         typing::complex_param_sources,
     },
-    db::graph::{
-        get_default_graphdb, models::MethodId, GraphDatabase, MethodSearch, MethodSpec,
-        FRAMEWORK_SOURCE,
-    },
+    db::graph::{models::MethodId, MethodSearch, MethodSpec, FRAMEWORK_SOURCE},
     utils::ClassName,
     Context,
 };
 
-use crate::cache_key;
 use crate::parsers::GraphSourceValueParser;
 use crate::taint::common::{analyze, Analysis, RunOpts};
-use crate::utils::{asref_hash_key, bool_hash_key, opt_asref_hash_key};
 
 /// Taint analysis over an arbitrary set of methods
 ///
@@ -64,29 +60,9 @@ impl Methods {
             anyhow::bail!("nothing to track, pass --taint or --complex-params");
         }
 
-        let gdb = get_default_graphdb(ctx)?;
+        let db = GraphTaintAnalysisDb::new_from_path(ctx, &self.run.out_file)?;
 
-        // A TaintSource round trips through its text form, which is what was passed in
-        let taints = self
-            .taints
-            .iter()
-            .map(|it| it.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
-
-        let cache = cache_key!(
-            "analysis-methods",
-            asref_hash_key(self.class.as_str()),
-            opt_asref_hash_key(&self.name),
-            opt_asref_hash_key(&self.signature),
-            opt_asref_hash_key(&self.source),
-            bool_hash_key(self.complex_params),
-            bool_hash_key(self.seed_indirect),
-            asref_hash_key(taints.as_str()),
-            &self.run.hash_key()
-        );
-
-        let report = analyze(ctx, &gdb, &self.run, &cache, || {
+        analyze(ctx, db, &self.run, |gdb| {
             let class = ClassName::from(self.class.as_str());
             let search = MethodSearch::new_from_opts(
                 Some(&class),
@@ -116,7 +92,6 @@ impl Methods {
             })
         })?;
 
-        println!("{}", serde_json::to_string(&report)?);
         Ok(())
     }
 

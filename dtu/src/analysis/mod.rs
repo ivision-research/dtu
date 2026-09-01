@@ -7,5 +7,7 @@ mod utils;
 pub use class_loader::SsaClassLoader;
 pub use utils::get_ssa_method;
 
+pub mod db;
+
 mod stats;
-pub(super) use stats::ClassLoaderStats;
+pub(super) use stats::{CacheStats, YokeCacheStats};

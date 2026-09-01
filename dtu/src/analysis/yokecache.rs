@@ -8,9 +8,7 @@ use serde::{Deserialize, Serialize};
 use yoke::{Yoke, Yokeable};
 
 use crate::db::{query, DatabaseId};
-use crate::{analysis::ClassLoaderStats, Context};
-
-type CacheStats = ClassLoaderStats;
+use crate::{analysis::YokeCacheStats, Context};
 
 pub type Cart = Box<[u8]>;
 pub type Yoked<V> = Yoke<V, Cart>;
@@ -25,7 +23,7 @@ where
 {
     cache: Mutex<lru::LruCache<K, Arc<Yoked<V>>>>,
     pool: Pool<ConnectionManager<SqliteConnection>>,
-    stats: CacheStats,
+    stats: YokeCacheStats,
 }
 
 #[derive(Debug)]
@@ -92,7 +90,7 @@ where
 
         Some(Self {
             pool,
-            stats: CacheStats::new(),
+            stats: YokeCacheStats::new(),
             cache: Mutex::new(lru::LruCache::new(NonZeroUsize::new(64).unwrap())),
         })
     }

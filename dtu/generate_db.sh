@@ -17,4 +17,5 @@ else
     setup_db "device"
     setup_db "meta"
     setup_db "graph"
+    setup_db "taint"
 fi

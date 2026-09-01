@@ -19,21 +19,10 @@ options = [
 
 [taint]
 
-[taint.filter-method]
-options = [
-    ["file", "f", "File", ""],
-    ["class", "c", "GraphClass", ""],
-    ["name", "n", "GraphMethod", ""],
-    ["signature", "s", "GraphSignature", ""],
-    ["source", "S", "GraphSource", ""]
-]
 
-[taint.filter-field]
-options = [
-    ["file", "f", "File", ""],
-    ["class", "c", "GraphClass", ""],
-    ["name", "n", "Uncompletable", ""]
-]
+[taint.sqlite]
+
+[taint.query]
 
 [taint.providers]
 options = [
@@ -82,6 +71,18 @@ options = [
     ["only-new", "n", "None", ""],
     ["diff-source", "S", "DiffSource", ""],
 ]
+
+[taint.filter]
+options = [
+    ["file", "F", "File", ""],
+    ["class", "c", "GraphClass", ""],
+    ["name", "n", "GraphMethod", ""],
+    ["signature", "s", "GraphSignature", ""],
+    ["source", "S", "GraphSource", ""],
+    # TODO: FilterSpec?
+    ["filter", "f", "Uncompletable", ""]
+]
+
 
 [taint.methods]
 options = [

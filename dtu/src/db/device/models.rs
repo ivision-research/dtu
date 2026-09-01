@@ -113,7 +113,7 @@ pub struct Permission {
 }
 
 #[sql_db_row]
-#[derive(Associations, Selectable)]
+#[derive(Associations)]
 #[diesel(belongs_to(Apk))]
 #[diesel(table_name = apk_permissions)]
 #[derive(Serialize, Deserialize)]

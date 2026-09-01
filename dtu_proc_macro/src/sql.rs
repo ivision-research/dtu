@@ -1,5 +1,8 @@
+use std::ops::Deref;
+
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{quote, ToTokens};
+use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::token::{And, Colon2, Gt, Lt};
 use syn::{
@@ -32,6 +35,23 @@ pub(crate) fn sql_db_row(
         .map(|att| att.clone())
         .collect::<Vec<Attribute>>();
 
+    let mut kept_attrs = Vec::new();
+    let mut dtu_attrs = None;
+
+    for att in attrs {
+        if attr_path_matches_simple(att, "dtu") {
+            dtu_attrs = match att.parse_args::<DtuAttrs>() {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    e.to_compile_error().to_tokens(&mut tokens);
+                    return tokens.into();
+                }
+            };
+        } else {
+            kept_attrs.push(att.clone());
+        }
+    }
+
     // TODO don't need this anymore
     let stripped_fields = fields
         .iter()
@@ -54,7 +74,14 @@ pub(crate) fn sql_db_row(
             .unwrap_or(false)
     });
 
-    define_insertable(&st, &stripped_fields, &diesel_attrs, &mut tokens);
+    define_insertable(
+        &st,
+        &stripped_fields,
+        &diesel_attrs,
+        &dtu_attrs,
+        &mut tokens,
+    );
+    define_selectable(&st, &stripped_fields, &diesel_attrs, &mut tokens);
 
     let derives = if has_id {
         quote! {
@@ -69,7 +96,7 @@ pub(crate) fn sql_db_row(
     let code = quote! {
         #[cfg_attr(debug_assertions, derive(Debug, PartialEq))]
         #[derive(#derives)]
-        #( #attrs )*
+        #( #kept_attrs )*
         #vis struct #ident #generics {
             #(
                 #stripped_fields,
@@ -82,10 +109,136 @@ pub(crate) fn sql_db_row(
     tokens.into()
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DtuAttr {
+    InsertKeepId,
+}
+
+struct DtuAttrs(Vec<DtuAttr>);
+impl Deref for DtuAttrs {
+    type Target = Vec<DtuAttr>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Parse for DtuAttr {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let ident: Ident = input.parse()?;
+        if ident == "insert_keep_id" {
+            return Ok(Self::InsertKeepId);
+        }
+
+        Err(syn::Error::new(
+            input.span(),
+            format!("unexpected dtu attr: {ident}"),
+        ))
+    }
+}
+
+impl Parse for DtuAttrs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut attrs = Vec::new();
+        while !input.is_empty() {
+            let attr: DtuAttr = input.parse()?;
+            attrs.push(attr);
+        }
+
+        Ok(Self(attrs))
+    }
+}
+
+struct DieselTableDefinition {
+    table: Ident,
+}
+
+impl Parse for DieselTableDefinition {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let ident: Ident = input.parse()?;
+        if ident.to_string() != "table_name" {
+            return Err(syn::Error::new(
+                ident.span(),
+                format!("expected `table_name` got {ident}"),
+            ));
+        }
+
+        let _: Token![=] = input.parse()?;
+        let table: Ident = input.parse()?;
+        Ok(Self { table })
+    }
+}
+
+fn attr_path_matches_simple(att: &Attribute, simple: &str) -> bool {
+    let path = &att.path;
+    if path.segments.len() != 1 {
+        return false;
+    }
+    path.segments.first().unwrap().ident == Ident::new(simple, Span::call_site())
+}
+
+fn try_find_table_name(diesel_attrs: &Vec<Attribute>) -> Option<Ident> {
+    if diesel_attrs.is_empty() {
+        return None;
+    }
+    for att in diesel_attrs {
+        if attr_path_matches_simple(att, "diesel") {
+            return att
+                .parse_args::<DieselTableDefinition>()
+                .map(|it| it.table)
+                .ok();
+        }
+    }
+    None
+}
+
+fn define_selectable(
+    st: &ItemStruct,
+    stripped_fields: &Vec<Field>,
+    diesel_attrs: &Vec<Attribute>,
+    tokens: &mut TokenStream,
+) {
+    let name = &st.ident;
+    let table_name = try_find_table_name(diesel_attrs).unwrap_or_else(|| to_table_name(name));
+    let fields = stripped_fields
+        .iter()
+        .filter_map(|it| it.ident.clone())
+        .collect::<Vec<_>>();
+
+    let mut select: Punctuated<Path, Token![,]> = Punctuated::new();
+
+    for field in fields {
+        let mut segments: Punctuated<PathSegment, Token![::]> = Punctuated::new();
+        segments.push(table_name.clone().into());
+        segments.push(field.into());
+        select.push(Path {
+            leading_colon: None,
+            segments,
+        });
+    }
+
+    let code = quote! {
+        impl<DB: ::diesel::backend::Backend> ::diesel::expression::Selectable<DB> for #name {
+            type SelectExpression = (
+                #select
+            );
+
+            fn construct_selection() -> Self::SelectExpression {
+                (
+                    #select
+                )
+            }
+
+        }
+    };
+
+    code.to_tokens(tokens);
+}
+
 fn define_insertable(
     st: &ItemStruct,
     stripped_fields: &Vec<Field>,
     diesel_attrs: &Vec<Attribute>,
+    dtu_attrs: &Option<DtuAttrs>,
     tokens: &mut TokenStream,
 ) {
     let name = &st.ident;
@@ -116,21 +269,28 @@ fn define_insertable(
         }]
     };
 
-    let mut has_string = false;
+    let keep_id = dtu_attrs
+        .as_ref()
+        .is_some_and(|it| it.contains(&DtuAttr::InsertKeepId));
+    let mut has_string_or_class = false;
 
     let transformed_fields = stripped_fields
         .iter()
-        .filter(|f| (*f).ident.as_ref().unwrap().to_string() != "id")
+        .filter(|f| keep_id || (*f).ident.as_ref().unwrap().to_string() != "id")
         .map(|f| {
-            if !is_string(f) {
+            if is_string(f) {
+                has_string_or_class |= true;
+                transform_type_to_ref(f, "str")
+            } else if is_class_name(f) {
+                has_string_or_class |= true;
+                transform_type_to_ref(f, "ClassName")
+            } else {
                 return f.clone();
             }
-            has_string = true;
-            transform_string_to_str(f)
         })
         .collect::<Vec<Field>>();
 
-    let lifetime = if has_string {
+    let lifetime = if has_string_or_class {
         let mut params: Punctuated<GenericParam, Token![,]> = Punctuated::new();
         params.push(GenericParam::Lifetime(LifetimeDef::new(Lifetime::new(
             "'data",
@@ -292,17 +452,21 @@ fn option_inner(ty: &Type) -> Option<&Type> {
 /// Match the type exactly rather than by name: an id newtype like `StringId`
 /// would otherwise be rewritten into a `&str` and fail to bind to its column.
 fn is_string(f: &Field) -> bool {
-    is_string_ty(&f.ty)
+    is_ty(&f.ty, "String")
 }
 
-fn is_string_ty(ty: &Type) -> bool {
+fn is_class_name(f: &Field) -> bool {
+    is_ty(&f.ty, "ClassName")
+}
+
+fn is_ty(ty: &Type, raw: &str) -> bool {
     let Some(seg) = last_segment(ty) else {
         return false;
     };
-    if seg.ident == "String" {
+    if seg.ident == raw {
         return true;
     }
-    option_inner(ty).is_some_and(is_string_ty)
+    option_inner(ty).is_some_and(|it| is_ty(it, raw))
 }
 
 fn is_option(f: &Field) -> bool {
@@ -326,10 +490,10 @@ fn to_table_name(id: &Ident) -> Ident {
     Ident::new(&new_str, id.span())
 }
 
-fn make_str_ref_type(lifetime: Option<Lifetime>) -> Type {
+fn make_ref_type(raw: &str, lifetime: Option<Lifetime>) -> Type {
     let mut segments: Punctuated<PathSegment, Colon2> = Punctuated::new();
     segments.push(PathSegment {
-        ident: Ident::new("str", Span::call_site()),
+        ident: Ident::new(raw, Span::call_site()),
         arguments: PathArguments::None,
     });
     let elem = Box::new(Type::Path(TypePath {
@@ -347,20 +511,20 @@ fn make_str_ref_type(lifetime: Option<Lifetime>) -> Type {
     })
 }
 
-fn transform_string_to_str(f: &Field) -> Field {
+fn transform_type_to_ref(f: &Field, raw: &str) -> Field {
     let lifetime = Some(Lifetime::new("'data", Span::call_site()));
     let mut new_field = f.clone();
     new_field.ty = match &f.ty {
         Type::Path(tp) => {
             let seg = tp.path.segments.last().unwrap();
             match &seg.arguments {
-                PathArguments::None => make_str_ref_type(lifetime),
+                PathArguments::None => make_ref_type(raw, lifetime),
                 PathArguments::AngleBracketed(sargs) => {
                     let mut args = sargs.clone();
                     let gen_ = args.args.first_mut().unwrap();
                     match gen_ {
                         GenericArgument::Type(ty) => {
-                            *ty = make_str_ref_type(lifetime);
+                            *ty = make_ref_type(raw, lifetime);
                         }
                         _ => panic!("ohno"),
                     }

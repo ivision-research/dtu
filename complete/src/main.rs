@@ -196,9 +196,9 @@ impl CompleteContext {
     {
         let db = GraphSqliteDatabase::new(&self.ctx)?;
         let results = if self.incomplete.is_empty() {
-            db.query(|c| Ok(on_empty(c)?))
+            db.query(|c| on_empty(c))
         } else {
-            db.query(|c| Ok(on_partial(c, &self.incomplete)?))
+            db.query(|c| on_partial(c, &self.incomplete))
         }?;
 
         self.show_results(results.into_iter().map(<R as Into<CompleteResult>>::into))
@@ -210,7 +210,7 @@ impl CompleteContext {
         Get: FnOnce(&mut SqlConnection) -> QueryResult<Vec<R>>,
     {
         let db = DeviceDatabase::new(&self.ctx)?;
-        let results = db.query(|c| Ok(get(c)?))?;
+        let results = db.query(|c| get(c))?;
         self.show_results(results.into_iter().map(<R as Into<CompleteResult>>::into))
     }
 
@@ -226,9 +226,9 @@ impl CompleteContext {
     {
         let db = DeviceDatabase::new(&self.ctx)?;
         let results = if self.incomplete.is_empty() {
-            db.query(|c| Ok(on_empty(c)?))
+            db.query(|c| on_empty(c))
         } else {
-            db.query(|c| Ok(on_partial(c, &self.incomplete)?))
+            db.query(|c| on_partial(c, &self.incomplete))
         }?;
 
         self.show_results(results.into_iter().map(<R as Into<CompleteResult>>::into))

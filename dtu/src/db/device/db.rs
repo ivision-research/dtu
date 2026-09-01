@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ops::Deref;
 
 use diesel::prelude::*;
 use diesel_migrations::{embed_migrations, EmbeddedMigrations};
@@ -13,12 +14,19 @@ use super::common::*;
 use super::models::*;
 use crate::db::macros::{
     impl_delete_by, impl_get_all, impl_get_multi, impl_get_multi_by, impl_get_one_by,
-    impl_insert_one, impl_simple_gets,
+    impl_insert_one, impl_simple_gets, query,
 };
 
 #[derive(Clone)]
 pub struct DeviceDatabase {
     db: Db,
+}
+
+impl Deref for DeviceDatabase {
+    type Target = Db;
+    fn deref(&self) -> &Self::Target {
+        &self.db
+    }
 }
 
 pub type SqlConnection = SqliteConnection;
@@ -65,25 +73,6 @@ impl DeviceDatabase {
             )?,
         })
     }
-
-    /// Read using any available connection
-    #[inline]
-    pub fn query<F, R>(&self, f: F) -> Result<R>
-    where
-        F: FnOnce(&mut SqlConnection) -> Result<R>,
-    {
-        self.db.query(f)
-    }
-
-    /// Write, holding one connection for the whole closure inside a transaction
-    #[inline]
-    pub fn write<F, R, E>(&self, f: F) -> std::result::Result<R, E>
-    where
-        F: FnOnce(&mut SqlConnection) -> std::result::Result<R, E>,
-        E: From<Error> + From<diesel::result::Error>,
-    {
-        self.db.write(f)
-    }
 }
 
 macro_rules! impl_diff_item {
@@ -107,21 +96,13 @@ macro_rules! impl_diff_item {
         }
 
         $vis fn $get_all_by_diff_id(&self, id: i32) -> Result<Vec<$get_type>> {
-            self.query(|conn| {
-                let __query = super::schema::$table::table
+                let __query = query!(super::schema::$table::table
                     .inner_join(super::schema::$diff_table::table)
-                    .filter(super::schema::$diff_table::dsl::diff_source.eq(id));
-                #[cfg(feature = "trace_db")]
-                ::log::trace!(
-                    "{}",
-                    diesel::debug_query::<::diesel::sqlite::Sqlite, _>(&__query)
-                );
-                let res: ::std::vec::Vec<($left_type, $right_type)> = __query.load(conn)?;
-                Ok(res
-                    .into_iter()
-                    .map($get_type::from)
-                    .collect::<Vec<$get_type>>())
-            })
+                    .filter(super::schema::$diff_table::dsl::diff_source.eq(id)));
+
+            Ok(self.query(|conn| {
+                __query.load::<($left_type, $right_type)>(conn)
+            })?.into_iter().map($get_type::from).collect::<Vec<$get_type>>())
         }
     };
 
@@ -153,22 +134,14 @@ macro_rules! impl_diff_item {
         );
 
         $vis fn $get_all_by_two_ids(&self, owner_id: i32, diff_id: i32) -> Result<Vec<$get_type>> {
-            self.query(|conn| {
-                let __query = super::schema::$table::table
-                    .inner_join(super::schema::$diff_table::table)
-                    .filter(super::schema::$diff_table::dsl::diff_source.eq(diff_id))
-                    .filter(super::schema::$table::dsl::$($other_filter)+(owner_id));
-                #[cfg(feature = "trace_db")]
-                ::log::trace!(
-                    "{}",
-                    diesel::debug_query::<::diesel::sqlite::Sqlite, _>(&__query)
-                );
-                let res: ::std::vec::Vec<($left_type, $right_type)> = __query.load(conn)?;
-                Ok(res
-                    .into_iter()
-                    .map($get_type::from)
-                    .collect::<Vec<$get_type>>())
-            })
+            let __query = query!(super::schema::$table::table
+                .inner_join(super::schema::$diff_table::table)
+                .filter(super::schema::$diff_table::dsl::diff_source.eq(diff_id))
+                .filter(super::schema::$table::dsl::$($other_filter)+(owner_id)));
+
+            Ok(self.query(|conn| {
+                __query.load::<($left_type, $right_type)>(conn)
+            })?.into_iter().map($get_type::from).collect::<Vec<$get_type>>())
         }
     };
 }
@@ -228,36 +201,33 @@ impl DeviceDatabase {
 
     pub fn get_permissions_for_apk(&self, apk: &Apk) -> Result<Vec<ApkPermission>> {
         self.query(|conn| {
-            let perms = ApkPermission::belonging_to(apk)
+            ApkPermission::belonging_to(apk)
                 .select(ApkPermission::as_select())
-                .load(conn)?;
-            Ok(perms)
+                .load(conn)
         })
     }
     pub fn get_all_apks_with_permsissions(&self) -> Result<Vec<ApkWithPermissions>> {
         let apks = self.get_apks()?;
-        self.query(|conn| {
-            let perms = ApkPermission::belonging_to(&apks)
-                .select(ApkPermission::as_select())
-                .load(conn)?;
-
-            Ok(perms
-                .grouped_by(&apks)
-                .into_iter()
-                .zip(apks)
-                .map(|(perms, apk)| ApkWithPermissions {
-                    apk,
-                    permissions: perms.into_iter().map(|it| it.name).collect::<Vec<String>>(),
-                })
-                .collect::<Vec<ApkWithPermissions>>())
-        })
+        Ok(self
+            .query(|conn| {
+                ApkPermission::belonging_to(&apks)
+                    .select(ApkPermission::as_select())
+                    .load(conn)
+            })?
+            .grouped_by(&apks)
+            .into_iter()
+            .zip(apks)
+            .map(|(perms, apk)| ApkWithPermissions {
+                apk,
+                permissions: perms.into_iter().map(|it| it.name).collect::<Vec<String>>(),
+            })
+            .collect::<Vec<ApkWithPermissions>>())
     }
 
     pub fn get_all_system_service_impls(&self) -> Result<HashMap<String, Vec<SystemServiceImpl>>> {
-        self.query(|c| {
-            let mut result: HashMap<String, Vec<SystemServiceImpl>> = HashMap::new();
-
-            let rows = system_service_impls::table
+        let mut result: HashMap<String, Vec<SystemServiceImpl>> = HashMap::new();
+        let rows = self.query(|c| {
+            system_service_impls::table
                 .inner_join(system_services::table)
                 .select((
                     system_services::name,
@@ -266,25 +236,24 @@ impl DeviceDatabase {
                     system_service_impls::class_name,
                     system_service_impls::source,
                 ))
-                .load::<(String, i32, i32, ClassName, String)>(c)?
-                .into_iter();
+                .load::<(String, i32, i32, ClassName, String)>(c)
+        })?;
 
-            for (service, id, system_service_id, class_name, source) in rows {
-                let impl_ = SystemServiceImpl {
-                    id,
-                    system_service_id,
-                    class_name,
-                    source,
-                };
-                if let Some(into) = result.get_mut(&service) {
-                    into.push(impl_);
-                } else {
-                    let v = vec![impl_];
-                    result.insert(service, v);
-                }
+        for (service, id, system_service_id, class_name, source) in rows.into_iter() {
+            let impl_ = SystemServiceImpl {
+                id,
+                system_service_id,
+                class_name,
+                source,
+            };
+            if let Some(into) = result.get_mut(&service) {
+                into.push(impl_);
+            } else {
+                let v = vec![impl_];
+                result.insert(service, v);
             }
-            Ok(result)
-        })
+        }
+        Ok(result)
     }
 
     impl_simple_gets!(pub activities, Activity, get_activities, get_activity_by_id);
@@ -383,7 +352,7 @@ impl DeviceDatabase {
         let like_left = format!("{}:%", sel);
         let like_right = format!("%:{}", sel);
         self.query(|c| {
-            Ok(providers
+            providers
                 .filter(
                     authorities
                         .eq(sel)
@@ -391,7 +360,7 @@ impl DeviceDatabase {
                         .or(authorities.like(like_left))
                         .or(authorities.like(like_right)),
                 )
-                .get_result(c)?)
+                .get_result(c)
         })
     }
 

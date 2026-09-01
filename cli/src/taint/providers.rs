@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use clap::{self, Args};
 use dtu::{
-    analysis::taint::TaintSource,
+    analysis::{db::GraphTaintAnalysisDb, taint::TaintSource},
     db::{
-        graph::{get_default_graphdb, models::MethodId, GraphDatabase, MethodSpec},
+        graph::{models::MethodId, GraphDatabase, MethodSpec},
         meta::get_default_metadb,
         ApkComponent, ApkIPC, DeviceDatabase, MetaDatabase,
     },
@@ -14,7 +14,6 @@ use dtu::{
     Context,
 };
 
-use crate::cache_key;
 use crate::taint::common::{analyze, methods_for_class, Analysis, ComponentOpts};
 
 #[derive(Args)]
@@ -149,10 +148,9 @@ const ENTRYPOINTS: &[Entrypoint] = &[
 
 impl Providers {
     pub fn run(self, ctx: &dyn Context) -> anyhow::Result<()> {
-        let gdb = get_default_graphdb(ctx)?;
-        let cache = cache_key!("analysis-providers", &self.opts.hash_key());
+        let db = GraphTaintAnalysisDb::new_from_path(ctx, &self.opts.run.out_file)?;
 
-        let report = analyze(ctx, &gdb, &self.opts.run, &cache, || {
+        analyze(ctx, db, &self.opts.run, |gdb| {
             let meta = get_default_metadb(ctx)?;
             meta.ensure_prereq(Prereq::SQLDatabaseSetup)?;
             let db = DeviceDatabase::new(ctx)?;
@@ -174,7 +172,7 @@ impl Providers {
                 let source = apk.device_path.as_squashed_str();
                 let class = provider.get_class_name();
 
-                let found = match self.resolve_entrypoints(&gdb, &class, source) {
+                let found = match self.resolve_entrypoints(gdb, &class, source) {
                     Ok(found) => found,
                     Err(e) => {
                         without_entrypoints += 1;
@@ -207,8 +205,6 @@ impl Providers {
 
             Ok(Analysis::new(methods, seeds))
         })?;
-
-        println!("{}", serde_json::to_string(&report)?);
         Ok(())
     }
 

@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use diesel::prelude::*;
 use diesel::{delete, insert_into, update};
 use diesel_migrations::{embed_migrations, EmbeddedMigrations};
@@ -67,6 +69,13 @@ pub struct MetaSqliteDatabase {
     db: Db,
 }
 
+impl Deref for MetaSqliteDatabase {
+    type Target = Db;
+    fn deref(&self) -> &Self::Target {
+        &self.db
+    }
+}
+
 impl MetaSqliteDatabase {
     pub fn new(ctx: &dyn Context) -> Result<Self> {
         Ok(Self {
@@ -104,27 +113,6 @@ impl MetaSqliteDatabase {
     }
 }
 
-impl MetaSqliteDatabase {
-    /// Read using any available connection
-    #[inline]
-    fn query<F, R>(&self, f: F) -> Result<R>
-    where
-        F: FnOnce(&mut SqliteConnection) -> Result<R>,
-    {
-        self.db.query(f)
-    }
-
-    /// Write, holding one connection for the whole closure inside a transaction
-    #[inline]
-    fn write<F, R, E>(&self, f: F) -> std::result::Result<R, E>
-    where
-        F: FnOnce(&mut SqliteConnection) -> std::result::Result<R, E>,
-        E: From<Error> + From<diesel::result::Error>,
-    {
-        self.db.write(f)
-    }
-}
-
 impl Database for MetaSqliteDatabase {
     impl_insert_one!(
         add_decompile_status,
@@ -142,27 +130,21 @@ impl Database for MetaSqliteDatabase {
     impl_delete_by!(delete_decompile_status_by_id, i32, decompile_status, id.eq);
 
     fn get_progress(&self, sel: Prereq) -> Result<ProgressStep> {
-        self.query(|conn| {
-            let row = query!(progress::table.filter(progress::step.eq(sel)).limit(1))
-                .get_result::<(i32, Prereq, bool)>(conn)?;
-            Ok(ProgressStep {
-                step: row.1,
-                completed: row.2,
-            })
-        })
+        Ok(self.query(|conn| {
+            query!(progress::table.filter(progress::step.eq(sel)).limit(1))
+                .get_result::<(i32, Prereq, bool)>(conn)
+                .map(|(_, step, completed)| ProgressStep { step, completed })
+        })?)
     }
 
     fn get_all_progress(&self) -> Result<Vec<ProgressStep>> {
-        self.query(|conn| {
-            Ok(progress::table
-                .load::<(i32, Prereq, bool)>(conn)?
-                .into_iter()
-                .map(|it| ProgressStep {
-                    step: it.1,
-                    completed: it.2,
-                })
-                .collect())
-        })
+        Ok(self.query(|conn| {
+            progress::table.load::<(i32, Prereq, bool)>(conn).map(|it| {
+                it.into_iter()
+                    .map(|(_, step, completed)| ProgressStep { step, completed })
+                    .collect()
+            })
+        })?)
     }
 
     fn update_progress(&self, prog: &ProgressStep) -> Result<()> {
@@ -233,15 +215,13 @@ impl Database for MetaSqliteDatabase {
     );
 
     fn app_activity_name_taken(&self, check_name: &str) -> Result<bool> {
-        self.query(|c| {
-            match query!(app_activities::table.filter(app_activities::name.eq(check_name)))
-                .get_result::<AppActivity>(c)
-            {
-                Err(diesel::result::Error::NotFound) => Ok(false),
-                Err(e) => Err(e.into()),
-                Ok(_) => Ok(true),
-            }
-        })
+        Ok(self
+            .query(|c| {
+                query!(app_activities::table.filter(app_activities::name.eq(check_name)))
+                    .get_result::<AppActivity>(c)
+                    .optional()
+            })?
+            .is_some())
     }
 
     fn wipe_app_data(&self) -> Result<()> {
@@ -272,11 +252,11 @@ impl Database for MetaSqliteDatabase {
     }
 
     fn get_key_value(&self, key: &str) -> Result<String> {
-        self.query(|c| {
-            let res: KeyValue =
-                query!(key_values::table.filter(key_values::key.eq(key))).get_result(c)?;
-            Ok(res.value)
-        })
+        Ok(self
+            .query(|c| {
+                query!(key_values::table.filter(key_values::key.eq(key))).get_result::<KeyValue>(c)
+            })
+            .map(|it| it.value)?)
     }
 
     fn delete_key_value(&self, key: &str) -> Result<()> {

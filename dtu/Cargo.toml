@@ -7,10 +7,12 @@ edition.workspace = true
 dtu_proc_macro = { path = "../dtu_proc_macro" }
 thiserror = "1.0"
 which = "7.0"
+bitflags = { workspace = true }
+bumpalo = { workspace = true }
 directories = "6.0"
 diesel = { version = "2.0", features = ["sqlite", "returning_clauses_for_sqlite_3_35", "r2d2"], optional = true }
 diesel_migrations = { version = "2.0", optional = true }
-tempfile = "3.19"
+tempfile = { workspace = true }
 zip = { version = "4.3", default-features = false, features = ["deflate", "deflate64"] }
 rayon = "1.10"
 smalisa = { git = "https://github.com/ivision-research/smalisa.git", branch = "ssa", default-features = false, version = "1.0.0", features = ["ssa", "yoke", "serde" ] }
@@ -33,7 +35,7 @@ tar = { workspace = true }
 zstd = { workspace = true }
 yoke = { workspace = true }
 postcard = { workspace = true }
-
+libsqlite3-sys = { version = "0.38", optional = true }
 once_cell = "1.21"
 
 # Needed for Apex files :(
@@ -65,6 +67,10 @@ dtu = { path = ".", features = ["graph", "sql", "filestore", "app", "app-server"
 default = ["graph", "sql"]
 
 sql = ["reexport_diesel", "dep:diesel", "dep:diesel_migrations"]
+
+# Build sqlite instead of using the system version. This could be helpful if
+# the system version doesn't include featues we depend on.
+bundle-sqlite = ["libsqlite3-sys/bundled"]
 
 # Include the FileStore trait and some implementations
 filestore = []

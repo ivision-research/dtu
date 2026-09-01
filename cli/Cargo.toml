@@ -10,7 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 dtu = { path = "../dtu", features = ["filestore", "app", "setup", "reexport_askama"] }
-ratatui = "0.29"
+ratatui = "0.30"
 crossterm = "0.29"
 unicode-width = "0.2"
 promptly = "0.3"
@@ -18,6 +18,7 @@ rustyline = "15.0"
 signal-hook = "0.3"
 nix = { version = "0.31", features = ["process"] }
 
+tempfile = { workspace = true }
 flexi_logger = { workspace = true }
 clap = { workspace = true }
 sha2 = { workspace = true }

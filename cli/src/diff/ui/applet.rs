@@ -357,9 +357,9 @@ impl<'a> Applet<'a> {
         let hidden_services = self.state.hidden_system_services.clone();
 
         let services = self.db.query(|c| {
-            Ok(system_services::table
+            system_services::table
                 .filter(system_services::id.eq_any(&service_ids))
-                .get_results::<SystemService>(c)?)
+                .get_results::<SystemService>(c)
         })?;
         let container = self.new_tab_container(
             methods,

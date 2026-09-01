@@ -3,18 +3,22 @@ use std::collections::HashMap;
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::num::NonZeroUsize;
+use std::result;
 use std::sync::{Arc, Mutex, RwLock};
 
 use diesel::connection::SimpleConnection;
 use diesel::migration::MigrationSource;
-use diesel::prelude::*;
-use diesel::r2d2::{ConnectionManager, CustomizeConnection, Pool, PoolError};
+use diesel::r2d2::{
+    self, ConnectionManager, CustomizeConnection, Pool, PoolError, PooledConnection,
+};
 use diesel::result::{DatabaseErrorInformation, DatabaseErrorKind, Error as DieselError};
 use diesel::sqlite::Sqlite;
+use diesel::{prelude::*, sql_query};
 use diesel::{ConnectionError, SqliteConnection};
 use diesel_migrations::MigrationHarness;
 use lazy_static::lazy_static;
 
+use crate::db::query;
 use crate::utils::ensure_dir_exists;
 use crate::Context;
 use dtu_proc_macro::wraps_base_error;
@@ -109,46 +113,53 @@ impl From<DieselError> for Error {
     }
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = result::Result<T, Error>;
 
-/// The state every pooled connection is expected to be in
-///
-/// WAL is what allows readers to run concurrently with a writer. `busy_timeout` is per
-/// connection and must be set here, otherwise contention returns `SQLITE_BUSY` immediately.
-/// `synchronous=NORMAL` is the usual pairing with WAL: a crash can cost the last
-/// transactions but cannot corrupt the database.
-///
 /// Every pragma any part of the crate changes must appear here at its baseline value, since
-/// this is also what [Db::write_with_pragmas] restores afterwards.
+/// this is also what [Db::write_with_pragmas] restores afterwards. That is why you'll see a lot of
+/// SQLite defaults in here.
 const CONNECTION_PRAGMAS: &str = "\
-PRAGMA journal_mode = WAL;
+PRAGMA journal_mode = DELETE;
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
-PRAGMA synchronous = NORMAL;
+PRAGMA synchronous = FULL;
 PRAGMA temp_store = DEFAULT;";
 
-/// Applies [CONNECTION_PRAGMAS] to connections as the pool opens them
+/// Apply [CONNECTION_PRAGMAS] to a connection
+///
+/// Call this first from a custom [Customizer] so that a pool needing extra setup, an ATTACH
+/// for instance, still starts from the state every other pool is in.
+pub(crate) fn apply_connection_pragmas(
+    conn: &mut SqliteConnection,
+) -> result::Result<(), r2d2::Error> {
+    conn.batch_execute(CONNECTION_PRAGMAS)
+        .map_err(r2d2::Error::QueryError)
+}
+
+/// Per connection setup, run once as the pool opens each connection
+///
+/// Note that r2d2 customises a connection when it is created, not on every checkout, so
+/// anything done here lasts for the life of that connection.
+pub(crate) type Customizer = Box<dyn CustomizeConnection<SqliteConnection, r2d2::Error>>;
+
+/// The default [Customizer], which does nothing but apply the baseline pragmas
 #[derive(Debug)]
 struct SqlitePragmas;
 
-impl CustomizeConnection<SqliteConnection, diesel::r2d2::Error> for SqlitePragmas {
-    fn on_acquire(
-        &self,
-        conn: &mut SqliteConnection,
-    ) -> std::result::Result<(), diesel::r2d2::Error> {
-        conn.batch_execute(CONNECTION_PRAGMAS)
-            .map_err(diesel::r2d2::Error::QueryError)
+impl CustomizeConnection<SqliteConnection, r2d2::Error> for SqlitePragmas {
+    fn on_acquire(&self, conn: &mut SqliteConnection) -> result::Result<(), r2d2::Error> {
+        apply_connection_pragmas(conn)
     }
 }
 
-type PooledSqlite = diesel::r2d2::PooledConnection<ConnectionManager<SqliteConnection>>;
+type PooledSqlite = PooledConnection<ConnectionManager<SqliteConnection>>;
 
 /// A pool of connections to a single sqlite database
 ///
 /// Cloning is cheap: all clones of a [Db] for the same file share the pool and the write
 /// lock.
 #[derive(Clone)]
-pub(super) struct Db(Arc<DbInner>);
+pub struct Db(Arc<DbInner>);
 
 struct DbInner {
     pool: Pool<ConnectionManager<SqliteConnection>>,
@@ -157,15 +168,31 @@ struct DbInner {
 }
 
 impl Db {
+    pub fn check_fts5(&self) -> bool {
+        #[derive(QueryableByName)]
+        struct CompileOption {
+            #[diesel(sql_type = diesel::sql_types::Integer)]
+            enabled: i32,
+        }
+        self.query(|c| {
+            query!(sql_query(
+                "SELECT sqlite_compileoption_used('ENABLE_FTS5') AS enabled"
+            ))
+            .get_result::<CompileOption>(c)
+        })
+        .is_ok_and(|it| it.enabled == 1)
+    }
+
     /// Read using any available connection
     ///
     /// Runs concurrently with other reads and with a write.
-    pub(super) fn query<F, R>(&self, f: F) -> Result<R>
+    pub fn query<F, R, E>(&self, f: F) -> Result<R>
     where
-        F: FnOnce(&mut SqliteConnection) -> Result<R>,
+        F: FnOnce(&mut SqliteConnection) -> result::Result<R, E>,
+        E: Into<Error>,
     {
         let mut conn = self.get_connection()?;
-        f(&mut conn)
+        f(&mut conn).map_err(Into::into)
     }
 
     /// Write, holding one connection for the whole closure inside a transaction
@@ -173,15 +200,12 @@ impl Db {
     /// Serialised against other writers. Because the connection is held, temporary tables
     /// and per-connection state stay valid for the duration.
     ///
-    /// The closure error is generic, unlike [Db::query], because a write can wrap work
-    /// that is not itself a database operation and fails for its own reasons.
-    ///
     /// Calling this from inside itself would deadlock, so it fails with
     /// [Error::ReentrantWrite] instead. A [Db::query] inside the closure is allowed but
     /// will not see the uncommitted writes.
-    pub(super) fn write<F, R, E>(&self, f: F) -> std::result::Result<R, E>
+    pub fn write<F, R, E>(&self, f: F) -> result::Result<R, E>
     where
-        F: FnOnce(&mut SqliteConnection) -> std::result::Result<R, E>,
+        F: FnOnce(&mut SqliteConnection) -> result::Result<R, E>,
         E: From<Error> + From<DieselError>,
     {
         self.write_with_pragmas("", f)
@@ -195,13 +219,9 @@ impl Db {
     /// The connection is put back to [CONNECTION_PRAGMAS] on the way out, however this
     /// returns. r2d2 customises a connection only when it opens it, so without that reset
     /// the change would outlive this call on whichever connection happened to serve it.
-    pub(super) fn write_with_pragmas<F, R, E>(
-        &self,
-        pragmas: &str,
-        f: F,
-    ) -> std::result::Result<R, E>
+    pub fn write_with_pragmas<F, R, E>(&self, pragmas: &str, f: F) -> result::Result<R, E>
     where
-        F: FnOnce(&mut SqliteConnection) -> std::result::Result<R, E>,
+        F: FnOnce(&mut SqliteConnection) -> result::Result<R, E>,
         E: From<Error> + From<DieselError>,
     {
         let _reentry = ReentryGuard::acquire(self.key()).map_err(E::from)?;
@@ -286,7 +306,7 @@ lazy_static! {
 }
 
 impl Db {
-    pub(super) fn new(
+    pub fn new(
         ctx: &dyn Context,
         file_name: &str,
         migrations: impl MigrationSource<Sqlite>,
@@ -304,24 +324,60 @@ impl Db {
         )
     }
 
-    pub(super) fn new_from_path<S: AsRef<str> + ?Sized>(
+    pub fn new_from_path<S: AsRef<str> + ?Sized>(
         path: &S,
         migrations: impl MigrationSource<Sqlite>,
         #[cfg(test)] test_migrations: impl MigrationSource<Sqlite>,
     ) -> Result<Self> {
+        Self::new_from_path_with(
+            path,
+            migrations,
+            #[cfg(test)]
+            test_migrations,
+            None,
+        )
+    }
+
+    /// [Db::new_from_path] with per connection setup beyond the baseline pragmas
+    ///
+    /// The customizer is only used if this is the first handle to the file: pools are shared
+    /// per database, so a later call for a file that is already open gets the existing pool
+    /// and its original customizer.
+    pub fn new_from_path_with<S: AsRef<str> + ?Sized>(
+        path: &S,
+        migrations: impl MigrationSource<Sqlite>,
+        #[cfg(test)] test_migrations: impl MigrationSource<Sqlite>,
+        customizer: Option<Customizer>,
+    ) -> Result<Self> {
         let url = format!("sqlite://{}", path.as_ref());
-        Self::new_from_url(
+        Self::new_from_url_with(
             &url,
             migrations,
             #[cfg(test)]
             test_migrations,
+            customizer,
         )
     }
 
-    pub(super) fn new_from_url(
+    pub fn new_from_url(
         url: &String,
         migrations: impl MigrationSource<Sqlite>,
         #[cfg(test)] test_migrations: impl MigrationSource<Sqlite>,
+    ) -> Result<Self> {
+        Self::new_from_url_with(
+            url,
+            migrations,
+            #[cfg(test)]
+            test_migrations,
+            None,
+        )
+    }
+
+    pub fn new_from_url_with(
+        url: &String,
+        migrations: impl MigrationSource<Sqlite>,
+        #[cfg(test)] test_migrations: impl MigrationSource<Sqlite>,
+        customizer: Option<Customizer>,
     ) -> Result<Self> {
         if let Some(db) = DATABASES.read().unwrap().get(url) {
             return Ok(db.clone());
@@ -339,6 +395,7 @@ impl Db {
             migrations,
             #[cfg(test)]
             test_migrations,
+            customizer.unwrap_or_else(|| Box::new(SqlitePragmas)),
         )?;
         map.insert(url.clone(), db.clone());
         Ok(db)
@@ -348,19 +405,18 @@ impl Db {
         url: &String,
         migrations: impl MigrationSource<Sqlite>,
         #[cfg(test)] test_migrations: impl MigrationSource<Sqlite>,
+        customizer: Customizer,
     ) -> Result<Self> {
         log::debug!("connecting to the database at {}", url);
 
         let pool = Pool::builder()
-            // Enough for every thread to hold a reader with headroom left for a writer, so
-            // a bulk load can't be starved into a checkout timeout by a busy analysis
             .max_size(max_connections())
             // Connections are opened on demand, not all at once up front
             .min_idle(Some(1))
             // Same as the r2d2 default, stated here because a starved pool surfaces as a
             // checkout error after this long rather than as a hang
             .connection_timeout(std::time::Duration::from_secs(30))
-            .connection_customizer(Box::new(SqlitePragmas))
+            .connection_customizer(customizer)
             .build(ConnectionManager::<SqliteConnection>::new(url))
             .map_err(Error::from)?;
 
@@ -384,7 +440,7 @@ impl Db {
 ///
 /// A later [Db::new_from_url] for the same file creates a fresh pool.
 #[allow(dead_code)]
-pub(super) fn cleanup_database(url: &String) {
+pub(crate) fn cleanup_database(url: &String) {
     DATABASES.write().unwrap().remove(url);
 }
 

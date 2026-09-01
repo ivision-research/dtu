@@ -1,8 +1,13 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 pub mod fs;
 pub use fs::*;
 
 pub mod class_name;
 pub use class_name::*;
+
+pub mod filter_container;
+pub use filter_container::*;
 
 pub mod readers;
 pub use readers::*;
@@ -115,4 +120,11 @@ pub(crate) fn unreplace_char(input: &str, target: char, replacement: char) -> St
     }
 
     replaced
+}
+
+pub(crate) fn unix_now() -> crate::Result<i64> {
+    Ok(SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| crate::Error::new_generic(&format!("failed to get unix time: {e}")))?
+        .as_secs() as i64)
 }

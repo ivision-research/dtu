@@ -1,8 +1,8 @@
 use clap::{self, Args};
 use dtu::{
-    analysis::taint::TaintSource,
+    analysis::{db::GraphTaintAnalysisDb, taint::TaintSource},
     db::{
-        graph::{GraphDatabase, MethodSearch, MethodSearchParams, MethodSpec},
+        graph::{MethodSearch, MethodSearchParams, MethodSpec},
         meta::get_default_metadb,
         ApkComponent, ApkIPC, DeviceDatabase, MetaDatabase,
     },
@@ -10,7 +10,6 @@ use dtu::{
     Context,
 };
 
-use crate::cache_key;
 use crate::taint::common::{analyze, Analysis, ComponentOpts};
 
 #[derive(Args)]
@@ -21,10 +20,9 @@ pub struct ReceiverIntents {
 
 impl ReceiverIntents {
     pub fn run(self, ctx: &dyn Context) -> anyhow::Result<()> {
-        let gdb = dtu::db::graph::get_default_graphdb(ctx)?;
-        let cache = cache_key!("analysis-receiver-intents", &self.opts.hash_key());
+        let db = GraphTaintAnalysisDb::new_from_path(ctx, &self.opts.run.out_file)?;
 
-        let report = analyze(ctx, &gdb, &self.opts.run, &cache, || {
+        analyze(ctx, db, &self.opts.run, |gdb| {
             // We track the passed in intent. The taint rules will cover all interesting methods and
             // propagation of the intent into other methods for us. This is better than choosing a
             // list of "interesting methods" because hey who knows what's interesting and it also
@@ -62,7 +60,6 @@ impl ReceiverIntents {
             Ok(Analysis::new(methods, vec![p2]))
         })?;
 
-        println!("{}", serde_json::to_string(&report)?);
         Ok(())
     }
 }

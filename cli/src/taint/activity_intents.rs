@@ -2,9 +2,12 @@ use std::collections::HashMap;
 
 use clap::{self, Args};
 use dtu::{
-    analysis::taint::{TaintSeedOptions, TaintSource},
+    analysis::{
+        db::GraphTaintAnalysisDb,
+        taint::{TaintSeedOptions, TaintSource},
+    },
     db::{
-        graph::{get_default_graphdb, models::MethodId, MethodSpec, FRAMEWORK_SOURCE},
+        graph::{models::MethodId, MethodSpec, FRAMEWORK_SOURCE},
         meta::get_default_metadb,
         ApkComponent, ApkIPC, DeviceDatabase, MetaDatabase,
     },
@@ -13,7 +16,6 @@ use dtu::{
     Context,
 };
 
-use crate::cache_key;
 use crate::taint::common::{analyze, methods_for_class, Analysis, ComponentOpts};
 
 /// Classes that call `getIntent` as part of the framework's own plumbing
@@ -34,10 +36,9 @@ pub struct ActivityIntents {
 
 impl ActivityIntents {
     pub fn run(self, ctx: &dyn Context) -> anyhow::Result<()> {
-        let gdb = get_default_graphdb(ctx)?;
-        let cache = cache_key!("analysis-activity-intents", &self.opts.hash_key());
+        let db = GraphTaintAnalysisDb::new_from_path(ctx, &self.opts.run.out_file)?;
 
-        let report = analyze(ctx, &gdb, &self.opts.run, &cache, || {
+        analyze(ctx, db, &self.opts.run, |gdb| {
             let meta = get_default_metadb(ctx)?;
             meta.ensure_prereq(Prereq::SQLDatabaseSetup)?;
             let db = DeviceDatabase::new(ctx)?;
@@ -61,7 +62,7 @@ impl ActivityIntents {
                     sources.push(source.to_string());
                 }
 
-                for method in methods_for_class(&gdb, &activity.get_class_name(), source)? {
+                for method in methods_for_class(gdb, &activity.get_class_name(), source)? {
                     // Most call sites name Landroid/app/Activity; but subclasses that declare
                     // their own getIntent are named directly, so the class can't be pinned. The
                     // cost is the unrelated getIntent methods that also return an Intent
@@ -90,7 +91,6 @@ impl ActivityIntents {
             )
         })?;
 
-        println!("{}", serde_json::to_string(&report)?);
         Ok(())
     }
 }

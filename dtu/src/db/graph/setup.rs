@@ -4,7 +4,7 @@ use std::str::FromStr;
 use csv::StringRecord;
 use diesel::connection::SimpleConnection;
 use diesel::sql_types::{BigInt, Integer, Text};
-use diesel::{insert_into, insert_or_ignore_into, prelude::*, sql_query, SqliteConnection};
+use diesel::{insert_into, insert_or_ignore_into, prelude::*, sql_query, update, SqliteConnection};
 use itertools::Itertools;
 use smalisa::AccessFlag;
 
@@ -15,10 +15,10 @@ use super::setup_task::{AddDirTask, GraphDatabaseSetup, InitialImportOptions};
 use super::FRAMEWORK_SOURCE;
 use super::{setup::SetupResult, AddDirectoryOptions, SetupEvent};
 use crate::db::graph::models::{InsertDiscoveredString, SourceId};
-use crate::db::graph::schema::strings;
+use crate::db::graph::schema::{_metadata, strings};
 use crate::db::macros::query;
 use crate::smalisa_wrapper::CSV;
-use crate::utils::DevicePath;
+use crate::utils::{unix_now, DevicePath};
 use crate::{
     tasks::{EventMonitor, TaskCancelCheck},
     Context,
@@ -36,12 +36,13 @@ impl CSV {
 
 /// Applied to the load connection before its transaction opens, and undone after
 ///
-/// `foreign_keys=OFF` is worth about 20% on the staged calls load, which resolves three
-/// foreign keys for every one of millions of rows. Neither pragma can be set inside a
-/// transaction, which is why the load uses [GraphSqliteDatabase::write_with_pragmas].
-/// `synchronous` is already NORMAL on every pooled connection.
+/// Many of these are just for performance since we're doing large loads. For example turning
+/// foreign keys off shaves about 20% off the runtime for load, and we know the keys will be
+/// consistent so it's fine to turn it off.
 const CSV_LOAD_PRAGMAS: &str = "\
+PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = OFF;
+PRAGMA synchronous = NORMAL;
 PRAGMA temp_store = MEMORY;";
 
 /// Staging tables holding a CSV's rows by name until they are resolved to ids
@@ -312,7 +313,21 @@ impl<'a> SetupContext<'a> {
 
 impl GraphSqliteDatabase {
     fn finalize(&self, _ctx: &dyn Context) -> Result<()> {
-        self.write(|c| Self::add_indices(c))
+        self.write(|c| {
+            Self::add_indices(c)?;
+            Self::update_built_at(c)
+        })
+    }
+
+    /// Record that the graph finished building
+    ///
+    /// Ids are only stable for one build, so anything holding them outside this database
+    /// compares this timestamp against the one it saw. Adding a single directory
+    /// deliberately leaves it alone: appending a source hands out new ids without
+    /// renumbering the existing ones, so an artifact built before it is still readable.
+    fn update_built_at(conn: &mut SqliteConnection) -> Result<()> {
+        query!(update(_metadata::table).set(_metadata::built_at.eq(unix_now()?))).execute(conn)?;
+        Ok(())
     }
 
     fn load_staged_method_field_access(conn: &mut SqliteConnection, src: SourceId) -> Result<()> {
@@ -717,17 +732,17 @@ impl GraphDatabaseSetup for GraphSqliteDatabase {
 
     fn should_load_csv(&self, source: &str, csv: CSV) -> Result<bool> {
         let kind = csv.to_kind();
-        self.query(|c| {
-            let found = query!(_load_status::table
+        Ok(self.query(|c| {
+            (_load_status::table
                 .inner_join(sources::table)
                 .filter(sources::name.eq(source))
                 .filter(_load_status::kind.eq(kind))
                 .select(_load_status::rowid)
                 .limit(1))
             .get_result::<i32>(c)
-            .optional()?;
-            Ok(found.is_none())
-        })
+            .optional()
+            .map(|it| it.is_none())
+        })?)
     }
 }
 
@@ -788,6 +803,8 @@ impl<'a> InsertClass<'a> {
 mod test {
     use std::path::{Path, PathBuf};
 
+    use diesel::dsl::sql;
+    use diesel::sql_types::{BigInt, Nullable};
     use rstest::*;
 
     use super::super::models::{
@@ -1089,10 +1106,8 @@ mod test {
         load(&db, ctx, &classes, SOURCE, CSV::Classes);
 
         let enforced = db.query(|c| {
-            Ok(
-                diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>("(SELECT 1)"))
-                    .get_result::<i32>(c)?,
-            )
+            diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>("(SELECT 1)"))
+                .get_result::<i32>(c)
         });
         assert!(enforced.is_ok(), "the connection still works");
 
@@ -1157,6 +1172,62 @@ mod test {
                     .map(|it| it.get_smali_name().to_string())
             ),
             vec!["Lz/Rollback;"]
+        );
+    }
+
+    fn built_at(db: &GraphSqliteDatabase) -> i64 {
+        db.query(|c| {
+            _metadata::table
+                .select(_metadata::built_at)
+                .get_result::<i64>(c)
+        })
+        .expect("failed to read built_at")
+    }
+
+    fn last_delete(db: &GraphSqliteDatabase) -> Option<i64> {
+        db.query(|c| {
+            diesel::select(sql::<Nullable<BigInt>>(
+                "(SELECT last_delete FROM _metadata)",
+            ))
+            .get_result::<Option<i64>>(c)
+        })
+        .expect("failed to read last_delete")
+    }
+
+    /// Finishing a build stamps `built_at`, which is what an artifact holding ids checks
+    #[rstest]
+    fn test_finalize_stamps_built_at(tmp_context: TestContext) {
+        let ctx = &tmp_context;
+        let db = GraphSqliteDatabase::new(ctx).expect("failed to open the graph database");
+
+        // Set it back rather than comparing against the migration's value: unixepoch has one
+        // second of resolution, so a fresh database and a build in the same second are equal
+        db.write(|c| -> Result<()> {
+            sql_query("UPDATE _metadata SET built_at = 0").execute(c)?;
+            Ok(())
+        })
+        .expect("failed to reset built_at");
+        assert_eq!(built_at(&db), 0);
+
+        db.finalize(ctx).expect("finalize failed");
+        assert!(built_at(&db) > 0, "the build stamped the graph");
+    }
+
+    /// A delete is recorded permanently, because it can leave an artifact's ids dangling and
+    /// a later import can reuse them
+    #[rstest]
+    fn test_remove_source_stamps_last_delete(tmp_context: TestContext) {
+        let ctx = &tmp_context;
+        let db = GraphSqliteDatabase::new(ctx).expect("failed to open the graph database");
+        add_source(&db, SOURCE);
+
+        assert_eq!(last_delete(&db), None, "nothing has been deleted yet");
+
+        db.remove_source(SOURCE).expect("remove_source failed");
+
+        assert!(
+            last_delete(&db).is_some_and(|it| it > 0),
+            "the delete is on the record"
         );
     }
 }

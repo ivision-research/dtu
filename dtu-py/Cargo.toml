@@ -14,4 +14,5 @@ dtu = { path = "../dtu", default-features = false, features = ["graph", "sql", "
 pyo3 = { version = "0.27", features = ["anyhow"] }
 regex = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 postcard = { workspace = true }

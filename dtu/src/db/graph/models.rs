@@ -110,7 +110,6 @@ pub struct ClassField {
 #[sql_db_row]
 #[diesel(table_name = method_field_access)]
 pub struct MethodFieldAccess {
-    pub id: i32,
     pub field: FieldId,
     pub method: MethodId,
     pub action: i32,

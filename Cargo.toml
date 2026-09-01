@@ -23,6 +23,8 @@ libc = "0.2.88"
 log = "0.4"
 regex = "1.11"
 anyhow = "1.0"
+bitflags = "2.9"
+bumpalo = { version = "3.17" }
 zstd = { version = "0.13", features = ["zstdmt"] }
 tar = "0.4"
 serde = { version = "1.0", features = ["derive"] }
@@ -35,6 +37,7 @@ itertools = "0.13"
 lazy_static = "1.4"
 yoke =  "0.8"
 sha2 = "0.10"
+tempfile = "3.19"
 env_logger = "0.11"
 flexi_logger = { version = "0.30", features = ["dont_minimize_extra_stacks"] }
 toml = { version = "0.8", default-features = false, features = ["parse"] }

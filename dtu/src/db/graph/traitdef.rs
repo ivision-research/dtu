@@ -37,12 +37,21 @@ pub trait GraphDatabase: Sync + Send {
     /// Get all source names in the database
     fn get_all_sources(&self) -> Result<HashSet<String>>;
 
+    /// When the graph last finished building
+    ///
+    /// Ids are only stable for one build, so anything storing them outside the graph records
+    /// this and compares it before resolving them.
+    fn get_built_at(&self) -> Result<i64>;
+
+    /// Get the time of the last delete, if there is one. Same stability reason as
+    /// [GraphDatabase::get_built_at]
+    fn get_last_delete(&self) -> Result<Option<i64>>;
+
     /// Find all methods matching the given search critera
     fn get_methods(&self, search: &MethodSearch) -> Result<Vec<MethodSpec>>;
 
     /// Get the fully specified method from the database in either the provided source or the
-    /// framework. If source is [Some] and the method isn't found in that source but does exist in
-    /// the framework, the framework version will be returned
+    /// framework, preferring the provided source.
     fn get_method_source_or_framework(
         &self,
         class: &ClassName,
@@ -51,6 +60,15 @@ pub trait GraphDatabase: Sync + Send {
         return_type: &str,
         source: &str,
     ) -> Result<Option<MethodSpec>>;
+
+    /// Get the fully specified field from the database in either the provided source or the
+    /// framework, preferring the provided source.
+    fn get_field_source_or_framework(
+        &self,
+        class: &ClassName,
+        name: &str,
+        source: &str,
+    ) -> Result<Option<FieldSpec>>;
 
     /// Find all methods matching the given search criteria returning only the database IDs
     fn get_method_ids(&self, search: &MethodSearch) -> Result<Vec<MethodId>> {

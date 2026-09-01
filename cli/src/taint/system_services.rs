@@ -2,13 +2,10 @@ use std::collections::HashMap;
 
 use clap::{self, Args};
 use dtu::{
-    analysis::{taint::TaintSource, typing::complex_param_sources},
+    analysis::{db::GraphTaintAnalysisDb, taint::TaintSource, typing::complex_param_sources},
     db::{
-        device::models::DiffSource,
-        graph::{
-            get_default_graphdb, models::MethodId, GraphDatabase, MethodSearch, MethodSearchParams,
-            MethodSpec,
-        },
+        device::models::{DiffSource, SystemService},
+        graph::{models::MethodId, MethodSearch, MethodSearchParams, MethodSpec},
         meta::get_default_metadb,
         DeviceDatabase, Diffable, MetaDatabase,
     },
@@ -16,11 +13,9 @@ use dtu::{
     Context,
 };
 
-use crate::cache_key;
 use crate::diff::get_diff_source;
 use crate::parsers::DiffSourceValueParser;
 use crate::taint::common::{analyze, Analysis, RunOpts};
-use crate::utils::{bool_hash_key, opt_asref_hash_key, opt_diff_hash_key};
 
 #[derive(Args)]
 pub struct SystemServices {
@@ -42,16 +37,8 @@ pub struct SystemServices {
 
 impl SystemServices {
     pub fn run(self, ctx: &dyn Context) -> anyhow::Result<()> {
-        let gdb = get_default_graphdb(ctx)?;
-        let cache = cache_key!(
-            "analysis-system-services",
-            bool_hash_key(self.only_new),
-            opt_diff_hash_key(&self.diff_source),
-            opt_asref_hash_key(&self.name),
-            &self.run.hash_key()
-        );
-
-        let report = analyze(ctx, &gdb, &self.run, &cache, || {
+        let db = GraphTaintAnalysisDb::new_from_path(ctx, &self.run.out_file)?;
+        analyze(ctx, db, &self.run, |gdb| {
             let meta = get_default_metadb(ctx)?;
             meta.ensure_prereq(Prereq::SQLDatabaseSetup)?;
             let db = DeviceDatabase::new(ctx)?;
@@ -139,7 +126,6 @@ impl SystemServices {
             Ok(Analysis::new(methods, seeds))
         })?;
 
-        println!("{}", serde_json::to_string(&report)?);
         Ok(())
     }
 
@@ -148,7 +134,7 @@ impl SystemServices {
         ctx: &dyn Context,
         meta: &dyn MetaDatabase,
         db: &DeviceDatabase,
-    ) -> anyhow::Result<Vec<dtu::db::device::models::SystemService>> {
+    ) -> anyhow::Result<Vec<SystemService>> {
         let services = if self.only_new {
             let source = get_diff_source(ctx, meta, db, &self.diff_source)?;
             db.get_system_service_diffs_by_diff_id(source.id)?

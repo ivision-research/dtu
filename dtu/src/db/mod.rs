@@ -1,5 +1,5 @@
-mod common;
-mod macros;
+pub(crate) mod common;
+pub(crate) mod macros;
 pub use common::{DatabaseId, Error, Idable, Result};
 
 pub use device::{
@@ -7,7 +7,7 @@ pub use device::{
     PermissionProtected,
 };
 
-pub(crate) use macros::query;
+pub(crate) use macros::{query, query_exec};
 
 pub mod device;
 pub mod meta;

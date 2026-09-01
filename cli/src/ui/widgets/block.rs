@@ -1,13 +1,13 @@
 use crate::ui::widgets::{BG_COLOR, BORDER_TYPE};
 use ratatui::style::Style;
-use ratatui::widgets::{block::title::Title, Block, BorderType, Borders};
+use ratatui::widgets::{Block, BorderType, Borders};
 
 pub struct BlockBuilder<'a> {
     borders: Borders,
     border_style: Style,
     border_type: BorderType,
     style: Style,
-    text: Option<Title<'a>>,
+    text: Option<&'a str>,
 }
 
 impl<'a> Default for BlockBuilder<'a> {
@@ -43,8 +43,8 @@ impl<'a> BlockBuilder<'a> {
         self.style = val;
         self
     }
-    pub fn with_text<T: Into<Title<'a>>>(mut self, val: T) -> Self {
-        self.text = Some(val.into());
+    pub fn with_text(mut self, val: &'a str) -> Self {
+        self.text = Some(val);
         self
     }
 

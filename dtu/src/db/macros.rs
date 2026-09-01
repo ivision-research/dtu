@@ -1,8 +1,4 @@
 //! The declarative macros used to build the database implementations
-//!
-//! These are not re-exported by [crate::db::common], so every user has to name the ones it
-//! wants. Macros invoked from inside another macro here are path qualified so that
-//! importing the outer one is enough.
 
 /// Create a database ID type with the given name and doc comment
 ///
@@ -34,6 +30,20 @@ macro_rules! database_id {
             }
             pub const fn raw(self) -> i32 {
                 self.0
+            }
+        }
+
+        impl<DB> ::diesel::deserialize::QueryableByName<DB> for $name
+        where
+            DB: ::diesel::backend::Backend,
+            i32: ::diesel::deserialize::FromSql<::diesel::sql_types::Integer, DB>,
+        {
+            fn build<'a>(
+                row: &impl ::diesel::row::NamedRow<'a, DB>,
+            ) -> ::diesel::deserialize::Result<Self> {
+                let id =
+                    ::diesel::row::NamedRow::get::<::diesel::sql_types::Integer, _>(row, "id")?;
+                Ok(Self(id))
             }
         }
 
@@ -92,7 +102,64 @@ macro_rules! database_id {
     };
 }
 
-pub(super) use database_id;
+pub(crate) use database_id;
+
+macro_rules! text_enum {
+    ($name:ident { $($variant:ident => $text:literal),+ $(,)? }) => {
+        #[derive(
+            Debug,
+            Clone,
+            Copy,
+            PartialEq,
+            Eq,
+            diesel::expression::AsExpression,
+            diesel::FromSqlRow,
+        )]
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        pub enum $name {
+            $($variant),+
+        }
+
+        impl $name {
+            pub const fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $text),+
+                }
+            }
+        }
+
+        impl diesel::serialize::ToSql<diesel::sql_types::Text, diesel::sqlite::Sqlite> for $name {
+            fn to_sql<'b>(
+                &'b self,
+                out: &mut diesel::serialize::Output<'b, '_, diesel::sqlite::Sqlite>,
+            ) -> diesel::serialize::Result {
+                out.set_value(self.as_str());
+                Ok(diesel::serialize::IsNull::No)
+            }
+        }
+
+        impl diesel::deserialize::FromSql<diesel::sql_types::Text, diesel::sqlite::Sqlite>
+            for $name
+        {
+            fn from_sql(
+                value: diesel::sqlite::SqliteValue<'_, '_, '_>,
+            ) -> diesel::deserialize::Result<Self> {
+                let text = <String as diesel::deserialize::FromSql<
+                    diesel::sql_types::Text,
+                    diesel::sqlite::Sqlite,
+                >>::from_sql(value)?;
+                match text.as_str() {
+                    $($text => Ok(Self::$variant),)+
+                    other => {
+                        Err(format!("unexpected {}: {}", stringify!($name), other).into())
+                    }
+                }
+            }
+        }
+    };
+}
+
+pub(crate) use text_enum;
 
 macro_rules! def_get_multi {
     ($name:ident, $ret:ty) => {
@@ -100,7 +167,7 @@ macro_rules! def_get_multi {
     };
 }
 
-pub(super) use def_get_multi;
+pub(crate) use def_get_multi;
 
 macro_rules! def_delete_by {
     ($name:ident, $sel:ty) => {
@@ -108,7 +175,7 @@ macro_rules! def_delete_by {
     };
 }
 
-pub(super) use def_delete_by;
+pub(crate) use def_delete_by;
 
 macro_rules! def_get_one_by {
     ($name:ident, $sel:ty, $ret:ty) => {
@@ -116,7 +183,7 @@ macro_rules! def_get_one_by {
     };
 }
 
-pub(super) use def_get_one_by;
+pub(crate) use def_get_one_by;
 
 #[allow(unused_macros)]
 macro_rules! def_get_multi_by {
@@ -126,7 +193,7 @@ macro_rules! def_get_multi_by {
 }
 
 #[allow(unused)]
-pub(super) use def_get_multi_by;
+pub(crate) use def_get_multi_by;
 
 macro_rules! def_insert_one {
     ($name:ident, $ty:ty) => {
@@ -134,7 +201,7 @@ macro_rules! def_insert_one {
     };
 }
 
-pub(super) use def_insert_one;
+pub(crate) use def_insert_one;
 
 macro_rules! def_update_one {
     ($name:ident, $ty:ty) => {
@@ -142,7 +209,7 @@ macro_rules! def_update_one {
     };
 }
 
-pub(super) use def_update_one;
+pub(crate) use def_update_one;
 
 macro_rules! def_insert_multi {
     ($name:ident, $ty:ty) => {
@@ -150,7 +217,7 @@ macro_rules! def_insert_multi {
     };
 }
 
-pub(super) use def_insert_multi;
+pub(crate) use def_insert_multi;
 
 #[allow(unused_macros)]
 macro_rules! def_insert {
@@ -165,7 +232,7 @@ macro_rules! def_insert {
 }
 
 #[allow(unused)]
-pub(super) use def_insert;
+pub(crate) use def_insert;
 
 #[allow(unused_macros)]
 macro_rules! def_standard_crud {
@@ -189,7 +256,7 @@ macro_rules! def_standard_crud {
 }
 
 #[allow(unused)]
-pub(super) use def_standard_crud;
+pub(crate) use def_standard_crud;
 
 #[cfg(feature = "trace_db")]
 macro_rules! query {
@@ -203,6 +270,28 @@ macro_rules! query {
         __dbg_query
     }};
 }
+
+#[cfg(feature = "trace_db")]
+macro_rules! query_exec {
+    ($q:expr, $conn:expr) => {{
+        let __dbg_query = $q;
+        ::log::trace!(
+            "{}",
+            diesel::debug_query::<::diesel::sqlite::Sqlite, _>(&__dbg_query)
+        );
+
+        __dbg_query.execute($conn)
+    }};
+}
+
+#[cfg(not(feature = "trace_db"))]
+macro_rules! query_exec {
+    ($q:expr, $conn:expr) => {
+        $q.execute($conn)
+    };
+}
+
+pub(crate) use query_exec;
 
 #[cfg(not(feature = "trace_db"))]
 macro_rules! query {
@@ -228,7 +317,7 @@ macro_rules! impl_delete_by {
     }
 }
 
-pub(super) use impl_delete_by;
+pub(crate) use impl_delete_by;
 
 macro_rules! impl_get_by {
     ($vis:vis $retrieve:ident, $name:ident, $sel:ty, $ret:ty, $ty:ident, $($filter:tt)+) => {
@@ -236,12 +325,12 @@ macro_rules! impl_get_by {
             let __query = $crate::db::macros::query!(super::schema::$ty::dsl::$ty.filter(
                 super::schema::$ty::dsl::$($filter)+(sel)
             ));
-            self.query(|conn| Ok(__query.$retrieve(conn)?))
+            self.query(|conn| __query.$retrieve(conn))
         }
     }
 }
 
-pub(super) use impl_get_by;
+pub(crate) use impl_get_by;
 
 macro_rules! impl_get {
         ($vis:vis $retrieve:ident, $name:ident, $ret:ty, $ty:ident, $($filter:tt)+) => {
@@ -249,12 +338,12 @@ macro_rules! impl_get {
             let __query = $crate::db::macros::query!(super::schema::$ty::dsl::$ty.filter(
                 super::schema::$ty::dsl::$($filter)+
             ));
-            self.query(|conn| Ok(__query.$retrieve(conn)?))
+            self.query(|conn| __query.$retrieve(conn))
         }
     }
 }
 
-pub(super) use impl_get;
+pub(crate) use impl_get;
 
 #[allow(unused_macros)]
 macro_rules! impl_get_one {
@@ -264,7 +353,7 @@ macro_rules! impl_get_one {
 }
 
 #[allow(unused)]
-pub(super) use impl_get_one;
+pub(crate) use impl_get_one;
 
 macro_rules! impl_get_multi {
     ($vis:vis $name:ident, $ret:ty, $ty:ident, $($filter:tt)+) => {
@@ -272,7 +361,7 @@ macro_rules! impl_get_multi {
     }
 }
 
-pub(super) use impl_get_multi;
+pub(crate) use impl_get_multi;
 
 macro_rules! impl_get_one_by {
     ($vis:vis $name:ident, $sel:ty, $ret:ty, $ty:ident, $($filter:tt)+) => {
@@ -281,7 +370,7 @@ macro_rules! impl_get_one_by {
 
 }
 
-pub(super) use impl_get_one_by;
+pub(crate) use impl_get_one_by;
 
 macro_rules! impl_get_multi_by {
     ($vis:vis $name:ident, $sel:ty, $ret:ty, $ty:ident, $($filter:tt)+) => {
@@ -289,18 +378,18 @@ macro_rules! impl_get_multi_by {
     }
 }
 
-pub(super) use impl_get_multi_by;
+pub(crate) use impl_get_multi_by;
 
 macro_rules! impl_get_all {
     ($vis:vis $name:ident, $ret:ty, $ty:ident) => {
         $vis fn $name(&self) -> Result<Vec<$ret>> {
             let __query = $crate::db::macros::query!(super::schema::$ty::dsl::$ty);
-            self.query(|conn| Ok(__query.load(conn)?))
+            self.query(|conn| __query.load(conn))
         }
     };
 }
 
-pub(super) use impl_get_all;
+pub(crate) use impl_get_all;
 
 macro_rules! impl_update_one {
     ($vis:vis $name:ident, $ty:ty, $dsl:ident) => {
@@ -314,7 +403,7 @@ macro_rules! impl_update_one {
     };
 }
 
-pub(super) use impl_update_one;
+pub(crate) use impl_update_one;
 
 macro_rules! impl_insert_one {
     ($vis:vis $name:ident, $ty:ty, $dsl:ident) => {
@@ -327,7 +416,7 @@ macro_rules! impl_insert_one {
     };
 }
 
-pub(super) use impl_insert_one;
+pub(crate) use impl_insert_one;
 
 macro_rules! impl_insert_multi {
     ($vis:vis $name:ident, $ty:ty, $dsl:ident) => {
@@ -341,7 +430,7 @@ macro_rules! impl_insert_multi {
     };
 }
 
-pub(super) use impl_insert_multi;
+pub(crate) use impl_insert_multi;
 
 macro_rules! impl_simple_gets {
     ($vis:vis $table:ident, $ty:ty, $get_all:ident, $get_by_id:ident) => {
@@ -350,7 +439,7 @@ macro_rules! impl_simple_gets {
     };
 }
 
-pub(super) use impl_simple_gets;
+pub(crate) use impl_simple_gets;
 
 #[allow(unused_macros)]
 macro_rules! impl_standard_crud {
@@ -365,4 +454,4 @@ macro_rules! impl_standard_crud {
 }
 
 #[allow(unused)]
-pub(super) use impl_standard_crud;
+pub(crate) use impl_standard_crud;

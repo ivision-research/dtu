@@ -4,7 +4,8 @@ use clap::{self, Args};
 
 use dtu::{
     analysis::{
-        taint::{TaintAnalyzer, TaintAnalyzerOptions, TaintReport, TaintSeedOptions, TaintSeeds},
+        db::taint::{db::GraphTaintAnalysisDb, writer::RunMeta},
+        taint::{TaintAnalyzer, TaintAnalyzerOptions, TaintSeedOptions, TaintSeeds},
         SsaClassLoader,
     },
     db::{
@@ -16,20 +17,14 @@ use dtu::{
     Context,
 };
 
-use crate::{
-    diff::get_diff_source,
-    parsers::DiffSourceValueParser,
-    utils::{
-        bool_hash_key, inum_hash_key, opt_diff_hash_key, project_cacheable_json, task_canceller,
-    },
-};
+use crate::{diff::get_diff_source, parsers::DiffSourceValueParser, utils::task_canceller};
 
 /// Flags every analysis command shares, independent of what it selects
 #[derive(Args)]
 pub struct RunOpts {
-    /// Ignore the cached results
-    #[arg(long, default_value_t = false)]
-    pub no_cache: bool,
+    /// Output file
+    #[arg(short, long)]
+    pub out_file: String,
 
     /// Number of worker threads to analyze with
     #[arg(short = 'T', long)]
@@ -41,13 +36,6 @@ pub struct RunOpts {
 }
 
 impl RunOpts {
-    pub fn hash_key(&self) -> Vec<u8> {
-        let depth = self
-            .depth
-            .map_or(-1, |it| i64::try_from(it).unwrap_or(i64::MAX));
-        Vec::from(inum_hash_key(depth))
-    }
-
     pub fn analyzer_options(&self) -> TaintAnalyzerOptions {
         let mut opts = TaintAnalyzerOptions::default();
         if let Some(threads) = self.threads {
@@ -119,18 +107,6 @@ impl ComponentOpts {
     }
 }
 
-impl ComponentOpts {
-    pub fn hash_key(&self) -> Vec<u8> {
-        let mut out = Vec::new();
-        out.extend(bool_hash_key(self.only_new));
-        out.extend(bool_hash_key(self.only_public));
-        out.extend(bool_hash_key(self.only_enabled));
-        out.extend(opt_diff_hash_key(&self.diff_source));
-        out.extend(self.run.hash_key());
-        out
-    }
-}
-
 /// Every method the graph database has for the given class
 ///
 /// Note that this also searches parent classes
@@ -157,12 +133,10 @@ pub fn methods_for_class(
     Ok(methods)
 }
 
-/// What a command resolved to analyze, built only when the cache misses
 pub struct Analysis {
     pub methods: Vec<MethodSpec>,
     pub seeds: Box<dyn TaintSeeds>,
     pub loader: Option<Arc<SsaClassLoader>>,
-    /// Only honored when the run asked for indirect seeding
     pub seed: Option<TaintSeedOptions>,
 }
 
@@ -188,38 +162,35 @@ impl Analysis {
     }
 }
 
-/// Run the taint analysis, reusing a cached report when the inputs match.
+/// Run the taint analysis
 ///
 /// `resolve` produces the methods and seeds, and only runs when the cache misses. Resolution is
 /// the expensive part of every command, so nothing about it can appear in the key.
 pub fn analyze<F>(
     ctx: &dyn Context,
-    gdb: &dyn GraphDatabase,
+    db: GraphTaintAnalysisDb,
     opts: &RunOpts,
-    cache: &str,
     resolve: F,
-) -> anyhow::Result<TaintReport>
+) -> anyhow::Result<()>
 where
-    F: FnOnce() -> anyhow::Result<Analysis>,
+    F: FnOnce(&dyn GraphDatabase) -> anyhow::Result<Analysis>,
 {
-    project_cacheable_json(ctx, cache, opts.no_cache, true, || {
-        let analysis = resolve()?;
-        let loader = match analysis.loader {
-            Some(v) => v,
-            None => Arc::new(
-                SsaClassLoader::new(ctx)
-                    .ok_or_else(|| anyhow::anyhow!("failed to open the SSA class cache"))?,
-            ),
-        };
-        let (_sigs, cancel) = task_canceller()?;
-        let mut analyzer_opts = opts.analyzer_options();
-        analyzer_opts.seed = analysis.seed;
-        let mut taint =
-            TaintAnalyzer::new(ctx, gdb, cancel, analyzer_opts, &*analysis.seeds, loader);
-        let (report, failed) = taint.run(analysis.methods);
-        if !failed.is_empty() {
-            log::warn!("{} methods failed to analyze", failed.len());
-        }
-        Ok(report)
-    })
+    let analysis = resolve(db.graph())?;
+    let loader = match analysis.loader {
+        Some(v) => v,
+        None => Arc::new(
+            SsaClassLoader::new(ctx)
+                .ok_or_else(|| anyhow::anyhow!("failed to open the SSA class cache"))?,
+        ),
+    };
+    let (_sigs, cancel) = task_canceller()?;
+    let mut analyzer_opts = opts.analyzer_options();
+    analyzer_opts.seed = analysis.seed;
+
+    let opts_json = serde_json::to_string(&analyzer_opts)?;
+
+    let meta = RunMeta::new(db.graph(), opts_json)?;
+    let mut taint = TaintAnalyzer::new(ctx, cancel, analyzer_opts, &*analysis.seeds, loader);
+    taint.run(analysis.methods, db, &meta)?;
+    Ok(())
 }

@@ -9,6 +9,14 @@ diesel::table! {
 }
 
 diesel::table! {
+    _metadata (rowid) {
+        rowid -> Integer,
+        built_at -> BigInt,
+        last_delete -> Nullable<BigInt>,
+    }
+}
+
+diesel::table! {
     calls (rowid) {
         rowid -> Integer,
         caller -> Integer,
@@ -112,6 +120,7 @@ diesel::joinable!(supers -> sources (source));
 
 diesel::allow_tables_to_appear_in_same_query!(
     _load_status,
+    _metadata,
     calls,
     class_fields,
     classes,

@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-pub struct ClassLoaderStats {
+pub struct YokeCacheStats {
     attempts: AtomicUsize,
     lru_hits: AtomicUsize,
     db_hits: AtomicUsize,
@@ -8,7 +8,7 @@ pub struct ClassLoaderStats {
     memory_used: AtomicUsize,
 }
 
-impl ClassLoaderStats {
+impl YokeCacheStats {
     pub fn new() -> Self {
         Self {
             attempts: AtomicUsize::new(0),
@@ -33,13 +33,13 @@ impl ClassLoaderStats {
     }
 }
 
-impl Drop for ClassLoaderStats {
+impl Drop for YokeCacheStats {
     fn drop(&mut self) {
         let attempts = self.attempts.load(Ordering::Relaxed);
         let lru_hits = self.lru_hits.load(Ordering::Relaxed);
         let db_hits = self.db_hits.load(Ordering::Relaxed);
 
-        eprintln!("ClassLoader stats:");
+        eprintln!("YokeCacheStats stats:");
         eprintln!("\tLookups: {}", attempts);
 
         let lru_pct = 100.0f32 * (lru_hits as f32) / (attempts as f32);
@@ -63,5 +63,39 @@ impl Drop for ClassLoaderStats {
         eprintln!("\tTotal memory: {total_mem_mb:.2}MiB");
         eprintln!("\tMax memory: {max_mem_kb:.2}KiB");
         eprintln!("\tAverage memory: {average_mem_kb:.2}KiB");
+    }
+}
+
+pub struct CacheStats {
+    attempts: usize,
+    lru_hits: usize,
+}
+
+impl CacheStats {
+    pub fn new() -> Self {
+        Self {
+            attempts: 0,
+            lru_hits: 0,
+        }
+    }
+    pub fn lookup_attempt(&mut self) {
+        self.attempts += 1;
+    }
+    pub fn lru_hit(&mut self) {
+        self.lru_hits += 1;
+    }
+}
+
+impl Drop for CacheStats {
+    fn drop(&mut self) {
+        let attempts = self.attempts;
+        let lru_hits = self.lru_hits;
+
+        eprintln!("CacheStats stats:");
+        eprintln!("\tLookups: {}", attempts);
+        let lru_pct = 100.0f32 * (lru_hits as f32) / (attempts as f32);
+        eprintln!("\tLRU hits: {} ({:.2}%)", lru_hits, lru_pct);
+        let misses = attempts - lru_hits;
+        eprintln!("\tMisses: {} ({:.2}%)", misses, 100.0f32 - lru_pct);
     }
 }

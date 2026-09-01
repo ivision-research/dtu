@@ -8,6 +8,7 @@ use std::path::Path;
 use super::NewlineReader;
 
 /// A simple allowlist based on a HashSet
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Allowlist<T: Eq + Hash> {
     values: HashSet<T>,
 }
@@ -128,6 +129,8 @@ where
 }
 
 /// A denylist is just the inverse of an allowlist
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct Denylist<T: Eq + Hash>(Allowlist<T>);
 
 impl<T: Eq + Hash + Clone> Clone for Denylist<T> {

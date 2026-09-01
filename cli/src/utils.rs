@@ -19,10 +19,15 @@ use std::thread::JoinHandle;
 use anyhow::bail;
 use anyhow::Context as AnyhowContext;
 use dtu::db::device::models::DiffSource;
+use dtu::db::graph::MethodSpec;
+use dtu::utils::find_smali_file_for_method_spec;
+use dtu::utils::path_must_str;
 use itertools::Itertools;
 use promptly::prompt;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use sha2::Digest;
+use sha2::Sha256;
 use signal_hook::consts::TERM_SIGNALS;
 use signal_hook::iterator::Handle;
 use signal_hook::iterator::Signals;
@@ -37,15 +42,27 @@ use dtu::{run_cmd, Context};
 #[macro_export]
 macro_rules! cache_key {
     ($ns:expr, $($it:expr),*) => {
-        cache_key!($ns, ostrs: [], $($it),*)
+        cache_key!($ns, ostrs: [], iters: [], $($it),*)
     };
 
-    ($ns:expr, ostrs: [$($ostr:expr),*], $($it:expr),*) => {{
+    ($ns:expr, ostrs: [$($ostr:expr),*], $($it:expr),*) => {
+        cache_key!($ns, ostrs: [$($ostr),*], iters: [], $($it),*)
+    };
+
+    ($ns:expr, iters: [$($iter:expr),*], $($it:expr),*) => {
+        cache_key!($ns, ostrs: [], iters: [$($iter),*], $($it),*)
+    };
+
+    ($ns:expr, ostrs: [$($ostr:expr),*], iters: [$($iter:expr),*], $($it:expr),*) => {{
         use sha2::Digest;
         let mut hasher = ::sha2::Sha256::default();
 
         $(
             hasher.update($it);
+        )*
+
+        $(
+            crate::utils::hash_iter(&mut hasher, $iter);
         )*
 
         $(
@@ -149,6 +166,17 @@ pub fn bool_hash_key(z: bool) -> &'static [u8] {
         &[b'1']
     } else {
         &[b'0']
+    }
+}
+
+#[allow(unused)]
+pub fn hash_iter<I, T>(hasher: &mut Sha256, iter: I)
+where
+    T: AsRef<str>,
+    I: Iterator<Item = T>,
+{
+    for it in iter {
+        hasher.update(it.as_ref().as_bytes());
     }
 }
 
@@ -433,6 +461,18 @@ fn try_get_apk_smali_no_pkg(
     Some(find_smali_file_for_class(ctx, &new_class, Some(apk))?)
 }
 
+pub fn dtu_open_method_spec(ctx: &dyn Context, method: &MethodSpec) -> anyhow::Result<()> {
+    let Some(file) = find_smali_file_for_method_spec(ctx, method) else {
+        bail!(
+            "failed to find a file for method {} in {}",
+            method,
+            method.source
+        );
+    };
+
+    invoke_dtu_open_file(ctx, path_must_str(&file), &method.name)
+}
+
 /// Invoke $DTU_OPEN_EXECUTABLE or `dtu-open-file` with the given args
 ///
 /// The executable is invoked with `path` as $1 and `search` as $2
@@ -441,9 +481,9 @@ pub fn invoke_dtu_open_file(ctx: &dyn Context, path: &str, search: &str) -> anyh
         Some(v) => v,
         None => match ctx.maybe_get_bin("dtu-open-file") {
             Some(v) => v,
-            None => anyhow::bail!(
-                "either set DTU_OPEN_EXECUTABLE or add a dtu-open-file executable to $PATH"
-            ),
+            None => {
+                bail!("either set DTU_OPEN_EXECUTABLE or add a dtu-open-file executable to $PATH")
+            }
         },
     };
     run_cmd(exe, &[path, search])?.err_on_status()?;
@@ -458,7 +498,7 @@ pub fn invoke_dtu_clipboard(ctx: &dyn Context, content: &str) -> anyhow::Result<
         Some(v) => v,
         None => match ctx.maybe_get_bin("dtu-clipboard") {
             Some(v) => v,
-            None => anyhow::bail!(
+            None => bail!(
                 "either set DTU_CLIPBOARD_EXECUTABLE or add dtu-clipboard executable to $PATH"
             ),
         },
@@ -474,7 +514,7 @@ pub fn invoke_dtu_clipboard(ctx: &dyn Context, content: &str) -> anyhow::Result<
     drop(stdin);
     let status = cmd.wait()?;
     if !status.success() {
-        anyhow::bail!("clipboard command ({}) failed", exe);
+        bail!("clipboard command ({}) failed", exe);
     }
     Ok(())
 }

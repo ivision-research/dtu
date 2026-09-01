@@ -1,3 +1,4 @@
+use crate::db::graph::{MethodSpec, FRAMEWORK_SOURCE};
 use crate::utils::{ClassName, DevicePath};
 use crate::Context;
 use std::borrow::Cow;
@@ -187,6 +188,18 @@ pub fn proj_home_relative(ctx: &dyn Context, path: &Path) -> Option<PathBuf> {
 /// This can't fail and just returns the path itself if it can't be make relative
 pub fn try_proj_home_relative(ctx: &dyn Context, path: &Path) -> PathBuf {
     proj_home_relative(ctx, path).unwrap_or_else(|| PathBuf::from(path))
+}
+
+pub fn find_smali_file_for_method_spec(
+    ctx: &dyn Context,
+    method_spec: &MethodSpec,
+) -> Option<PathBuf> {
+    let apk = if method_spec.source == FRAMEWORK_SOURCE {
+        None
+    } else {
+        Some(DevicePath::from_squashed(&method_spec.source))
+    };
+    find_smali_file_for_class(ctx, &method_spec.class, apk.as_ref())
 }
 
 pub fn find_smali_file_for_class(

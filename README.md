@@ -83,7 +83,11 @@ After you're setup you can start actually using `dtu` for analysis. How you do t
 
 ### Taint analysis
 
-`dtu` has support for taint analysis: tracking parameters through method calls in the framework. This is a powerful tool for finding bugs and the CLI comes with some canned queries (see `dtu taint`) for IPC entrypoints that can get you started right away. Taint analysis is currently a work in progress, so it shouldn't be considered comprehensive and it may take a significant amount of time for very busy methods. You can also access the taint analysis functionality via the Python bindings.
+`dtu` has support for taint analysis: tracking parameters through method calls in the framework. This is a powerful tool for finding bugs and the CLI comes with some canned queries (see `dtu taint`) for IPC entrypoints that can get you started right away. Taint analysis is currently a work in progress, so it shouldn't be considered comprehensive and it may take a significant amount of time for very busy methods.
+
+The output for every taint analysis run is a SQLite database. This output format isn't as ergonomic to work with as something like JSON, but it allows streaming the results out so a canceled or hung run doesn't have as many issues. It also makes it easy to resume runs. You can see the schema in the [migrations directory](dtu/migrations/taint_migrations). There is a TUI for exploring taint analysis outputs and some tools for filtering and outputting JSON.
+
+ You can also access the taint analysis functionality via the Python bindings, but that currently is just for generating outputs and nothing else.
 
 ### Diffing and `dtu diff ui`
 

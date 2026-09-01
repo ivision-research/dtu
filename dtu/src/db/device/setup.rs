@@ -340,7 +340,7 @@ impl<'a> AddManifestTask<'a> {
         let ins = InsertReceiver {
             apk_id: self.apk_id,
             permission,
-            class_name,
+            class_name: &class_name,
             exported,
             enabled,
             pkg: pkg_name,
@@ -434,7 +434,7 @@ impl<'a> AddManifestTask<'a> {
             }
         );
         let ins = InsertActivity {
-            class_name,
+            class_name: &class_name,
             exported: common.is_exported(),
             enabled: common.is_enabled(),
             pkg: pkg_name,
@@ -480,7 +480,7 @@ impl<'a> AddManifestTask<'a> {
             }
         );
         let ins = InsertService {
-            class_name,
+            class_name: &class_name,
             exported,
             enabled,
             pkg: pkg_name,
@@ -811,7 +811,7 @@ impl<'a> AddSystemServiceTask<'a> {
         let iface = self.service.iface.as_ref();
 
         let ins = InsertSystemService::new(&self.service.service_name, UnknownBool::Unknown)
-            .set_iface(iface.cloned());
+            .set_iface(iface);
 
         let id = match insert_into(system_services::table)
             .values(&ins)
@@ -875,7 +875,7 @@ impl<'a> AddSystemServiceTask<'a> {
                     None => "UNKNOWN",
                 };
 
-                let ins = InsertSystemServiceImpl::new(service_db_id, source, class_name);
+                let ins = InsertSystemServiceImpl::new(service_db_id, source, &class_name);
                 insert_into(system_service_impls::table)
                     .values(&ins)
                     .execute(conn)?;
@@ -1298,7 +1298,8 @@ impl<'a> AddSystemServiceTask<'a> {
         imp: &str,
         source: &str,
     ) -> SetupResult<()> {
-        let ins = InsertSystemServiceImpl::new(service_db_id, source, imp.into());
+        let cn = ClassName::from(imp);
+        let ins = InsertSystemServiceImpl::new(service_db_id, source, &cn);
         insert_into(system_service_impls::table)
             .values(&ins)
             .execute(conn)?;

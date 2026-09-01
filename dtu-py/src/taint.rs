@@ -1,29 +1,43 @@
 use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
 
 use std::str::FromStr;
 
 use std::sync::Arc;
 use std::time::Duration;
 
+use dtu::analysis::db::taint::writer::RunMeta;
+use dtu::analysis::db::GraphTaintAnalysisDb;
 use dtu::analysis::taint::{
-    MethodTaint, Origin, TaintAnalyzer, TaintAnalyzerOptions, TaintReport, TaintSeedOptions,
-    TaintSeeds, TaintSink, TaintSinkKind, TaintSource, TaintSourceAndRoute,
+    TaintAnalyzer, TaintAnalyzerOptions, TaintSeedOptions, TaintSeeds, TaintSink, TaintSinkKind,
+    TaintSource,
 };
 use dtu::analysis::SsaClassLoader;
 use dtu::db::graph::models::MethodId;
 use dtu::tasks::TaskCanceller;
 use dtu::utils::{ClassName, Denylist};
-use pyo3::{prelude::*, types::PyTuple};
+use pyo3::prelude::*;
 
 use crate::{
     context::PyContext,
     exception::{DtuBaseError, DtuError},
-    graph::{GraphDB, PyMethodSpec},
+    graph::PyMethodSpec,
     types::PyClassName,
-    utils::{reduce, unpickle},
 };
+
+#[pyclass(module = "dtu", name = "TaintSource")]
+#[derive(Clone)]
+pub struct PyTaintAnalysisDb(GraphTaintAnalysisDb);
+
+#[pymethods]
+impl PyTaintAnalysisDb {
+    #[new]
+    #[pyo3(signature = (ctx, path, *))]
+    fn new(ctx: &PyContext, path: &str) -> PyResult<Self> {
+        let db = GraphTaintAnalysisDb::new_from_path(ctx, path)
+            .map_err(|e| DtuBaseError::from(e.to_string()))?;
+        Ok(Self(db))
+    }
+}
 
 #[pyclass(module = "dtu", name = "TaintSource")]
 #[derive(Clone)]
@@ -214,15 +228,6 @@ impl From<TaintSink> for PyTaintSink {
 
 #[pymethods]
 impl PyTaintSink {
-    #[staticmethod]
-    fn __unpickle(value: &[u8]) -> PyResult<Self> {
-        unpickle::<TaintSink, _>(value)
-    }
-
-    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        reduce::<_, TaintSink>(self, py)
-    }
-
     /// The id of the method the sink occurred in
     #[getter]
     fn location(&self) -> i32 {
@@ -239,227 +244,6 @@ impl PyTaintSink {
             "TaintSink(location={}, kind={})",
             self.0.location.raw(),
             self.kind().__str__()
-        )
-    }
-}
-
-#[pyclass(module = "dtu", frozen, name = "SourceTaint")]
-#[derive(Clone)]
-pub struct PyTaintSourceAndRoute(TaintSourceAndRoute);
-
-impl AsRef<TaintSourceAndRoute> for PyTaintSourceAndRoute {
-    fn as_ref(&self) -> &TaintSourceAndRoute {
-        &self.0
-    }
-}
-
-impl From<TaintSourceAndRoute> for PyTaintSourceAndRoute {
-    fn from(value: TaintSourceAndRoute) -> Self {
-        Self(value)
-    }
-}
-
-#[pymethods]
-impl PyTaintSourceAndRoute {
-    #[staticmethod]
-    fn __unpickle(value: &[u8]) -> PyResult<Self> {
-        unpickle::<TaintSourceAndRoute, _>(value)
-    }
-
-    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        reduce::<_, TaintSourceAndRoute>(self, py)
-    }
-
-    #[getter]
-    fn source(&self) -> PyTaintSource {
-        self.0.source.clone().into()
-    }
-
-    /// Each entry is one route the taint took from the source to an endpoint
-    #[getter]
-    fn paths(&self) -> Vec<Vec<PyTaintSink>> {
-        self.0
-            .paths
-            .iter()
-            .map(|path| path.iter().cloned().map(PyTaintSink::from).collect())
-            .collect()
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "SourceTaint(source={}, paths={})",
-            self.source().__str__(),
-            self.0.paths.len()
-        )
-    }
-}
-
-#[pyclass(module = "dtu", name = "Origin")]
-#[derive(Clone)]
-pub enum PyOrigin {
-    Direct(),
-    /// Each chain runs from the method that was asked for to this one, naming methods by id
-    CallGraph {
-        chains: Vec<Vec<i32>>,
-    },
-}
-
-impl From<Origin> for PyOrigin {
-    fn from(value: Origin) -> Self {
-        match value {
-            Origin::Direct => Self::Direct(),
-            Origin::CallGraph { chains } => Self::CallGraph {
-                chains: chains
-                    .into_iter()
-                    .map(|it| it.into_iter().map(|id| id.raw()).collect())
-                    .collect(),
-            },
-        }
-    }
-}
-
-#[pymethods]
-impl PyOrigin {
-    fn __str__(&self) -> String {
-        match self {
-            Self::Direct() => String::from("direct"),
-            Self::CallGraph { chains } => format!("call graph, {} chain(s)", chains.len()),
-        }
-    }
-
-    fn __repr__(&self) -> String {
-        format!("Origin({})", self.__str__())
-    }
-}
-
-#[pyclass(module = "dtu", frozen, name = "MethodTaint")]
-#[derive(Clone)]
-pub struct PyMethodTaint(MethodTaint);
-
-impl AsRef<MethodTaint> for PyMethodTaint {
-    fn as_ref(&self) -> &MethodTaint {
-        &self.0
-    }
-}
-
-impl From<MethodTaint> for PyMethodTaint {
-    fn from(value: MethodTaint) -> Self {
-        Self(value)
-    }
-}
-
-#[pymethods]
-impl PyMethodTaint {
-    #[staticmethod]
-    fn __unpickle(value: &[u8]) -> PyResult<Self> {
-        unpickle::<MethodTaint, _>(value)
-    }
-
-    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        reduce::<_, MethodTaint>(self, py)
-    }
-
-    /// The id of the method the taint was found in
-    #[getter]
-    fn method(&self) -> i32 {
-        self.0.method.raw()
-    }
-
-    /// Why the method was analyzed
-    #[getter]
-    fn origin(&self) -> PyOrigin {
-        PyOrigin::from(self.0.origin.clone())
-    }
-
-    #[getter]
-    fn taint(&self) -> Vec<PyTaintSourceAndRoute> {
-        self.0.taint.iter().cloned().map(Into::into).collect()
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "MethodTaint(method={}, taint={})",
-            self.0.method.raw(),
-            self.0.taint.len()
-        )
-    }
-}
-
-/// The output of a taint analysis run
-#[pyclass(module = "dtu", frozen, name = "TaintReport")]
-pub struct PyTaintReport {
-    report: TaintReport,
-    by_id: HashMap<i32, PyMethodSpec>,
-}
-
-impl AsRef<TaintReport> for PyTaintReport {
-    fn as_ref(&self) -> &TaintReport {
-        &self.report
-    }
-}
-
-impl From<TaintReport> for PyTaintReport {
-    fn from(report: TaintReport) -> Self {
-        let by_id = report
-            .methods
-            .iter()
-            .map(|(id, spec)| (id.raw(), PyMethodSpec::from(spec.clone())))
-            .collect();
-        Self { report, by_id }
-    }
-}
-
-#[pymethods]
-impl PyTaintReport {
-    #[staticmethod]
-    fn __unpickle(value: &[u8]) -> PyResult<Self> {
-        unpickle::<TaintReport, _>(value)
-    }
-
-    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        reduce::<_, TaintReport>(self, py)
-    }
-
-    /// Parse a report from the JSON emitted by `dtu analysis receiver-intents`
-    #[staticmethod]
-    fn from_json(value: &str) -> Result<Self, DtuBaseError> {
-        Ok(Self::from(TaintReport::from_json(value)?))
-    }
-
-    /// Parse a report from a file containing the JSON emitted by the CLI
-    #[staticmethod]
-    fn from_file(path: PathBuf) -> PyResult<Self> {
-        let contents = fs::read_to_string(&path).map_err(DtuError::mapper)?;
-        Ok(Self::from_json(&contents)?)
-    }
-
-    /// The taint found, one entry per method
-    #[getter]
-    fn analysis(&self) -> Vec<PyMethodTaint> {
-        self.report
-            .analysis
-            .iter()
-            .cloned()
-            .map(PyMethodTaint::from)
-            .collect()
-    }
-
-    /// Every method named by an id anywhere in the report
-    #[getter]
-    fn methods(&self) -> Vec<PyMethodSpec> {
-        self.by_id.values().cloned().collect()
-    }
-
-    /// Resolve a method id, returning None if the report doesn't name it
-    fn method(&self, id: i32) -> Option<PyMethodSpec> {
-        self.by_id.get(&id).cloned()
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "TaintReport(analysis={}, methods={})",
-            self.report.analysis.len(),
-            self.by_id.len()
         )
     }
 }
@@ -583,15 +367,15 @@ fn to_sources(sources: Vec<PyTaintSource>) -> Vec<TaintSource> {
 /// [TaintSource::Param] only means something against the signature it was written for, so a
 /// register seed belongs in the dict form.
 #[pyfunction]
-#[pyo3(signature = (gdb, methods, seeds, *, ctx = None, options = None))]
+#[pyo3(signature = (db, methods, seeds, *, ctx = None, options = None))]
 pub fn run_taint_analysis(
     py: Python<'_>,
-    gdb: &GraphDB,
+    db: PyTaintAnalysisDb,
     methods: Vec<PyMethodSpec>,
     seeds: PySeeds,
     ctx: Option<&PyContext>,
     options: Option<PyTaintOptions>,
-) -> PyResult<PyTaintReport> {
+) -> PyResult<PyTaintAnalysisDb> {
     let owned_ctx;
     let ctx: &dyn dtu::Context = match ctx {
         Some(v) => v,
@@ -629,13 +413,19 @@ pub fn run_taint_analysis(
 
     let (mut canceller, cancel) = TaskCanceller::new();
     let opts = TaintAnalyzerOptions::from(options.unwrap_or_default());
-    let mut analyzer = TaintAnalyzer::new(ctx, &**gdb, cancel, opts, seeds, loader);
+
+    let meta = RunMeta::new(
+        db.0.graph(),
+        serde_json::to_string(&opts).map_err(|e| DtuBaseError::from(e.to_string()))?,
+    )
+    .map_err(|e| DtuBaseError::from(e.to_string()))?;
+    let mut analyzer = TaintAnalyzer::new(ctx, cancel, opts, seeds, loader);
 
     // The analysis polls its cancel check from its own threads, but only the main thread ever
     // sees a signal, so it runs beside us and we do the watching.
     let mut interrupted: Option<PyErr> = None;
     let joined = std::thread::scope(|scope| {
-        let handle = scope.spawn(|| analyzer.run(methods));
+        let handle = scope.spawn(|| analyzer.run(methods, db.0, &meta));
         while !handle.is_finished() {
             py.detach(|| std::thread::sleep(Duration::from_millis(100)));
             if let Err(e) = py.check_signals() {
@@ -651,9 +441,7 @@ pub fn run_taint_analysis(
         return Err(e);
     }
 
-    let (report, failed) = joined.map_err(|_| DtuError::new_err("the analysis thread panicked"))?;
-    if !failed.is_empty() {
-        eprintln!("{} methods failed to analyze", failed.len());
-    }
-    Ok(PyTaintReport::from(report))
+    let res = joined.map_err(|_| DtuError::new_err("the analysis thread panicked"))?;
+    let db = res.map_err(|e| DtuBaseError::from(e.to_string()))?;
+    Ok(PyTaintAnalysisDb(db))
 }

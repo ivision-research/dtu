@@ -43,8 +43,7 @@ mod pydtu {
 
     #[pymodule_export]
     use super::taint::{
-        PyMethodTaint, PyOrigin, PyTaintOptions, PyTaintReport, PyTaintSeedOptions, PyTaintSink,
-        PyTaintSinkKind, PyTaintSource, PyTaintSourceAndRoute,
+        PyTaintOptions, PyTaintSeedOptions, PyTaintSink, PyTaintSinkKind, PyTaintSource,
     };
 
     #[pymodule_export]

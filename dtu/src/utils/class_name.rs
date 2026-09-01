@@ -9,13 +9,19 @@ use std::str::FromStr;
 use diesel::{
     backend::Backend,
     deserialize::{FromSql, FromSqlRow},
-    serialize::{IsNull, Output, ToSql},
+    serialize::{Output, ToSql},
     sql_types::Text,
-    sqlite::Sqlite,
     AsExpression,
 };
 
+// This file and the ClassName type has gone through a bunch of internal changes and at this point
+// it really would benefit from a redesign similar to the way smali handles things. The ClassName
+// type has resulted in so many completely unnecessary string copies :(
+
 /// Single type to represent both smali and java class names
+///
+/// This class always appears as the smali format of the class, but it allows operations as if it
+/// were the Java format.
 #[derive(Eq, Debug, Clone, Ord, PartialOrd)]
 #[cfg_attr(feature = "sql", derive(FromSqlRow, AsExpression))]
 #[cfg_attr(feature = "sql", diesel(sql_type = Text))]
@@ -62,9 +68,9 @@ impl AsRef<ClassName> for ClassName {
 impl ClassName {
     pub fn new(name: String) -> Self {
         let name = if class_is_smali(&name) {
-            smali_name_to_java(&name)
-        } else {
             name
+        } else {
+            java_name_to_smali(&name)
         };
         Self { name }
     }
@@ -121,10 +127,18 @@ impl ClassName {
 
     /// Change the simple name of the class
     pub fn with_new_simple_class_name(&self, name: &str) -> ClassName {
-        let mut base = self.pkg_as_java().to_string();
-        base.push('.');
-        base.push_str(name);
-        Self::new(base)
+        if self.is_smali() {
+            let prefix = self.name.rsplit_once('/').map(|it| it.0);
+            match prefix {
+                None => Self::new(format!("L{name};")),
+                Some(v) => Self::new(format!("{v}/{name};")),
+            }
+        } else {
+            let mut base = self.pkg_as_java().to_string();
+            base.push('.');
+            base.push_str(name);
+            Self::new(base)
+        }
     }
 
     /// Get the simple class name
@@ -150,7 +164,13 @@ impl ClassName {
     /// Gets the class package as a Java dotted package
     pub fn pkg_as_java(&self) -> Cow<'_, str> {
         let name = self.get_java_name();
+
         let start = name.rfind('.').unwrap_or(0);
+
+        if start == 0 {
+            return Cow::Borrowed("");
+        }
+
         match name {
             Cow::Owned(owned) => {
                 let (pkg, _) = owned.split_at(start);
@@ -163,12 +183,14 @@ impl ClassName {
         }
     }
 
+    #[inline]
     pub fn is_smali(&self) -> bool {
-        class_is_smali(&self.name)
+        true
     }
 
+    #[inline]
     pub fn is_java(&self) -> bool {
-        !self.is_smali()
+        false
     }
 
     pub fn get_java_name(&self) -> Cow<'_, str> {
@@ -193,8 +215,8 @@ impl Serialize for ClassName {
     where
         S: Serializer,
     {
-        let java_name = self.get_java_name();
-        java_name.serialize(serializer)
+        let smali_name = self.get_smali_name();
+        smali_name.serialize(serializer)
     }
 }
 
@@ -264,7 +286,7 @@ impl<T: AsRef<str> + ?Sized> PartialEq<T> for ClassName {
 
 impl Display for ClassName {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.get_java_name())
+        f.write_str(&self.name)
     }
 }
 
@@ -280,14 +302,14 @@ where
     }
 }
 
-// Implementing this for a generic backend would require storing the smali name. I don't have time
-// for this right now.
 #[cfg(feature = "sql")]
-impl ToSql<Text, Sqlite> for ClassName {
-    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Sqlite>) -> diesel::serialize::Result {
-        let smali = self.get_smali_name().into_owned();
-        out.set_value(smali);
-        Ok(IsNull::No)
+impl<DB> ToSql<Text, DB> for ClassName
+where
+    DB: Backend,
+    String: ToSql<Text, DB>,
+{
+    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, DB>) -> diesel::serialize::Result {
+        self.name.to_sql(out)
     }
 }
 
@@ -339,17 +361,17 @@ mod test {
         let java_name = ClassName::from("java.lang.String");
         let smali_name = ClassName::from("Ljava/lang/String;");
         let java_name = java_name.pkg_as_java();
-        match java_name {
-            Cow::Borrowed(s) => assert_eq!(s, "java.lang", "bad java name for java class"),
-            _ => panic!("wrong return type for pkg_as_java {:?}", java_name),
-        };
+        assert_eq!(
+            java_name.as_str(),
+            "java.lang",
+            "bad java name for java class"
+        );
         let java_name = smali_name.pkg_as_java();
-        match java_name {
-            Cow::Borrowed(s) => {
-                assert_eq!(s, "java.lang", "bad java name for smali class")
-            }
-            _ => panic!("wrong return type for pkg_as_java {:?}", java_name),
-        };
+        assert_eq!(
+            java_name.as_str(),
+            "java.lang",
+            "bad java name for smali class"
+        );
     }
 
     #[test]
@@ -357,6 +379,10 @@ mod test {
         let java_name = ClassName::from("java.lang.String");
         let smali_name = ClassName::from("Ljava/lang/String;");
         assert_eq!(java_name, smali_name);
+        assert_eq(java_name, "Ljava/lang/String;");
+        assert_eq(java_name, "java.lang.String");
+        assert_eq(smali_name, "Ljava/lang/String;");
+        assert_eq(smali_name, "java.lang.String");
     }
 
     #[test]
@@ -387,10 +413,10 @@ mod test {
 
     #[test]
     fn test_class_name_display() {
-        let java = "java.lang.String";
-        let java_name = ClassName::from(java);
-        let smali_name = ClassName::from("Ljava/lang/String;");
-        assert_eq!(java_name.to_string().as_str(), java, "java class display");
-        assert_eq!(smali_name.to_string().as_str(), java, "smali class display");
+        let disp = "Ljava/lang/String;";
+        let java_name = ClassName::from("java.lang.String");
+        let smali_name = ClassName::from(disp);
+        assert_eq!(java_name.to_string().as_str(), disp, "java class display");
+        assert_eq!(smali_name.to_string().as_str(), disp, "smali class display");
     }
 }

@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use clap::{self, Args};
+use dtu::analysis::db::GraphTaintAnalysisDb;
 use dtu::{
     analysis::{
         get_ssa_method,
@@ -11,8 +12,8 @@ use dtu::{
     },
     db::{
         graph::{
-            get_default_graphdb, models::MethodId, ClassSearch, GraphDatabase, MethodSearch,
-            MethodSearchParams, MethodSpec,
+            models::MethodId, ClassSearch, GraphDatabase, MethodSearch, MethodSearchParams,
+            MethodSpec,
         },
         meta::get_default_metadb,
         ApkComponent, ApkIPC, DeviceDatabase, MetaDatabase,
@@ -22,7 +23,6 @@ use dtu::{
     Context,
 };
 
-use crate::cache_key;
 use crate::taint::common::{analyze, Analysis, ComponentOpts};
 
 #[derive(Args)]
@@ -62,12 +62,11 @@ struct Endpoint {
 
 impl ServiceBinders {
     pub fn run(self, ctx: &dyn Context) -> anyhow::Result<()> {
-        let gdb = get_default_graphdb(ctx)?;
-        let cache = cache_key!("analysis-service-binders", &self.opts.hash_key());
+        let db = GraphTaintAnalysisDb::new_from_path(ctx, &self.opts.run.out_file)?;
 
         let mut unresolved: Vec<(ClassName, String)> = Vec::new();
 
-        let report = analyze(ctx, &gdb, &self.opts.run, &cache, || {
+        analyze(ctx, db, &self.opts.run, |gdb| {
             let meta = get_default_metadb(ctx)?;
             meta.ensure_prereq(Prereq::SQLDatabaseSetup)?;
             let db = DeviceDatabase::new(ctx)?;
@@ -91,7 +90,7 @@ impl ServiceBinders {
                 let source = apk.device_path.as_squashed_str().to_string();
                 let class = service.get_class_name();
 
-                match self.resolve_endpoints(ctx, &gdb, &loader, &class, &source) {
+                match self.resolve_endpoints(ctx, gdb, &loader, &class, &source) {
                     Ok(found) if found.is_empty() => {
                         log::warn!("no binder interface resolved for {class}, skipping it");
                         unresolved.push((class, String::from("no binder interface resolved")));
@@ -104,7 +103,7 @@ impl ServiceBinders {
                 }
             }
 
-            let (methods, seeds) = self.seed(&gdb, &endpoints)?;
+            let (methods, seeds) = self.seed(gdb, &endpoints)?;
 
             log::info!(
                 "{} endpoints across {} transaction methods, {} services unresolved",
@@ -121,7 +120,6 @@ impl ServiceBinders {
             Ok(Analysis::new(methods, seeds).with_loader(loader))
         })?;
 
-        println!("{}", serde_json::to_string(&report)?);
         report_unresolved(&unresolved);
         Ok(())
     }
