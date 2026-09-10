@@ -1,13 +1,14 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ops::{Deref, DerefMut},
 };
 
+use anyhow::bail;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use dtu::{
     analysis::db::taint::{
         db::{AnalyzedMethodSpec, Filter, GraphTaintAnalysisDb},
-        models::MethodStatus,
+        models::{AnalyzedMethodId, MethodStatus},
     },
     db::graph::MethodSpec,
     smalisa::Type,
@@ -74,6 +75,8 @@ static COMMANDS: &[(&'static str, CommandFunc<State>)] = &[
 pub struct State {
     methods: FilterVec<(AnalyzedMethodSpec, String, usize)>,
     filter: Option<String>,
+    show_hidden: bool,
+    hidden_methods: HashSet<AnalyzedMethodId>,
     prev_filters: Option<Vec<Filter>>,
 }
 
@@ -118,11 +121,16 @@ impl SelectMethodWindow {
                 .collect::<Vec<_>>(),
         );
 
+        let hidden_methods = HashSet::from_iter(db.get_hidden_analyzed_methods()?.into_iter());
+        // Show hidden if they all are hidden
+        let show_hidden = hidden_methods.len() == methods.len();
         let command = Command::new(HashMap::from_iter(COMMANDS.iter().copied()));
         Ok(Self {
             command,
             state: State {
                 methods,
+                show_hidden,
+                hidden_methods,
                 prev_filters: None,
                 filter: None,
             },
@@ -195,6 +203,39 @@ impl SelectMethodWindow {
     fn filter_status(&mut self, status: MethodStatus) {
         self.methods.filter(|it| it.0.status == status)
     }
+
+    fn everything_hidden(&self) -> bool {
+        self.hidden_methods.len() == self.methods.total_len()
+    }
+
+    fn get_current_method(&self) -> Option<AnalyzedMethodId> {
+        self.methods.get_selected().map(|it| it.0.analysis_id)
+    }
+
+    fn toggle_show_hidden(&mut self) -> anyhow::Result<()> {
+        if self.show_hidden && self.everything_hidden() {
+            bail!("everything is hidden");
+        }
+        self.show_hidden = !self.show_hidden;
+        Ok(())
+    }
+
+    fn toggle_method_hidden(&mut self, tools: &Tools) -> anyhow::Result<()> {
+        let Some(current) = self.get_current_method() else {
+            return Ok(());
+        };
+
+        if self.hidden_methods.insert(current) {
+            tools.db.hide_analyzed_method(current)?;
+            self.methods.inc_sel();
+            return Ok(());
+        }
+
+        self.hidden_methods.remove(&current);
+        tools.db.unhide_analyzed_method(current)?;
+
+        Ok(())
+    }
 }
 impl Window for SelectMethodWindow {
     fn on_key_event(&mut self, tools: &Tools, evt: KeyEvent) -> anyhow::Result<WindowAction> {
@@ -209,6 +250,10 @@ impl Window for SelectMethodWindow {
                 KeyCode::Char(c) => self.filter_push(c),
                 _ => return Ok(WindowAction::default()),
             },
+            KeyModifiers::SHIFT => match evt.code {
+                KeyCode::Char('H') => self.toggle_method_hidden(tools)?,
+                _ => return Ok(WindowAction::default()),
+            },
             KeyModifiers::NONE => match evt.code {
                 KeyCode::Esc if self.methods.is_filtered() => self.clear_filters(),
                 KeyCode::Enter if self.filtering() => self.persist_filter(),
@@ -221,6 +266,7 @@ impl Window for SelectMethodWindow {
 
                 KeyCode::Enter => return self.open_paths_window(tools),
                 KeyCode::Char(':') => self.command.activate(),
+                KeyCode::Char('.') => self.toggle_show_hidden()?,
                 KeyCode::Char('j') | KeyCode::Down => self.methods.inc_sel(),
                 KeyCode::Char('k') | KeyCode::Up => self.methods.dec_sel(),
                 KeyCode::Char('p') => self.filter_status(MethodStatus::Pending),
