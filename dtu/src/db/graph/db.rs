@@ -399,7 +399,11 @@ impl<'a> MethodSearchParams<'a> {
     }
 }
 
-type MethodQuerySource = InnerJoin<InnerJoin<methods::table, classes::table>, sources::table>;
+type MethodQuerySource = InnerJoinOn<
+    InnerJoin<methods::table, classes::table>,
+    sources::table,
+    diesel::dsl::Eq<sources::id, classes::source>,
+>;
 
 type BoxedMethodQuery<'a, S> = IntoBoxed<'a, Select<MethodQuerySource, S>, Sqlite>;
 
@@ -408,7 +412,7 @@ impl<'a> MethodSearch<'a> {
     fn id_query(&self) -> BoxedMethodQuery<'a, methods::id> {
         let mut q = methods::table
             .inner_join(classes::table)
-            .inner_join(sources::table)
+            .inner_join(sources::table.on(sources::id.eq(classes::source)))
             .select(methods::id)
             .into_boxed();
 
@@ -434,7 +438,7 @@ impl<'a> MethodSearch<'a> {
     fn spec_query(&self) -> BoxedMethodQuery<'a, AsSelect<MethodSpecRow, Sqlite>> {
         let mut q = methods::table
             .inner_join(classes::table)
-            .inner_join(sources::table)
+            .inner_join(sources::table.on(sources::id.eq(classes::source)))
             .select(MethodSpecRow::as_select())
             .into_boxed();
 
@@ -744,7 +748,7 @@ ORDER BY r.id, r.depth;
         let q = query!(methods::table
             .filter(methods::id.eq(id))
             .inner_join(classes::table)
-            .inner_join(sources::table)
+            .inner_join(sources::table.on(sources::id.eq(classes::source)))
             .select(MethodSpecRow::as_select()));
 
         Ok(self
@@ -756,7 +760,7 @@ ORDER BY r.id, r.depth;
         let q = query!(methods::table
             .filter(methods::id.eq_any(ids))
             .inner_join(classes::table)
-            .inner_join(sources::table)
+            .inner_join(sources::table.on(sources::id.eq(classes::source)))
             .select(MethodSpecRow::as_select()));
         Ok(self
             .query(|c| q.load::<MethodSpecRow>(c))?
@@ -834,8 +838,8 @@ ORDER BY r.id, r.depth;
 
         if is_framework {
             let q = query!(methods::table
-                .inner_join(sources::table)
                 .inner_join(classes::table)
+                .inner_join(sources::table.on(sources::id.eq(classes::source)))
                 .select(MethodSpecRow::as_select())
                 .filter(methods::name.eq(name))
                 .filter(methods::args.eq(args))
@@ -848,8 +852,8 @@ ORDER BY r.id, r.depth;
         }
 
         let q = query!(methods::table
-            .inner_join(sources::table)
             .inner_join(classes::table)
+            .inner_join(sources::table.on(sources::id.eq(classes::source)))
             .select(MethodSpecRow::as_select())
             .filter(methods::name.eq(name))
             .filter(methods::args.eq(args))
@@ -987,8 +991,8 @@ ORDER BY r.id, r.depth;
 
     fn get_methods_for(&self, source: &str) -> Result<Vec<MethodSpec>> {
         let q = query!(methods::table
-            .inner_join(sources::table)
             .inner_join(classes::table)
+            .inner_join(sources::table.on(sources::id.eq(classes::source)))
             .filter(sources::name.eq(source))
             .select(MethodSpecRow::as_select()));
         let rows = self.query(|c| q.load::<MethodSpecRow>(c))?;

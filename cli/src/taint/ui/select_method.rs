@@ -137,6 +137,10 @@ impl State {
         let show_hidden = self.show_hidden;
         self.methods.filter(|it| {
             (show_hidden || !hidden.contains(&it.analysis_id))
+                && self
+                    .name_filter
+                    .as_ref()
+                    .is_none_or(|name_filter| it.smali.contains(name_filter))
                 && (self.filters.is_empty() || self.filters.iter().any(|func| func(it)))
         });
     }
@@ -154,8 +158,8 @@ impl State {
             return;
         };
 
-        self.name_filter = Some(filter.clone());
-        self.filter_methods(Box::new(move |method| method.smali.contains(&filter)));
+        self.name_filter = Some(filter);
+        self.refilter();
     }
 
     fn filering_by_name(&self) -> bool {
@@ -167,7 +171,7 @@ impl State {
         self.update_name_filtered();
     }
 
-    fn filter_delete(&mut self) {
+    fn name_filter_delete(&mut self) {
         match &mut self.name_filter {
             None => return,
             Some(cur) if cur.len() > 1 => {
@@ -332,7 +336,7 @@ impl Window for SelectMethodWindow {
             KeyModifiers::NONE => match evt.code {
                 KeyCode::Esc if self.methods.is_filtered() => self.clear_filters(),
                 KeyCode::Enter if self.filering_by_name() => self.persist_name_filter(),
-                KeyCode::Backspace if self.filering_by_name() => self.filter_delete(),
+                KeyCode::Backspace if self.filering_by_name() => self.name_filter_delete(),
                 KeyCode::Char(c) if self.filering_by_name() => self.name_filter_push(c),
                 KeyCode::Char('/') if !self.filering_by_name() => {
                     self.name_filter = Some(String::new());

@@ -94,7 +94,6 @@ pub struct Method {
     pub args: String,
     pub ret: String,
     pub access_flags: i64,
-    pub source: SourceId,
 }
 
 #[sql_db_row]

@@ -21,7 +21,6 @@ diesel::table! {
         rowid -> Integer,
         caller -> Integer,
         callee -> Integer,
-        source -> Integer,
     }
 }
 
@@ -49,7 +48,6 @@ diesel::table! {
         rowid -> Integer,
         interface -> Integer,
         class -> Integer,
-        source -> Integer,
     }
 }
 
@@ -76,7 +74,6 @@ diesel::table! {
         args -> Text,
         ret -> Text,
         access_flags -> BigInt,
-        source -> Integer,
     }
 }
 
@@ -100,23 +97,18 @@ diesel::table! {
         rowid -> Integer,
         parent -> Integer,
         child -> Integer,
-        source -> Integer,
     }
 }
 
 diesel::joinable!(_load_status -> sources (source));
-diesel::joinable!(calls -> sources (source));
 diesel::joinable!(class_fields -> classes (class));
 diesel::joinable!(classes -> sources (source));
-diesel::joinable!(interfaces -> sources (source));
 diesel::joinable!(method_field_access -> class_fields (field));
 diesel::joinable!(method_field_access -> methods (method));
 diesel::joinable!(method_strings -> methods (method));
 diesel::joinable!(method_strings -> strings (string));
 diesel::joinable!(methods -> classes (class));
-diesel::joinable!(methods -> sources (source));
 diesel::joinable!(strings -> sources (source));
-diesel::joinable!(supers -> sources (source));
 
 diesel::allow_tables_to_appear_in_same_query!(
     _load_status,

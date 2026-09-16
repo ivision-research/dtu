@@ -42,53 +42,45 @@ CREATE TABLE methods
     args            TEXT    NOT NULL,
     ret             TEXT    NOT NULL,
     access_flags    BIGINT  NOT NULL DEFAULT 2,
-    source          INTEGER NOT NULL,
 
     PRIMARY KEY (id),
-    FOREIGN KEY (class) REFERENCES classes (id) ON DELETE CASCADE ON UPDATE CASCADE,
-    FOREIGN KEY (source) REFERENCES sources (id) ON DELETE CASCADE ON UPDATE CASCADE
+    FOREIGN KEY (class) REFERENCES classes (id) ON DELETE CASCADE ON UPDATE CASCADE
 );
 
 -- This is used while loading calls
 -- Note: this index is _not_ unique. It is possible to have a method generated that
 -- has the same (class, name, args) but a different return value.
-CREATE INDEX methods_class_name_args_source ON methods(class, name, args, source);
-
--- In the following tables, source is defined as the source in which the
--- relation was discovered.
+CREATE INDEX methods_class_name_args ON methods(class, name, args);
 
 CREATE TABLE supers
 (
     parent  INTEGER NOT NULL,
     child   INTEGER NOT NULL,
-    source  INTEGER NOT NULL,
 
+    PRIMARY KEY (parent, child),
     FOREIGN KEY (parent) REFERENCES classes (id) ON DELETE CASCADE ON UPDATE CASCADE,
-    FOREIGN KEY (child) REFERENCES classes (id) ON DELETE CASCADE ON UPDATE CASCADE,
-    FOREIGN KEY (source) REFERENCES sources (id) ON DELETE CASCADE ON UPDATE CASCADE
-);
+    FOREIGN KEY (child) REFERENCES classes (id) ON DELETE CASCADE ON UPDATE CASCADE
+) WITHOUT ROWID;
 
 CREATE TABLE interfaces
 (
     interface   INTEGER NOT NULL,
     class       INTEGER NOT NULL,
-    source      INTEGER NOT NULL,
-
+    
+    PRIMARY KEY (interface, class),
     FOREIGN KEY (interface) REFERENCES classes (id) ON DELETE CASCADE ON UPDATE CASCADE,
-    FOREIGN KEY (class) REFERENCES classes (id) ON DELETE CASCADE ON UPDATE CASCADE,
-    FOREIGN KEY (source) REFERENCES sources (id) ON DELETE CASCADE ON UPDATE CASCADE
-);
+    FOREIGN KEY (class) REFERENCES classes (id) ON DELETE CASCADE ON UPDATE CASCADE
+) WITHOUT ROWID;
 
 CREATE TABLE calls
 (
     caller     INTEGER NOT NULL,
     callee     INTEGER NOT NULL,
-    source     INTEGER NOT NULL, 
 
+    PRIMARY KEY (caller, callee),
     FOREIGN KEY (caller) REFERENCES methods (id) ON DELETE CASCADE ON UPDATE CASCADE,
-    FOREIGN KEY (callee) REFERENCES methods (id) ON DELETE CASCADE ON UPDATE CASCADE,
-    FOREIGN KEY (source) REFERENCES sources (id) ON DELETE CASCADE ON UPDATE CASCADE
-);
+    FOREIGN KEY (callee) REFERENCES methods (id) ON DELETE CASCADE ON UPDATE CASCADE
+) WITHOUT ROWID;
 
 CREATE TABLE _load_status
 (

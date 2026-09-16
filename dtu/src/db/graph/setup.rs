@@ -243,7 +243,7 @@ impl<'a> SetupContext<'a> {
             let callee_args = rp.get(5)?;
             let callee_ret = rp.get(6)?;
 
-            let sql = r#"INSERT INTO named_calls(caller_class, caller_method, caller_args, callee_class, callee_method, callee_args) VALUES (?, ?, ?, ?, ?, ?, ?)"#;
+            let sql = r#"INSERT INTO named_calls(caller_class, caller_method, caller_args, callee_class, callee_method, callee_args, callee_ret) VALUES (?, ?, ?, ?, ?, ?, ?)"#;
              query!(sql_query(sql)
                 .bind::<Text, _>(caller_class)
                 .bind::<Text, _>(caller_method)
@@ -399,8 +399,8 @@ JOIN classes AS c
         .execute(conn)?;
 
         query!(sql_query(
-            r#"INSERT INTO supers(parent, child, source)
-SELECT DISTINCT parent.id, child.id, ?1
+            r#"INSERT INTO supers(parent, child)
+SELECT DISTINCT parent.id, child.id
 FROM named_supers AS ns
 JOIN classes as child
     ON  child.name = ns.child
@@ -436,8 +436,8 @@ JOIN classes AS parent
         .execute(conn)?;
 
         query!(sql_query(
-            r#"INSERT INTO interfaces(interface, class, source)
-SELECT DISTINCT interface.id, class.id, ?1
+            r#"INSERT INTO interfaces(interface, class)
+SELECT DISTINCT interface.id, class.id
 FROM named_interfaces AS ni
 JOIN classes as class
     ON  class.name = ni.class
@@ -455,8 +455,8 @@ JOIN classes AS interface
 
     fn load_staged_methods(conn: &mut SqliteConnection, src: SourceId) -> Result<()> {
         query!(sql_query(
-            r#"INSERT INTO methods(class, name, args, ret, access_flags, source)
-    SELECT DISTINCT c.id, nm.name, nm.args, nm.ret, nm.access_flags, ?1
+            r#"INSERT INTO methods(class, name, args, ret, access_flags)
+    SELECT DISTINCT c.id, nm.name, nm.args, nm.ret, nm.access_flags
     FROM named_methods AS nm
     JOIN classes AS c
         ON c.name = nm.class AND c.source = ?1"#
@@ -510,8 +510,8 @@ JOIN classes AS interface
         // TODO: I'm not sure if we need to run this query if `new_classes == 0`. I think we
         // might, so I'm leaving it as is, but it could be worth investigating at some point.
         let new_methods = query!(sql_query(
-            r#"INSERT INTO methods(class, name, args, ret, source)
-    SELECT DISTINCT c.id, nc.callee_method, nc.callee_args, nc.callee_ret, ?1
+            r#"INSERT INTO methods(class, name, args, ret)
+    SELECT DISTINCT c.id, nc.callee_method, nc.callee_args, nc.callee_ret
     FROM named_calls AS nc
     JOIN classes AS c
         ON c.id = COALESCE(
@@ -542,8 +542,8 @@ JOIN classes AS interface
 
         query!(sql_query(
             r#"
-INSERT INTO calls(caller, callee, source)
-SELECT DISTINCT src.id, dst.id, ?1
+INSERT INTO calls(caller, callee)
+SELECT DISTINCT src.id, dst.id
 FROM named_calls AS nc
 
 JOIN classes AS sc
@@ -576,23 +576,23 @@ WHERE dst.id != src.id"#
 
     fn add_indices(conn: &mut SqliteConnection) -> Result<()> {
         log::debug!("Creating post setup indices");
+
+        // Note there are no indicies on calls(caller), supers(parent), and interfaces(interface)
+        // because the primary key already covers those
+
         Ok(conn.batch_execute(
             r#"
                 CREATE INDEX IF NOT EXISTS source ON sources(name);
 
                 CREATE INDEX IF NOT EXISTS class_source ON classes(source);
                 CREATE INDEX IF NOT EXISTS methods_class ON methods(class);
-                CREATE INDEX IF NOT EXISTS methods_source ON methods(source);
                 CREATE INDEX IF NOT EXISTS methods_name ON methods(name);
 
-                CREATE INDEX IF NOT EXISTS calls_callee_source ON calls(callee, source);
-                CREATE INDEX IF NOT EXISTS calls_caller_source ON calls(caller, source);
+                CREATE INDEX IF NOT EXISTS calls_callee ON calls(callee);
 
-                CREATE INDEX IF NOT EXISTS supers_parent_source ON supers(parent, source);
-                CREATE INDEX IF NOT EXISTS supers_child_source ON supers(child, source);
+                CREATE INDEX IF NOT EXISTS supers_child ON supers(child);
 
-                CREATE INDEX IF NOT EXISTS interfaces_parent_source ON interfaces(interface, source);
-                CREATE INDEX IF NOT EXISTS interfaces_child_source ON interfaces(class, source);
+                CREATE INDEX IF NOT EXISTS interfaces_child ON interfaces(class);
 
                 CREATE INDEX IF NOT EXISTS method_strings_method ON method_strings(method);
                 CREATE INDEX IF NOT EXISTS method_strings_strings ON method_strings(string);

@@ -3,6 +3,7 @@
 - **BREAKING** Updated the GraphDatabase trait and models, IDs are type safe now instead of just i32s. I didn't make these changes on the device database because it just seemed like too much work :)
 - **BREAKING** Moved some traits out of db::common that belonged in db::device::models, might as well since we already made a breaking change
 - **BREAKING** Changed the way smali methods are hashed to be a bit more stable. This will invalidate old device databases!
+- **BREAKING** This one isn't my favorite.. changed the graph schema by changing an old migration instead of via a new up/down migration. This was the easiest way to handle this. The `methods`/`supers`/`interfaces`/`calls` tables all had a redundant source field. In some cases this field was actually confusing.
 - Update some caching behavior
 - Add `DTU_SERVER_HOST` env var for the app server
 - Added an `ANALYZE` call after index creation on the graph database. This fixed some queries that took way longer than they should have.

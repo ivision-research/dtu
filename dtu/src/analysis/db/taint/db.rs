@@ -1599,8 +1599,8 @@ impl GraphTaintAnalysisDb {
         let all_methods = self.query(|c| {
             query!(methods::table
                 .inner_join(call_graph_chains::table)
-                .inner_join(sources::table)
                 .inner_join(classes::table)
+                .inner_join(sources::table.on(sources::id.eq(classes::source)))
                 .select(MethodSpecRow::as_select())
                 .filter(OptionalId::new(call_graph_chains::analyzed_method, id))
                 .distinct()
@@ -1610,7 +1610,7 @@ impl GraphTaintAnalysisDb {
                         .inner_join(sinks::table.on(sinks::route.eq(routes::id)))
                         .inner_join(methods::table.on(methods::id.eq(sinks::location)))
                         .inner_join(classes::table.on(classes::id.eq(methods::class)))
-                        .inner_join(sources::table.on(sources::id.eq(methods::source)))
+                        .inner_join(sources::table.on(sources::id.eq(classes::source)))
                         .select(MethodSpecRow::as_select())
                         .filter(OptionalId::new(taint_sources::analyzed_method, id))
                 )
@@ -1622,7 +1622,7 @@ impl GraphTaintAnalysisDb {
                             methods::table.on(methods::id.eq(sinks::method_id.assume_not_null())),
                         )
                         .inner_join(classes::table.on(classes::id.eq(methods::class)))
-                        .inner_join(sources::table.on(sources::id.eq(methods::source)))
+                        .inner_join(sources::table.on(sources::id.eq(classes::source)))
                         .select(MethodSpecRow::as_select())
                         .filter(OptionalId::new(taint_sources::analyzed_method, id))
                         .filter(sinks::kind.eq(SinkKind::Call)),
@@ -1630,8 +1630,8 @@ impl GraphTaintAnalysisDb {
                 .union(
                     methods::table
                         .inner_join(analyzed_methods::table)
-                        .inner_join(sources::table)
                         .inner_join(classes::table)
+                        .inner_join(sources::table.on(sources::id.eq(classes::source)))
                         .select(MethodSpecRow::as_select())
                         .filter(OptionalId::new(analyzed_methods::id, id))
                         .limit(1)
@@ -1882,7 +1882,7 @@ JOIN analyzed_methods AS am
 JOIN classes AS c
     ON c.id = m.class
 JOIN sources AS s
-    ON s.id = m.source
+    ON s.id = c.source
 LEFT JOIN call_graph_chains AS cg
     ON cg.analyzed_method = am.id
 GROUP BY am.id;"#
