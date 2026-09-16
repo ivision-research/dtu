@@ -3,13 +3,13 @@ use std::collections::HashMap;
 use std::fs::{create_dir_all, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::{env, fs};
-use which::which;
 
 use anyhow::Context as AnyhowContext;
 use mockall::mock;
 use rand::Rng;
 use rstest::fixture;
 
+use crate::context::find_program;
 use crate::utils::{ensure_dir_exists, path_must_str};
 use crate::Context;
 
@@ -192,11 +192,11 @@ impl Default for TestContext {
         };
 
         // If `dtu-test-adb` is installed set it to `adb` for testing purposes
-        match which("dtu-test-adb") {
-            Ok(v) => {
-                it.bins.insert("adb".into(), path_must_str(&v).into());
+        match find_program("dtu-test-adb") {
+            Some(v) => {
+                it.bins.insert("adb".into(), v);
             }
-            Err(_) => {}
+            None => {}
         }
 
         it

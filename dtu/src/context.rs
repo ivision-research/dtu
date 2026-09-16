@@ -3,7 +3,6 @@ use std::env;
 use std::path::PathBuf;
 
 use directories::BaseDirs;
-use which::{which, which_in};
 
 use crate::adb::{Adb, ExecAdb};
 use crate::config::{GlobalConfig, ProjectConfig};
@@ -22,21 +21,34 @@ struct CachedBin {
     path: String,
 }
 
-fn wrapped_which(bin: &str) -> Option<PathBuf> {
-    if let Ok(dtu_path) = env::var("DTU_PATH") {
-        let cwd = env::current_dir().ok()?;
-        return which_in(bin, Some(&dtu_path), &cwd).ok();
+fn find_program_in_path(prog: &str, path: &str) -> Option<String> {
+    let dirs = path.split(':');
+    let mut pb = PathBuf::new();
+    for d in dirs {
+        pb.push(d);
+        pb.push(prog);
+        if pb.exists() {
+            return Some(pb.to_string_lossy().into_owned());
+        }
     }
-    which(bin).ok()
+
+    None
 }
 
-fn which_find_program(bin: &str) -> Option<String> {
-    wrapped_which(bin).map(|it| it.to_string_lossy().into())
-}
+pub(crate) fn find_program(prog: &str) -> Option<String> {
+    // Respect DTU_PATH if it exists
+    if let Ok(dtu_path) = env::var("DTU_PATH") {
+        if let Some(prog) = find_program_in_path(prog, &dtu_path) {
+            return Some(prog);
+        }
+        // fall through to PATH
+    }
 
-#[inline(always)]
-fn find_program(prog: &str) -> Option<String> {
-    which_find_program(prog)
+    if let Ok(path) = env::var("PATH") {
+        return find_program_in_path(prog, &path);
+    }
+
+    None
 }
 
 /// Context is a trait for an object that can help standardize file locations,

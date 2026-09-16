@@ -6,7 +6,6 @@ edition.workspace = true
 [dependencies]
 dtu_proc_macro = { path = "../dtu_proc_macro" }
 thiserror = "1.0"
-which = "7.0"
 bitflags = { workspace = true }
 bumpalo = { workspace = true }
 directories = "6.0"
