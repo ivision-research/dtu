@@ -24,7 +24,7 @@ use ratatui::{
 };
 
 use crate::{
-    taint::ui::{Command, CommandFunc, Tools, Window, WindowAction},
+    taint::ui::{Command, CommandHandler, Tools, Window, WindowAction},
     ui::widgets::list::new_list,
     utils::dtu_open_method_spec,
 };
@@ -45,7 +45,7 @@ pub struct State {
 }
 
 pub struct MethodPathsWindow {
-    command: Command<State>,
+    command: CommandHandler<State>,
     state: State,
 }
 
@@ -82,10 +82,50 @@ fn do_filter(args: Vec<String>, tools: &Tools, state: &mut State) -> anyhow::Res
     Ok(())
 }
 
-static COMMANDS: &[(&'static str, CommandFunc<State>)] = &[
-    ("filter", do_filter),
-    ("clear", clear_filter),
-    ("chains", show_chains),
+static FILTER_LONG_HELP: &'static str = r#"Filter method paths by sinks, multiple filters can be applied
+
+The following filters retain paths that match the specification. All values
+are treated as if they were %VALUE% unless numeric, ie class=Runtime matches 
+Ljava/lang/Runtime; and Ljava/lang/RuntimeException;
+
+class=CLASS   - Method call or field read on CLASS
+method=METHOD - Method call to METHOD
+sig=SIG       - Method call to methods with SIG in signature
+ret=RET       - Method call to methods returning RET
+field=FIELD   - Field access on FIELD
+min-len=N     - Minimum path length of N
+max-len=N     - Maximum path length of N
+nophi         - Path doesn't contain Phis
+
+Example usage:
+
+class=Runtime method=exec
+"#;
+static COMMANDS: &[(&'static str, Command<State>)] = &[
+    (
+        "filter",
+        Command {
+            help: Some("filter method paths"),
+            long_help: Some(FILTER_LONG_HELP),
+            func: do_filter,
+        },
+    ),
+    (
+        "clear",
+        Command {
+            help: Some("clear filters"),
+            long_help: None,
+            func: clear_filter,
+        },
+    ),
+    (
+        "chains",
+        Command {
+            help: Some("show chains for the current path"),
+            long_help: None,
+            func: show_chains,
+        },
+    ),
 ];
 
 impl Deref for MethodPathsWindow {
@@ -116,8 +156,7 @@ impl MethodPathsWindow {
         }
         let hidden_routes = HashSet::from_iter(db.get_hidden_routes()?.into_iter());
 
-        // If we enter here and everything is hidden we'd never be able to unhide things without
-        // this
+        // If we enter here and everything is hidden show them I guess
         let show_hidden = hidden_routes.len() == paths.len();
 
         let report_map = db.get_report_id_map(&ana, ResolvableIds::All)?;
@@ -127,7 +166,7 @@ impl MethodPathsWindow {
         let method = analyzed.as_smali();
 
         let resolved = FilterContainer::new(ResolvedTaintRoutes::resolve_yoked(paths, report_map)?);
-        let command = Command::new(HashMap::from_iter(COMMANDS.iter().copied()));
+        let command = CommandHandler::new(HashMap::from_iter(COMMANDS.iter().copied()));
         let list_sel_idx = match resolved.first() {
             Some(v) => CircularIndex::new_for_slice(&v.sinks),
             None => CircularIndex::new(0),

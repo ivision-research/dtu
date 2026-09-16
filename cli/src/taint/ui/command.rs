@@ -5,7 +5,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use itertools::Itertools;
 use ratatui::{
     layout::{Constraint, Layout},
-    style::Stylize,
+    style::{Style, Stylize},
+    text::{Line, Span, Text},
     widgets::{Block, Borders, Paragraph},
     Frame,
 };
@@ -15,13 +16,35 @@ use crate::taint::ui::{Tools, WindowAction};
 pub type CommandFunc<T> = fn(Vec<String>, &Tools, &mut T) -> anyhow::Result<()>;
 
 pub struct Command<T> {
-    command: Option<String>,
-    commands: HashMap<&'static str, CommandFunc<T>>,
+    pub help: Option<&'static str>,
+    pub long_help: Option<&'static str>,
+    pub func: CommandFunc<T>,
 }
 
-impl<T> Command<T> {
-    pub fn new(commands: HashMap<&'static str, CommandFunc<T>>) -> Self {
+impl<T> Clone for Command<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for Command<T> {}
+
+enum Help {
+    Inactive,
+    All,
+    Command(Option<&'static str>),
+}
+
+pub struct CommandHandler<T> {
+    help: Help,
+    command: Option<String>,
+    commands: HashMap<&'static str, Command<T>>,
+}
+
+impl<T> CommandHandler<T> {
+    pub fn new(commands: HashMap<&'static str, Command<T>>) -> Self {
         Self {
+            help: Help::Inactive,
             command: None,
             commands,
         }
@@ -34,10 +57,11 @@ impl<T> Command<T> {
     #[allow(unused)]
     pub fn deactivate(&mut self) {
         self.command = None;
+        self.help = Help::Inactive;
     }
 
     pub fn is_active(&self) -> bool {
-        self.command.is_some()
+        !matches!(self.help, Help::Inactive) || self.command.is_some()
     }
 
     fn push(&mut self, c: char) {
@@ -73,6 +97,9 @@ impl<T> Command<T> {
                 _ => return Ok(WindowAction::default()),
             },
             KeyModifiers::NONE => match evt.code {
+                KeyCode::Esc | KeyCode::Enter if !matches!(self.help, Help::Inactive) => {
+                    self.help = Help::Inactive
+                }
                 KeyCode::Esc => self.clear(),
                 KeyCode::Backspace => self.delete(),
                 KeyCode::Char(c) => self.push(c),
@@ -85,7 +112,57 @@ impl<T> Command<T> {
         Ok(WindowAction::Redraw)
     }
 
+    fn draw_help(&self, frame: &mut Frame) {
+        let layout = Layout::horizontal(&[
+            Constraint::Length(1),
+            Constraint::Fill(1),
+            Constraint::Length(1),
+        ]);
+
+        let [_, center, _] = frame.area().layout(&layout);
+
+        let layout = Layout::vertical(&[
+            Constraint::Length(1),
+            Constraint::Fill(1),
+            Constraint::Length(1),
+        ]);
+
+        let [_, block_area, _] = center.layout(&layout);
+
+        let txt = match &self.help {
+            Help::Inactive => Text::raw("BUG! unreachable state for help"),
+            Help::All => {
+                let mut txt = Text::default();
+                for (cmdname, cmd) in &self.commands {
+                    let Some(shorthelp) = cmd.help else {
+                        txt.lines.push(Line::styled(*cmdname, Style::new().bold()));
+                        continue;
+                    };
+                    let mut line = Line::default();
+                    line.spans.push(Span::styled(*cmdname, Style::new().bold()));
+                    line.spans.push(Span::raw(": "));
+                    line.spans.push(Span::raw(shorthelp));
+                    txt.lines.push(line);
+                }
+                txt
+            }
+            Help::Command(Some(helptxt)) => Text::raw(*helptxt),
+            Help::Command(None) => Text::raw("no help text available for command"),
+        };
+
+        let widget = Paragraph::new(txt)
+            .left_aligned()
+            .block(Block::default().borders(Borders::ALL).title("help"));
+
+        frame.render_widget(widget, block_area);
+    }
+
     pub fn draw(&self, frame: &mut Frame) -> bool {
+        if !matches!(self.help, Help::Inactive) {
+            self.draw_help(frame);
+            return true;
+        }
+
         let Some(cmd) = &self.command else {
             return false;
         };
@@ -115,7 +192,9 @@ impl<T> Command<T> {
             None => cmd,
         };
 
-        if !self.commands.keys().any(|it| it.starts_with(command_name)) {
+        if !self.commands.keys().any(|it| it.starts_with(command_name))
+            && !"help".starts_with(command_name)
+        {
             cmd_box = cmd_box.red();
         }
 
@@ -182,6 +261,47 @@ impl<T> Command<T> {
         argv
     }
 
+    fn on_help(&mut self, name: Option<&str>) {
+        let Some(name) = name else {
+            self.help = Help::All;
+            return;
+        };
+
+        if let Some(cmd) = self.commands.get(name) {
+            let display = match cmd.long_help {
+                Some(v) => Some(v),
+                None => cmd.help,
+            };
+
+            self.help = Help::Command(display);
+            return;
+        }
+
+        let mut byprefix = None;
+
+        for (cmdname, cmd) in &self.commands {
+            if cmdname.starts_with(name) {
+                if byprefix.is_some() {
+                    self.help = Help::All;
+                    return;
+                }
+
+                let display = match cmd.long_help {
+                    Some(v) => Some(v),
+                    None => cmd.help,
+                };
+
+                byprefix = Some(display);
+            }
+        }
+
+        if let Some(helptxt) = byprefix {
+            self.help = Help::Command(helptxt);
+        } else {
+            self.help = Help::All;
+        }
+    }
+
     fn on_command_submitted(
         &mut self,
         state: &mut T,
@@ -189,18 +309,24 @@ impl<T> Command<T> {
         command: String,
     ) -> anyhow::Result<()> {
         log::debug!("Handling command: `{command}`");
-        let (cmd, args) = match command.split_once(' ') {
+
+        let (cmdstr, args) = match command.split_once(' ') {
             Some((cmd, rem)) => (cmd, Some(rem)),
             None => (command.as_str(), None),
         };
 
-        let func = match self.commands.get(cmd) {
-            Some(func) => *func,
+        if cmdstr == "help" {
+            self.on_help(args);
+            return Ok(());
+        }
+
+        let func: &CommandFunc<T> = match self.commands.get(cmdstr) {
+            Some(cmd) => &cmd.func,
             None => {
                 let prefixed = self
                     .commands
                     .iter()
-                    .filter(|(k, _)| k.starts_with(cmd))
+                    .filter(|(k, _)| k.starts_with(cmdstr))
                     .collect::<Vec<_>>();
                 if prefixed.len() > 1 {
                     bail!(
@@ -208,10 +334,10 @@ impl<T> Command<T> {
                         prefixed.iter().map(|(k, _)| k).join(", ")
                     );
                 }
-                let Some((_, func)) = prefixed.first() else {
-                    bail!("no command matches: {cmd}");
+                let Some((_, cmd)) = prefixed.first() else {
+                    bail!("no command matches: {cmdstr}");
                 };
-                **func
+                &cmd.func
             }
         };
 

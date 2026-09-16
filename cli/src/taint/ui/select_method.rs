@@ -24,14 +24,14 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    taint::ui::{window::WindowAction, Command, CommandFunc, MethodPathsWindow, Tools},
+    taint::ui::{window::WindowAction, Command, CommandHandler, MethodPathsWindow, Tools},
     ui::widgets::list::new_list,
 };
 
 use crate::taint::ui::window::Window;
 
 fn has_chains(_args: Vec<String>, _tools: &Tools, state: &mut State) -> anyhow::Result<()> {
-    state.methods.filter(|it| it.0.nchains > 0);
+    state.filter_methods(Box::new(move |it| it.nchains > 0));
     Ok(())
 }
 
@@ -48,46 +48,198 @@ fn do_filter(args: Vec<String>, tools: &Tools, state: &mut State) -> anyhow::Res
     let mut new_filters: Vec<Filter> = Vec::new();
 
     for arg in args {
-        if arg == "$$" {
-            if let Some(old) = state.prev_filters.take() {
-                new_filters.extend(old.into_iter());
-            }
-        } else {
-            let filter = arg.parse::<Filter>()?;
-            new_filters.push(filter);
-        }
+        let filter = arg.parse::<Filter>()?;
+        new_filters.push(filter);
     }
 
     let ids = tools.db.get_analysis_matching(&new_filters)?;
 
-    state.methods.filter(|it| ids.contains(&it.0.analysis_id));
+    state.filter_methods(Box::new(move |it| ids.contains(&it.analysis_id)));
 
     state.prev_filters = Some(new_filters);
     Ok(())
 }
 
-static COMMANDS: &[(&'static str, CommandFunc<State>)] = &[
-    ("filter", do_filter),
-    ("clear", clear_filter),
-    ("has-chains", has_chains),
+static FILTER_LONG_HELP: &'static str = r#"Filter methods by their paths, multiple filters can be applied
+
+The following filters retain methods that have at least one path that matches
+the specification. All values are treated as if they were %VALUE% unless
+numeric, ie class=Runtime matches Ljava/lang/Runtime; and
+Ljava/lang/RuntimeException;
+
+class=CLASS   - Method call or field read on CLASS
+method=METHOD - Method call to METHOD
+sig=SIG       - Method call to methods with SIG in signature
+ret=RET       - Method call to methods returning RET
+field=FIELD   - Field access on FIELD
+min-len=N     - Minimum path length of N
+max-len=N     - Maximum path length of N
+nophi         - Path doesn't contain Phis
+
+Example usage:
+
+class=Runtime method=exec
+"#;
+
+static COMMANDS: &[(&'static str, Command<State>)] = &[
+    (
+        "filter",
+        Command {
+            help: Some("filter methods"),
+            long_help: Some(FILTER_LONG_HELP),
+            func: do_filter,
+        },
+    ),
+    (
+        "clear",
+        Command {
+            help: Some("clear filters"),
+            long_help: None,
+            func: clear_filter,
+        },
+    ),
+    (
+        "has-chains",
+        Command {
+            help: Some("only show methods with chains"),
+            long_help: None,
+            func: has_chains,
+        },
+    ),
 ];
 
 pub struct State {
-    methods: FilterVec<(AnalyzedMethodSpec, String, usize)>,
-    filter: Option<String>,
+    methods: FilterVec<MethodData>,
+    filters: Vec<Box<dyn Fn(&MethodData) -> bool>>,
+    name_filter: Option<String>,
     show_hidden: bool,
     hidden_methods: HashSet<AnalyzedMethodId>,
     prev_filters: Option<Vec<Filter>>,
 }
 
 pub struct SelectMethodWindow {
-    command: Command<State>,
     state: State,
+    command: CommandHandler<State>,
 }
 
 impl State {
+    /// Call this instead of directly calling unfilter directly on [Self::methods], as there are
+    /// some default filters we want to always apply
     fn clear_filters(&mut self) {
-        self.methods.unfilter();
+        self.filters.clear();
+        self.refilter();
+    }
+
+    /// Rerun all filters on the methods
+    fn refilter(&mut self) {
+        // Always filter out hidden things unless we're showing hidden things.
+        let hidden = &self.hidden_methods;
+        let show_hidden = self.show_hidden;
+        self.methods.filter(|it| {
+            (show_hidden || !hidden.contains(&it.analysis_id))
+                && (self.filters.is_empty() || self.filters.iter().any(|func| func(it)))
+        });
+    }
+
+    /// Use this any time you want to filter [Self::methods], as there are some default filters we
+    /// want to always apply
+    fn filter_methods(&mut self, func: Box<dyn Fn(&MethodData) -> bool>) {
+        self.filters.push(func);
+        self.refilter();
+    }
+
+    fn update_name_filtered(&mut self) {
+        let Some(filter) = self.name_filter.take() else {
+            self.clear_filters();
+            return;
+        };
+
+        self.name_filter = Some(filter.clone());
+        self.filter_methods(Box::new(move |method| method.smali.contains(&filter)));
+    }
+
+    fn filering_by_name(&self) -> bool {
+        self.name_filter.is_some()
+    }
+
+    fn stop_filering_by_name(&mut self) {
+        self.name_filter = None;
+        self.update_name_filtered();
+    }
+
+    fn filter_delete(&mut self) {
+        match &mut self.name_filter {
+            None => return,
+            Some(cur) if cur.len() > 1 => {
+                cur.truncate(cur.len() - 1);
+                self.update_name_filtered();
+                return;
+            }
+            Some(_) => {}
+        }
+
+        // Falling through means we've deleted the last char
+        self.stop_filering_by_name();
+    }
+
+    fn name_filter_push(&mut self, c: char) {
+        if let Some(cur) = self.name_filter.as_mut() {
+            cur.push(c);
+        } else {
+            self.name_filter = Some(String::from(c));
+        }
+        self.update_name_filtered()
+    }
+
+    fn persist_name_filter(&mut self) {
+        // Remove the filter but leave the list filtered
+        self.name_filter = None;
+    }
+
+    fn filter_status(&mut self, status: MethodStatus) {
+        self.filter_methods(Box::new(move |it| it.status == status))
+    }
+
+    fn everything_hidden(&self) -> bool {
+        self.hidden_methods.len() == self.methods.total_len()
+    }
+
+    fn get_current_method(&self) -> Option<AnalyzedMethodId> {
+        self.methods.get_selected().map(|it| it.analysis_id)
+    }
+
+    fn toggle_show_hidden(&mut self) -> anyhow::Result<()> {
+        if self.show_hidden && self.everything_hidden() {
+            bail!("everything is hidden");
+        }
+        self.show_hidden = !self.show_hidden;
+        self.refilter();
+        Ok(())
+    }
+
+    fn prev_method(&mut self) {
+        self.methods.dec_sel();
+    }
+    fn next_method(&mut self) {
+        self.methods.inc_sel();
+    }
+
+    fn toggle_method_hidden(&mut self, tools: &Tools) -> anyhow::Result<()> {
+        let Some(current) = self.get_current_method() else {
+            return Ok(());
+        };
+
+        if self.hidden_methods.insert(current) {
+            tools.db.hide_analyzed_method(current)?;
+            self.refilter();
+            return Ok(());
+        }
+
+        self.hidden_methods.remove(&current);
+        tools.db.unhide_analyzed_method(current)?;
+        self.refilter();
+
+        Ok(())
     }
 }
 
@@ -104,18 +256,31 @@ impl DerefMut for SelectMethodWindow {
     }
 }
 
+struct MethodData {
+    spec: AnalyzedMethodSpec,
+    smali: String,
+    width: usize,
+}
+
+impl Deref for MethodData {
+    type Target = AnalyzedMethodSpec;
+    fn deref(&self) -> &Self::Target {
+        &self.spec
+    }
+}
+
 impl SelectMethodWindow {
     pub fn new(db: &GraphTaintAnalysisDb) -> anyhow::Result<Self> {
         let methods = FilterContainer::new_vec(
             db.get_all_analyzed_method_specs()?
                 .into_iter()
-                .filter_map(|it| {
-                    if it.nroutes == 0 {
+                .filter_map(|spec| {
+                    if spec.nroutes == 0 {
                         None
                     } else {
-                        let smali = it.as_smali();
+                        let smali = spec.as_smali();
                         let width = smali.width();
-                        Some((it, smali, width))
+                        Some(MethodData { spec, smali, width })
                     }
                 })
                 .collect::<Vec<_>>(),
@@ -124,119 +289,29 @@ impl SelectMethodWindow {
         let hidden_methods = HashSet::from_iter(db.get_hidden_analyzed_methods()?.into_iter());
         // Show hidden if they all are hidden
         let show_hidden = hidden_methods.len() == methods.len();
-        let command = Command::new(HashMap::from_iter(COMMANDS.iter().copied()));
-        Ok(Self {
-            command,
-            state: State {
-                methods,
-                show_hidden,
-                hidden_methods,
-                prev_filters: None,
-                filter: None,
-            },
-        })
+        let command = CommandHandler::new(HashMap::from_iter(COMMANDS.iter().copied()));
+        let mut state = State {
+            methods,
+            show_hidden,
+            hidden_methods,
+            prev_filters: None,
+            name_filter: None,
+            filters: Vec::new(),
+        };
+        state.refilter();
+        Ok(Self { command, state })
     }
 
     fn open_paths_window(&self, tools: &Tools) -> anyhow::Result<WindowAction> {
-        let Some((ana_method, _, _)) = self.methods.get_selected() else {
+        let Some(method) = self.methods.get_selected() else {
             return Ok(WindowAction::Nothing);
         };
         let filters = self.state.prev_filters.clone();
-        let window = Box::new(MethodPathsWindow::new(
-            tools,
-            ana_method.analysis_id,
-            filters,
-        )?);
+        let window = Box::new(MethodPathsWindow::new(tools, method.analysis_id, filters)?);
         Ok(WindowAction::PushWindow(window))
     }
-
-    fn update_filtered(&mut self) {
-        let Some(filter) = self.filter.take() else {
-            self.methods.unfilter();
-            return;
-        };
-
-        self.state
-            .methods
-            .filter(|(_, smali, _)| smali.contains(&filter));
-        self.filter = Some(filter);
-    }
-
-    fn filtering(&self) -> bool {
-        self.filter.is_some()
-    }
-
-    fn stop_filtering(&mut self) {
-        self.filter = None;
-        self.update_filtered();
-    }
-
-    fn filter_delete(&mut self) {
-        match &mut self.filter {
-            None => return,
-            Some(cur) if cur.len() > 1 => {
-                cur.truncate(cur.len() - 1);
-                self.update_filtered();
-                return;
-            }
-            Some(_) => {}
-        }
-
-        // Falling through means we've deleted the last char
-        self.stop_filtering();
-    }
-
-    fn filter_push(&mut self, c: char) {
-        if let Some(cur) = self.filter.as_mut() {
-            cur.push(c);
-        } else {
-            self.filter = Some(String::from(c));
-        }
-        self.update_filtered()
-    }
-
-    fn persist_filter(&mut self) {
-        // Remove the filter but leave the list filtered
-        self.filter = None;
-    }
-
-    fn filter_status(&mut self, status: MethodStatus) {
-        self.methods.filter(|it| it.0.status == status)
-    }
-
-    fn everything_hidden(&self) -> bool {
-        self.hidden_methods.len() == self.methods.total_len()
-    }
-
-    fn get_current_method(&self) -> Option<AnalyzedMethodId> {
-        self.methods.get_selected().map(|it| it.0.analysis_id)
-    }
-
-    fn toggle_show_hidden(&mut self) -> anyhow::Result<()> {
-        if self.show_hidden && self.everything_hidden() {
-            bail!("everything is hidden");
-        }
-        self.show_hidden = !self.show_hidden;
-        Ok(())
-    }
-
-    fn toggle_method_hidden(&mut self, tools: &Tools) -> anyhow::Result<()> {
-        let Some(current) = self.get_current_method() else {
-            return Ok(());
-        };
-
-        if self.hidden_methods.insert(current) {
-            tools.db.hide_analyzed_method(current)?;
-            self.methods.inc_sel();
-            return Ok(());
-        }
-
-        self.hidden_methods.remove(&current);
-        tools.db.unhide_analyzed_method(current)?;
-
-        Ok(())
-    }
 }
+
 impl Window for SelectMethodWindow {
     fn on_key_event(&mut self, tools: &Tools, evt: KeyEvent) -> anyhow::Result<WindowAction> {
         if self.command.is_active() {
@@ -246,8 +321,8 @@ impl Window for SelectMethodWindow {
         }
 
         match evt.modifiers {
-            KeyModifiers::SHIFT if self.filtering() => match evt.code {
-                KeyCode::Char(c) => self.filter_push(c),
+            KeyModifiers::SHIFT if self.filering_by_name() => match evt.code {
+                KeyCode::Char(c) => self.name_filter_push(c),
                 _ => return Ok(WindowAction::default()),
             },
             KeyModifiers::SHIFT => match evt.code {
@@ -256,19 +331,19 @@ impl Window for SelectMethodWindow {
             },
             KeyModifiers::NONE => match evt.code {
                 KeyCode::Esc if self.methods.is_filtered() => self.clear_filters(),
-                KeyCode::Enter if self.filtering() => self.persist_filter(),
-                KeyCode::Backspace if self.filtering() => self.filter_delete(),
-                KeyCode::Char(c) if self.filtering() => self.filter_push(c),
-                KeyCode::Char('/') if !self.filtering() => {
-                    self.filter = Some(String::new());
-                    self.methods.unfilter();
+                KeyCode::Enter if self.filering_by_name() => self.persist_name_filter(),
+                KeyCode::Backspace if self.filering_by_name() => self.filter_delete(),
+                KeyCode::Char(c) if self.filering_by_name() => self.name_filter_push(c),
+                KeyCode::Char('/') if !self.filering_by_name() => {
+                    self.name_filter = Some(String::new());
+                    self.clear_filters();
                 }
 
                 KeyCode::Enter => return self.open_paths_window(tools),
                 KeyCode::Char(':') => self.command.activate(),
                 KeyCode::Char('.') => self.toggle_show_hidden()?,
-                KeyCode::Char('j') | KeyCode::Down => self.methods.inc_sel(),
-                KeyCode::Char('k') | KeyCode::Up => self.methods.dec_sel(),
+                KeyCode::Char('j') | KeyCode::Down => self.next_method(),
+                KeyCode::Char('k') | KeyCode::Up => self.prev_method(),
                 KeyCode::Char('p') => self.filter_status(MethodStatus::Pending),
                 KeyCode::Char('d') => self.filter_status(MethodStatus::Done),
                 KeyCode::Char('f') => self.filter_status(MethodStatus::Failed),
@@ -281,8 +356,8 @@ impl Window for SelectMethodWindow {
 
     fn on_mouse_event(&mut self, _tools: &Tools, evt: MouseEvent) -> anyhow::Result<WindowAction> {
         match evt.kind {
-            MouseEventKind::ScrollUp => self.methods.dec_sel(),
-            MouseEventKind::ScrollDown => self.methods.inc_sel(),
+            MouseEventKind::ScrollUp => self.prev_method(),
+            MouseEventKind::ScrollDown => self.next_method(),
             _ => return Ok(WindowAction::default()),
         }
 
@@ -303,11 +378,13 @@ impl Window for SelectMethodWindow {
 
         let width = body_area.width as usize;
 
-        let list_items = self.methods.iter().map(|(method, _, smali_width)| {
-            let txt = if *smali_width < width {
-                method_names_fmt(method)
+        let list_items = self.methods.iter().map(|method| {
+            let is_hidden = self.hidden_methods.contains(&method.analysis_id);
+
+            let txt = if method.width < width {
+                method_names_fmt(method, is_hidden)
             } else {
-                method_names_fmt_multi_line(method, width)
+                method_names_fmt_multi_line(&method.spec.spec, width, is_hidden)
             };
             txt
         });
@@ -318,10 +395,20 @@ impl Window for SelectMethodWindow {
         let title = Line::from("Select method").centered().bold();
         frame.render_widget(title, title_area);
         frame.render_stateful_widget(list, body_area, &mut state);
-        if let Some(filter) = &self.filter {
+        if let Some(filter) = &self.name_filter {
             let mut line = Line::raw("/");
             line.push_span(Span::raw(filter));
             frame.render_widget(line, filter_area);
+        }
+    }
+}
+
+fn set_gray(txt: &mut Text) {
+    txt.style = txt.style.fg(Color::Gray);
+    for line in txt.lines.iter_mut() {
+        line.style = line.style.fg(Color::Gray);
+        for span in line.spans.iter_mut() {
+            span.style = span.style.fg(Color::Gray);
         }
     }
 }
@@ -333,7 +420,7 @@ fn class_span<'a>(line: &mut Line<'a>, class: &'a str) {
     line.push_span(Span::raw(";"));
 }
 
-fn method_names_fmt<'a>(method: &'a MethodSpec) -> Text<'a> {
+fn method_names_fmt<'a>(method: &'a MethodSpec, is_hidden: bool) -> Text<'a> {
     let mut line = Line::default();
 
     let MethodSpec {
@@ -381,10 +468,18 @@ fn method_names_fmt<'a>(method: &'a MethodSpec) -> Text<'a> {
         line.push_span(Span::raw(ret));
     }
 
-    Text::from(line)
+    let mut text = Text::from(line);
+    if is_hidden {
+        set_gray(&mut text);
+    }
+    text
 }
 
-fn method_names_fmt_multi_line<'a>(method: &'a MethodSpec, width: usize) -> Text<'a> {
+fn method_names_fmt_multi_line<'a>(
+    method: &'a MethodSpec,
+    width: usize,
+    is_hidden: bool,
+) -> Text<'a> {
     let mut txt = Text::default();
 
     let MethodSpec {
@@ -457,6 +552,10 @@ fn method_names_fmt_multi_line<'a>(method: &'a MethodSpec, width: usize) -> Text
     }
 
     txt.push_line(line);
+
+    if is_hidden {
+        set_gray(&mut txt);
+    }
 
     txt
 }
