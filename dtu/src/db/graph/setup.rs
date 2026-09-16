@@ -89,7 +89,8 @@ CREATE TEMPORARY TABLE IF NOT EXISTS named_calls(
 
     callee_class TEXT NOT NULL,
     callee_method TEXT NOT NULL,
-    callee_args TEXT NOT NULL
+    callee_args TEXT NOT NULL,
+    callee_ret TEXT NOT NULL
 );
 
 CREATE TEMPORARY TABLE IF NOT EXISTS named_supers(
@@ -240,15 +241,17 @@ impl<'a> SetupContext<'a> {
             let callee_class = rp.get(3)?;
             let callee_method = rp.get(4)?;
             let callee_args = rp.get(5)?;
+            let callee_ret = rp.get(6)?;
 
-            let sql = r#"INSERT INTO named_calls(caller_class, caller_method, caller_args, callee_class, callee_method, callee_args) VALUES (?, ?, ?, ?, ?, ?)"#;
+            let sql = r#"INSERT INTO named_calls(caller_class, caller_method, caller_args, callee_class, callee_method, callee_args) VALUES (?, ?, ?, ?, ?, ?, ?)"#;
              query!(sql_query(sql)
                 .bind::<Text, _>(caller_class)
                 .bind::<Text, _>(caller_method)
                 .bind::<Text, _>(caller_args)
                 .bind::<Text, _>(callee_class)
                 .bind::<Text, _>(callee_method)
-                .bind::<Text, _>(callee_args))
+                .bind::<Text, _>(callee_args)
+                .bind::<Text, _>(callee_ret))
             .execute(c)?;
             Ok(())
         })?;
@@ -508,7 +511,7 @@ JOIN classes AS interface
         // might, so I'm leaving it as is, but it could be worth investigating at some point.
         let new_methods = query!(sql_query(
             r#"INSERT INTO methods(class, name, args, ret, source)
-    SELECT DISTINCT c.id, nc.callee_method, nc.callee_args, 'V', ?1
+    SELECT DISTINCT c.id, nc.callee_method, nc.callee_args, nc.callee_ret, ?1
     FROM named_calls AS nc
     JOIN classes AS c
         ON c.id = COALESCE(
@@ -516,7 +519,7 @@ JOIN classes AS interface
             (SELECT id FROM classes WHERE name = nc.callee_class AND source = 1)
         )
     LEFT JOIN methods AS m
-        ON m.class = c.id AND m.name = nc.callee_method AND m.args = nc.callee_args
+        ON m.class = c.id AND m.name = nc.callee_method AND m.args = nc.callee_args AND m.ret = nc.callee_ret
     WHERE m.name IS NULL"#
         )
         .bind::<Integer, _>(src))
@@ -561,6 +564,7 @@ JOIN methods AS dst
     ON  dst.class = dc.id
     AND dst.name = nc.callee_method
     AND dst.args = nc.callee_args
+    AND dst.ret = nc.callee_ret
 
 WHERE dst.id != src.id"#
         )

@@ -181,6 +181,7 @@ struct CallInfo {
     target_class: String,
     target_method: String,
     target_args: String,
+    target_ret: String,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -270,11 +271,13 @@ impl SendChannels {
         target_class: &str,
         target_method: &str,
         target_args: &str,
+        target_ret: &str,
     ) {
         let _ = self.calls.send(CallInfo {
             target_class: target_class.to_string(),
             target_method: target_method.to_string(),
             target_args: target_args.to_string(),
+            target_ret: target_ret.to_string(),
             source_class: src_class.to_string(),
             source_method: src_method.to_string(),
             source_args: src_args.to_string(),
@@ -476,6 +479,7 @@ fn launch_writers(
                 &c.target_class,
                 &c.target_method,
                 &c.target_args,
+                &c.target_ret,
             ]) {
                 log::error!(
                     "failed to write call relation {}->{}({}) calls {}->{}({}) to csv: {}",
@@ -651,6 +655,7 @@ struct SeenCall<'a> {
     class: &'a str,
     name: &'a str,
     args: &'a str,
+    ret: Option<Cow<'a, str>>,
 }
 
 const IGNORE_SUPERS: &'static [&'static str] = &["Ljava/lang/Object;"];
@@ -826,6 +831,7 @@ where
                             class: mref.class,
                             name: mref.name,
                             args: mref.args,
+                            ret: mref.return_type.as_smali_str(),
                         };
 
                         if !seen_calls.insert(call) {
@@ -839,6 +845,10 @@ where
                             target_class.as_ref(),
                             mref.name,
                             mref.args,
+                            &mref
+                                .return_type
+                                .as_smali_str()
+                                .unwrap_or_else(|| Cow::Borrowed(Primitive::Void.as_smali_str())),
                         );
                     }
                 } else if let InvArgs::OneRegLiteral(_, RawLiteral::String(s)) = inv.args() {
