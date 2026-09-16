@@ -32,6 +32,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Display};
 use std::num::NonZeroUsize;
 use std::ops::{Deref, DerefMut};
+use std::rc::Rc;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::thread;
@@ -215,6 +216,23 @@ impl TaintAnalyzerOptions {
             log::warn!("ignoring depth larger than {}", Self::MAX_CALL_DEPTH);
         } else if depth > 0 {
             self.depth = depth;
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum ResolvedMethod {
+    /// A terminal method, don't propagate into these
+    Terminal(MethodSpec),
+    /// A method that should be inspected and propagated into: non-terminal
+    Inspectable(MethodSpec),
+}
+
+impl ResolvedMethod {
+    fn get_id(&self) -> MethodId {
+        match self {
+            Self::Terminal(v) => v.id,
+            Self::Inspectable(v) => v.id,
         }
     }
 }
@@ -1284,7 +1302,7 @@ impl MethodKey {
         let ty = &mref.return_type;
         let smali_ty = match ty.as_smali_str() {
             Some(v) => v,
-            None => Cow::Borrowed(""),
+            None => Cow::Borrowed(Primitive::Void.as_smali_str()),
         };
 
         for part in [mref.class, mref.name, mref.args, &smali_ty, source] {
@@ -1297,7 +1315,7 @@ impl MethodKey {
 }
 
 struct MethodResolver<'a> {
-    cache: LruCache<MethodKey, Option<MethodSpec>>,
+    cache: LruCache<MethodKey, Option<Rc<ResolvedMethod>>>,
     gdb: &'a dyn GraphDatabase,
     source: Option<String>,
     source_is_framework: bool,
@@ -1340,7 +1358,7 @@ impl<'a> MethodResolver<'a> {
         self.source_is_framework = old.is_framework;
     }
 
-    fn resolve_method(&mut self, target: &MethodRef) -> Option<MethodSpec> {
+    fn resolve_method(&mut self, target: &MethodRef) -> Option<Rc<ResolvedMethod>> {
         // This list is used to stop descent into classes that match. There is no reason to delve
         // deep into Android or Java internals, and some well know libraries can be included here as
         // well. Note that this is a bit of a balance: we're analyzing entire devices so it is
@@ -1373,14 +1391,6 @@ impl<'a> MethodResolver<'a> {
             "Landroid/util/Log;",
         ];
 
-        if TERMINAL_NAMESPACES
-            .iter()
-            .any(|it| target.class.starts_with(it))
-        {
-            log::debug!("Skipping terminal class: {}", target.class);
-            return None;
-        }
-
         let source = self
             .source
             .as_ref()
@@ -1393,7 +1403,7 @@ impl<'a> MethodResolver<'a> {
 
         if let Some(cached) = self.cache.get(&self.key) {
             self.stats.lru_hit();
-            return cached.clone();
+            return cached.as_ref().map(Rc::clone);
         };
 
         let class = ClassName::from(target.class);
@@ -1401,7 +1411,7 @@ impl<'a> MethodResolver<'a> {
         // This only actually returns None when the type is undefined which should never happen
         let return_type = match target.return_type.as_smali_str() {
             Some(v) => v,
-            None => Cow::Borrowed("V"),
+            None => Cow::Borrowed(Primitive::Void.as_smali_str()),
         };
 
         match self.gdb.get_method_source_or_framework(
@@ -1412,8 +1422,17 @@ impl<'a> MethodResolver<'a> {
             source,
         ) {
             Ok(Some(v)) => {
-                self.cache.put(self.key.clone(), Some(v.clone()));
-                Some(v)
+                let is_terminal = TERMINAL_NAMESPACES
+                    .iter()
+                    .any(|it| target.class.starts_with(it));
+
+                let resolved = Rc::new(if is_terminal {
+                    ResolvedMethod::Terminal(v)
+                } else {
+                    ResolvedMethod::Inspectable(v)
+                });
+                self.cache.put(self.key.clone(), Some(Rc::clone(&resolved)));
+                Some(resolved)
             }
             Ok(None) => {
                 self.cache.put(self.key.clone(), None);
@@ -1576,15 +1595,14 @@ impl<'a> TaintAnalyzerWorker<'a> {
         // Resolve the callee before recording anything, so the sink can name it by id. A call we
         // can't resolve gets recorded as external instead: there is no id for a method that isn't
         // in the graph database.
-        let method = resolver.resolve_method(target);
-        let callee = method.as_ref();
+        let callee = resolver.resolve_method(target);
 
         // Extend the path to include this call unconditially
         let call_path = state.extend(
             path,
-            match callee {
-                Some(method) => TaintSinkKind::MethodCall { method: method.id },
-                None => TaintSinkKind::ExternalCall {
+            match &callee {
+                Some(v) => TaintSinkKind::MethodCall { method: v.get_id() },
+                _ => TaintSinkKind::ExternalCall {
                     class: ClassName::from(target.class),
                     name: target.name.into(),
                     args: target.args.into(),
@@ -1612,7 +1630,7 @@ impl<'a> TaintAnalyzerWorker<'a> {
         tv: TaintedValue<'b>,
         path: Option<PathId>,
         call_data: CallData,
-        callee: Option<&MethodSpec>,
+        callee: Option<Rc<ResolvedMethod>>,
         resolver: &mut MethodResolver,
         call: &mut CallState,
     ) -> PropagationDecision {
@@ -1636,7 +1654,12 @@ impl<'a> TaintAnalyzerWorker<'a> {
             return PropagationDecision::from_bool(propagated);
         }
 
-        let Some(method) = callee else {
+        // External _can't_ go any further here
+        let Some(resolved_method) = callee else {
+            return PropagationDecision::from_bool(propagated);
+        };
+        // Terminal _shouldn't_ go any further here
+        let ResolvedMethod::Inspectable(method) = resolved_method.as_ref() else {
             return PropagationDecision::from_bool(propagated);
         };
 
