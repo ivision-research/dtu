@@ -2,8 +2,6 @@ use once_cell::sync::OnceCell;
 use std::env;
 use std::path::PathBuf;
 
-use directories::BaseDirs;
-
 use crate::adb::{Adb, ExecAdb};
 use crate::config::{GlobalConfig, ProjectConfig};
 use crate::utils::{ensure_dir_exists, path_must_str, read_file};
@@ -141,12 +139,48 @@ pub trait Context: Send + Sync {
         Ok(cache)
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn get_cache_dir(&self) -> crate::Result<PathBuf> {
-        let dir =
-            BaseDirs::new().ok_or_else(|| Error::Generic(format!("failed to get BaseDirs")))?;
-        let cache = dir.cache_dir().to_path_buf().join("dtu");
-        ensure_dir_exists(&cache)?;
-        Ok(cache)
+        let mut dir = None;
+
+        if let Some(xdg) = self.maybe_get_env("XDG_CACHE_HOME") {
+            dir = Some(PathBuf::from(xdg).join("dtu"));
+        };
+
+        if dir.is_none() {
+            if let Some(home) = env::home_dir() {
+                dir = Some(PathBuf::from(home).join("dtu"));
+            }
+        }
+
+        let Some(cache_dir) = dir else {
+            return Err(Error::Generic("failed to get a cache directory".into()));
+        };
+
+        ensure_dir_exists(&cache_dir)?;
+        Ok(cache_dir)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn get_cache_dir(&self) -> crate::Result<PathBuf> {
+        let mut dir = None;
+
+        // Some macOS users use the XDG spec so respect it if it exists
+        if let Some(xdg) = self.maybe_get_env("XDG_CACHE_HOME") {
+            dir = Some(PathBuf::from(xdg).join("dtu"));
+        };
+
+        if dir.is_none() {
+            if let Some(home) = env::home_dir() {
+                dir = Some(PathBuf::from(home).join("Library/Caches/dtu"));
+            }
+        }
+        let Some(cache_dir) = dir else {
+            return Err(Error::Generic("failed to get a cache directory".into()));
+        };
+
+        ensure_dir_exists(&cache_dir)?;
+        Ok(cache_dir)
     }
 
     fn get_smalisa_analysis_dir(&self) -> crate::Result<PathBuf> {
@@ -177,14 +211,78 @@ pub trait Context: Send + Sync {
         self.get_output_dir_child("smali")
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn get_user_local_dir(&self) -> crate::Result<PathBuf> {
-        let bd = BaseDirs::new().ok_or(Error::NoBaseDirs)?;
-        Ok(bd.data_local_dir().join("dtu"))
+        let mut dir = None;
+
+        if let Some(xdg) = self.maybe_get_env("XDG_DATA_HOME") {
+            dir = Some(PathBuf::from(xdg).join("dtu"));
+        };
+
+        if dir.is_none() {
+            if let Some(home) = env::home_dir() {
+                dir = Some(PathBuf::from(home).join(".local/share/dtu"));
+            }
+        }
+
+        let Some(local_dir) = dir else {
+            return Err(Error::Generic(
+                "failed to get a local data directory".into(),
+            ));
+        };
+
+        ensure_dir_exists(&local_dir)?;
+        Ok(local_dir)
     }
 
+    #[cfg(target_os = "macos")]
+    fn get_cache_dir(&self) -> crate::Result<PathBuf> {
+        let mut dir = None;
+
+        // Some macOS users use the XDG spec so respect it if it exists
+        if let Some(xdg) = self.maybe_get_env("XDG_CACHE_HOME") {
+            dir = Some(PathBuf::from(xdg).join("dtu"));
+        };
+
+        if dir.is_none() {
+            if let Some(home) = env::home_dir() {
+                dir = Some(PathBuf::from(home).join("Library/Application Support/dtu"));
+            }
+        }
+        let Some(local_dir) = dir else {
+            return Err(Error::Generic(
+                "failed to get a local data directory".into(),
+            ));
+        };
+
+        ensure_dir_exists(&local_dir)?;
+        Ok(local_dir)
+    }
+
+    // Config is unified for mac/linux because I don't think ~/Library/Preferences is supposed to
+    // have non-plist configs? I dunno.
+    
     fn get_user_config_dir(&self) -> crate::Result<PathBuf> {
-        let bd = BaseDirs::new().ok_or(Error::NoBaseDirs)?;
-        Ok(bd.config_dir().join("dtu"))
+        let mut dir = None;
+
+        if let Some(xdg) = self.maybe_get_env("XDG_CONFIG_HOME") {
+            dir = Some(PathBuf::from(xdg).join("dtu"));
+        };
+
+        if dir.is_none() {
+            if let Some(home) = env::home_dir() {
+                dir = Some(PathBuf::from(home).join(".config/dtu"));
+            }
+        }
+
+        let Some(config_dir) = dir else {
+            return Err(Error::Generic(
+                "failed to get a local config directory".into(),
+            ));
+        };
+
+        ensure_dir_exists(&config_dir)?;
+        Ok(config_dir)
     }
 }
 

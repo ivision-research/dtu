@@ -8,7 +8,6 @@ dtu_proc_macro = { path = "../dtu_proc_macro" }
 thiserror = "1.0"
 bitflags = { workspace = true }
 bumpalo = { workspace = true }
-directories = "6.0"
 diesel = { version = "2.0", features = ["sqlite", "returning_clauses_for_sqlite_3_35", "r2d2"], optional = true }
 diesel_migrations = { version = "2.0", optional = true }
 tempfile = { workspace = true }

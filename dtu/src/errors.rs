@@ -34,9 +34,6 @@ pub enum Error {
     #[error("task was cancelled by user")]
     Cancelled,
 
-    #[error("failed to get basedirs")]
-    NoBaseDirs,
-
     #[error("no adb device connected")]
     NoAdbDevice,
     #[error("adb device {0} not found")]
