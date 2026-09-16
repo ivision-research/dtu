@@ -469,9 +469,9 @@ fn launch_writers(
     handles.push(handle);
 
     handle = std::thread::spawn(move || {
-        // Worth deduplicating here because the same method may call the another method multiple
-        // times
-        for c in calls.iter().unique() {
+        // The unique here wasn't necessary: we deduplicate calls inside of a given method and we
+        // dont't visit a method more than once, so a duplicate should never arrive here.
+        for c in calls {
             if let Err(e) = calls_file.write_record(&[
                 &c.source_class,
                 &c.source_method,
