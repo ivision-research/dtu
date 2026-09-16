@@ -9,6 +9,6 @@ path = "src/main.rs"
 
 [dependencies]
 dtu = { path = "../dtu", default-features = false, features = [] }
-flexi_logger = { workspace = true }
+log = { version = "0.4", features = ["std"] }
 clap = { workspace = true }
 anyhow = { workspace = true }

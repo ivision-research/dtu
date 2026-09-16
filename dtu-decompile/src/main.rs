@@ -3,12 +3,39 @@ use anyhow::bail;
 use std::path::PathBuf;
 
 use clap::Parser;
-use flexi_logger::{LevelFilter, LogSpecification, Logger};
 
 use dtu::decompile::decompile_file;
 use dtu::devicefs::get_project_devicefs_helper;
 use dtu::utils::fs::path_must_str;
 use dtu::DefaultContext;
+
+struct StderrLogger {
+    level: log::Level,
+}
+
+impl StderrLogger {
+    fn new(level: log::Level) -> Self {
+        Self { level }
+    }
+}
+
+impl log::Log for StderrLogger {
+    fn log(&self, record: &log::Record) {
+        if record.level() > self.level {
+            return;
+        }
+
+        if let Some(path) = record.module_path() {
+            eprintln!("{}:{}: {}", path, record.level(), record.args());
+        } else {
+            eprintln!("{}: {}", record.level(), record.args());
+        }
+    }
+    fn flush(&self) {}
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= self.level
+    }
+}
 
 #[derive(Parser)]
 struct Cli {
@@ -30,13 +57,15 @@ struct Cli {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let lvl = if cli.trace {
-        LevelFilter::Trace
+        log::Level::Trace
     } else if cli.debug {
-        LevelFilter::Debug
+        log::Level::Debug
     } else {
-        LevelFilter::Info
+        log::Level::Info
     };
-    Logger::with(LogSpecification::builder().module("dtu", lvl).build()).start()?;
+    let logger = Box::new(StderrLogger::new(lvl));
+    log::set_boxed_logger(logger).map(|()| log::set_max_level(lvl.to_level_filter()))?;
+
     let mut ctx = DefaultContext::new();
     if let Some(api) = cli.api {
         ctx.set_target_api_level(api);

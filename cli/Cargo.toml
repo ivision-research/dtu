@@ -19,7 +19,6 @@ signal-hook = "0.3"
 nix = { version = "0.31", features = ["process"] }
 
 tempfile = { workspace = true }
-flexi_logger = { workspace = true }
 clap = { workspace = true }
 sha2 = { workspace = true }
 lazy_static = { workspace = true }
@@ -29,7 +28,7 @@ rand = { workspace = true }
 anyhow = { workspace = true }
 regex = { workspace = true }
 crossbeam = { workspace = true }
-log = { workspace = true }
+log = { version = "0.4", features = ["std"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 postcard = { workspace = true }

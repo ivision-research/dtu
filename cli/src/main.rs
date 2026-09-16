@@ -1,9 +1,8 @@
-use std::borrow::Cow;
+use std::fs::OpenOptions;
 use std::path::PathBuf;
 
 use anyhow::Context as AnyhowContext;
 use clap::{Parser, Subcommand};
-use flexi_logger::{FileSpec, LevelFilter, LogSpecification, Logger, LoggerHandle, WriteMode};
 
 use dtu::{Context, DefaultContext};
 
@@ -13,7 +12,9 @@ mod progress;
 use gen_envrc::GenEnvrc;
 
 mod circular;
+mod logging;
 mod printer;
+use logging::{FileLogger, StderrLogger};
 
 mod pull;
 use pull::Pull;
@@ -93,36 +94,16 @@ const VERSION_STRING: &'static str = include!(concat!(env!("OUT_DIR"), "/version
 #[command(version(SIMPLE_VERSION_STRING))]
 #[command(long_version(VERSION_STRING))]
 struct Cli {
-    /// `-e`, `--log-stderr`: Flag value, when enabled will cause logs to be output to `stderr`
-    /// instead of a log file. Disabled by default (logs go to a file by default)
-    #[arg(short = 'e', long, help = "Log to stderr instead of a file", action = clap::ArgAction::SetTrue, default_value_t = false)]
+    /// Log to stderr instead of a file
+    #[arg(short = 'e', long, action = clap::ArgAction::SetTrue, default_value_t = false)]
     log_stderr: bool,
 
-    /// `-f`, `--log-file`: Path to desired log output file location. Optional, defaults to
-    /// `$DTU_PROJECT_HOME/dtu_out/log`
-    #[arg(short = 'f', long, help = "Send log output to the given file")]
+    /// Path to desired log output file location. Defaults to `$DTU_PROJECT_HOME/dtu_out/log`
+    #[arg(short = 'f', long)]
     log_file: Option<PathBuf>,
 
-    /// `-s`, `--log-spec`: Debug options for [flexi_logger](https://docs.rs/flexi_logger/0.24.2/flexi_logger/struct.LogSpecification.html)
-    #[arg(short = 's', long, help = "Log spec for flexi_logger")]
-    log_spec: Option<String>,
-
-    /// `-l`, `--log-level`: Set the desired log verbosity. Defaults to 0, all values are listed
-    /// below:
-    ///
-    /// | Value | Log Level |
-    /// | ----- | --------- |
-    /// | **0** | **Warn** |
-    /// | 1 | Info |
-    /// | 2 | Debug |
-    /// | 3 | Trace |
-    #[arg(
-        short = 'l',
-        long,
-        help = "Set the log level, 0 = warn, 1 = info, etc",
-        long_help = None,
-        default_value_t = 0
-    )]
+    /// Set the desired log verbosity. Defaults to 0 (warn) up to 3 (trace)
+    #[arg(short = 'l', long, default_value_t = 0)]
     log_level: u8,
 
     /// The command being called. See [Commands] for the implemented options
@@ -283,64 +264,51 @@ enum Commands {
 }
 
 impl Cli {
-    fn configure_loggers(&self, ctx: &DefaultContext) -> anyhow::Result<LoggerHandle> {
-        let log_spec = match &self.log_spec {
-            Some(s) => {
-                LogSpecification::parse(s).with_context(|| format!("parsing log spec {}", s))?
-            }
-            None => {
-                if self.log_level > 0 {
-                    let lvl = if self.log_level == 1 {
-                        LevelFilter::Info
-                    } else if self.log_level == 2 {
-                        LevelFilter::Debug
-                    } else {
-                        LevelFilter::Trace
-                    };
-                    LogSpecification::builder().module("dtu", lvl).build()
-                } else {
-                    if ctx.has_env("RUST_LOG") {
-                        LogSpecification::env().with_context(|| "getting log spec from env")?
-                    } else {
-                        LogSpecification::builder()
-                            .module("dtu", LevelFilter::Warn)
-                            .build()
-                    }
-                }
-            }
+    fn configure_loggers(&mut self, ctx: &DefaultContext) -> anyhow::Result<()> {
+        let mut level = match self.log_level {
+            0 => log::Level::Warn,
+            1 => log::Level::Info,
+            2 => log::Level::Debug,
+            _ => log::Level::Trace,
         };
 
-        let mut logger = Logger::with(log_spec);
-
-        if !self.log_stderr {
-            let path = match &self.log_file {
-                Some(v) => {
-                    if v.is_absolute() {
-                        Some(Cow::Borrowed(v))
-                    } else {
-                        let full_path = std::env::current_dir()?.join(v);
-                        Some(Cow::Owned(full_path))
-                    }
-                }
-                None => ctx.get_output_dir_child("log").map(Cow::Owned).ok(),
-            };
-
-            if let Some(p) = &path {
-                logger = logger
-                    .log_to_file(
-                        FileSpec::try_from(p.as_ref()).with_context(|| "creating filespec")?,
-                    )
-                    .append()
-                    .write_mode(WriteMode::BufferAndFlush);
+        // respect RUST_LOG=$LEVEL syntax but no others
+        if let Some(env) = ctx.maybe_get_env("RUST_LOG") {
+            if let Ok(parsed) = env.parse::<log::Level>() {
+                level = parsed;
             }
         }
 
-        Ok(logger.start().with_context(|| "starting logger")?)
+        if self.log_stderr {
+            return self.stderr_logger(level);
+        }
+
+        let path = match self.log_file.take() {
+            Some(v) => v,
+            None => ctx.get_output_dir_child("log")?,
+        };
+
+        let file = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&path)
+            .with_context(|| format!("opening log file: {}", path.display()))?;
+
+        let logger = Box::new(FileLogger::new(file, level));
+        log::set_boxed_logger(logger).map(|()| log::set_max_level(level.to_level_filter()))?;
+
+        Ok(())
+    }
+
+    fn stderr_logger(&self, level: log::Level) -> anyhow::Result<()> {
+        let logger = Box::new(StderrLogger::new(level));
+        log::set_boxed_logger(logger).map(|()| log::set_max_level(level.to_level_filter()))?;
+        Ok(())
     }
 }
 
 fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
 
     if let Commands::Version = &cli.command {
         println!("{}", VERSION_STRING);
@@ -349,7 +317,7 @@ fn main() -> anyhow::Result<()> {
 
     let ctx = DefaultContext::default();
 
-    let log_handle = cli.configure_loggers(&ctx)?;
+    cli.configure_loggers(&ctx)?;
 
     let res = match cli.command {
         Commands::Taint(c) => c.run(),
@@ -378,6 +346,5 @@ fn main() -> anyhow::Result<()> {
         Commands::Version => panic!("unreachable"),
     };
 
-    log_handle.flush();
     res
 }

@@ -39,7 +39,6 @@ yoke =  "0.8"
 sha2 = "0.10"
 tempfile = "3.19"
 env_logger = "0.11"
-flexi_logger = { version = "0.30", features = ["dont_minimize_extra_stacks"] }
 toml = { version = "0.8", default-features = false, features = ["parse"] }
 postcard = { version = "1.0.0", features = ["alloc", "use-std"] }
 
