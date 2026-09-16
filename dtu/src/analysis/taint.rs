@@ -846,7 +846,7 @@ impl<'a> TaintAnalyzer<'a> {
             drop(result_tx);
         });
 
-        writer.rebuild_fts();
+        writer.update_post_run();
 
         if self.cancel.was_cancelled() {
             return Ok(db);
@@ -1297,8 +1297,7 @@ impl MethodKey {
 }
 
 struct MethodResolver<'a> {
-    cache: LruCache<MethodKey, MethodSpec>,
-    missing: HashSet<MethodKey>,
+    cache: LruCache<MethodKey, Option<MethodSpec>>,
     gdb: &'a dyn GraphDatabase,
     source: Option<String>,
     source_is_framework: bool,
@@ -1321,7 +1320,6 @@ impl<'a> MethodResolver<'a> {
             gdb,
             cache,
             key: MethodKey::new(),
-            missing: HashSet::new(),
             source_is_framework,
             stats: CacheStats::new(),
         }
@@ -1395,12 +1393,8 @@ impl<'a> MethodResolver<'a> {
 
         if let Some(cached) = self.cache.get(&self.key) {
             self.stats.lru_hit();
-            return Some(cached.clone());
+            return cached.clone();
         };
-
-        if self.missing.contains(&self.key) {
-            return None;
-        }
 
         let class = ClassName::from(target.class);
 
@@ -1418,11 +1412,11 @@ impl<'a> MethodResolver<'a> {
             source,
         ) {
             Ok(Some(v)) => {
-                self.cache.put(self.key.clone(), v.clone());
+                self.cache.put(self.key.clone(), Some(v.clone()));
                 Some(v)
             }
             Ok(None) => {
-                self.missing.insert(self.key.clone());
+                self.cache.put(self.key.clone(), None);
                 log::warn!(
                     "method {}->{}({}): not in database",
                     target.class,

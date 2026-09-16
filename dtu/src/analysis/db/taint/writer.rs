@@ -92,31 +92,6 @@ impl<'a> TaintWriter<'a> {
             })?
             .is_some();
 
-        // Unconditional temporary trigger that can't exist in the migrations because it references
-        // the graph
-        let method_trigger = r#"CREATE TEMP TRIGGER update_sink_filters_method
-AFTER INSERT ON sinks
-WHEN new.kind = 'call'
-BEGIN
-    INSERT INTO sink_filters (route, idx, kind, class, name, args, ret)
-    SELECT
-        new.route,
-        new.idx,
-        new.kind,
-        classes.name,
-        methods.name,
-        methods.args,
-        methods.ret
-    FROM methods
-    JOIN classes ON classes.id = methods.class
-    WHERE methods.id = new.method_id;
-END;"#;
-
-        db.write(|c| -> db::Result<()> {
-            _ = query!(sql_query(method_trigger)).execute(c)?;
-            Ok(())
-        })?;
-
         if !have_run_info {
             return Self::create_new_run_meta(db, info, planned);
         }
@@ -214,11 +189,38 @@ END;"#;
         })
     }
 
+    /// Finish off the derived tables once every method has been written
+    ///
+    /// Call this at the end of a run, including a cancelled one, so that whatever did get
+    /// written is still searchable.
+    pub fn update_post_run(&self) {
+        // The other elements of sink_filters are inserted by triggers, but we can't create triggers
+        // that reference the graph database without it already attached. `OR IGNORE` because this
+        // can be run multiple times.
+        const SINK_FILTER_UPDATE: &str = r#"
+INSERT OR IGNORE INTO sink_filters (route, idx, kind, class, name, args, ret)
+SELECT s.route, s.idx, 'call', c.name, m.name, m.args, m.ret
+FROM sinks AS s
+JOIN graph.methods AS m ON m.id = s.method_id
+JOIN graph.classes AS c ON c.id = m.class
+WHERE s.kind = 'call';
+"#;
+
+        if let Err(e) = self.db.write(|c| -> db::Result<()> {
+            _ = query!(sql_query(SINK_FILTER_UPDATE)).execute(c)?;
+            Ok(())
+        }) {
+            log::warn!("failed to copy calls into the sink_filters table!: {e}");
+        }
+
+        self.rebuild_fts();
+    }
+
     /// Trigger a rebuild on the FTS5 virtual table
     ///
     /// This has to be run at the end of a run otherwise queries against the table won't return any
     /// data
-    pub fn rebuild_fts(&self) {
+    fn rebuild_fts(&self) {
         if self.db.db.check_fts5() {
             if let Err(e) = self.db.db.write(|c| -> db::Result<()> {
                 _ = query!(sql_query(
