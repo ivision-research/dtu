@@ -55,6 +55,7 @@ enum Subcommand {
     /// nophi           - Searches for routes that had no phi nodes{n}
     /// min-len=X       - Searches for routes with minimum length X{n}
     /// max-len=X       - Searches for routes with maximum length X{n}
+    /// fts5=FTS5       - Search using an arbitrary FTS5 match, see the sql for into{n}
     /// {n}
     /// Filters can be combined, for example class=Intent method=getString would{n}
     /// match `Landroid/os/[Intent];->[getString]Extra(...)`{n}

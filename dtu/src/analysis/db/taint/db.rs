@@ -530,6 +530,7 @@ impl From<IdLookupError> for ResolveError {
 #[derive(Clone, Debug)]
 pub enum Filter {
     NoPhi,
+    FTS5(String),
     ClassContains(String),
     MethodContains(String),
     FieldContains(String),
@@ -542,6 +543,8 @@ pub enum Filter {
 impl Filter {
     pub fn matches(&self, route: &ResolvedTaintRoute) -> bool {
         match self {
+            // Can't match FTS5 against the route, it's only for database queries
+            Self::FTS5(_) => false,
             Self::NoPhi => route.phis == 0,
             Self::MinLength(len) => route.sinks.len() >= *len,
             Self::MaxLength(len) => route.sinks.len() <= *len,
@@ -632,6 +635,11 @@ impl FromStr for Filter {
             "min-len" => Self::MinLength(Self::parse_len(name, value)?),
             "max-len" => Self::MaxLength(Self::parse_len(name, value)?),
             "nophi" => Self::NoPhi,
+
+            "fts5" => {
+                let m = value.ok_or_else(|| anyhow::Error::msg("fts5 needs a value"))?;
+                Self::FTS5(m.into())
+            }
 
             "sig" => {
                 let m = value.ok_or_else(|| anyhow::Error::msg("sig needs a value"))?;
@@ -968,6 +976,10 @@ impl GraphTaintAnalysisDb {
         self.get_analysis_matching_no_fts5(filters)
     }
 
+    fn quote_fts5(s: &str) -> String {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    }
+
     fn get_analysis_matching_fts5(
         &self,
         filters: &[Filter],
@@ -984,17 +996,20 @@ impl GraphTaintAnalysisDb {
                 continue;
             }
             match filter {
+                Filter::FTS5(s) => {
+                    fts5_queries.push(Self::quote_fts5(s));
+                }
                 Filter::SigContains(s) => {
-                    fts5_queries.push(format!("args:{s}"));
+                    fts5_queries.push(format!("args:{}", Self::quote_fts5(s)));
                 }
                 Filter::ClassContains(s) => {
-                    fts5_queries.push(format!("class:{s}"));
+                    fts5_queries.push(format!("class:{}", Self::quote_fts5(s)));
                 }
                 Filter::MethodContains(s) | Filter::FieldContains(s) => {
-                    fts5_queries.push(format!("name:{s}"));
+                    fts5_queries.push(format!("name:{}", Self::quote_fts5(s)));
                 }
                 Filter::RetContains(s) => {
-                    fts5_queries.push(format!("ret:{s}"));
+                    fts5_queries.push(format!("ret:{}", Self::quote_fts5(s)));
                 }
                 Filter::NoPhi => {
                     no_phi = true;
@@ -1200,17 +1215,20 @@ impl GraphTaintAnalysisDb {
             }
 
             match filter {
+                Filter::FTS5(s) => {
+                    fts5_queries.push(Self::quote_fts5(s));
+                }
                 Filter::SigContains(s) => {
-                    fts5_queries.push(format!("args:{s}"));
+                    fts5_queries.push(format!("args:{}", Self::quote_fts5(s)));
                 }
                 Filter::ClassContains(s) => {
-                    fts5_queries.push(format!("class:{s}"));
+                    fts5_queries.push(format!("class:{}", Self::quote_fts5(s)));
                 }
                 Filter::MethodContains(s) | Filter::FieldContains(s) => {
-                    fts5_queries.push(format!("name:{s}"));
+                    fts5_queries.push(format!("name:{}", Self::quote_fts5(s)));
                 }
                 Filter::RetContains(s) => {
-                    fts5_queries.push(format!("ret:{s}"));
+                    fts5_queries.push(format!("ret:{}", Self::quote_fts5(s)));
                 }
                 Filter::NoPhi => {
                     no_phi = true;

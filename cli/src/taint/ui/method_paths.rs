@@ -96,6 +96,7 @@ field=FIELD   - Field access on FIELD
 min-len=N     - Minimum path length of N
 max-len=N     - Maximum path length of N
 nophi         - Path doesn't contain Phis
+fts5=FTS5     - Arbitrary FTS5 search, see the SQL for info
 
 Example usage:
 
