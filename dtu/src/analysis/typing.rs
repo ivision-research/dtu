@@ -133,8 +133,10 @@ pub fn complex_params(signature: &str) -> Result<Vec<ParamRegister>, &str> {
     for (index, ty) in SmaliMethodSignatureIterator::new(signature)?.enumerate() {
         let complex = match ty {
             Type::Class(..) => true,
-            Type::Primitive(Primitive::Byte, depth) => depth > 0,
-            Type::Primitive(..) | Type::Unknown => false,
+            Type::Primitive(Primitive::Char, depth) | Type::Primitive(Primitive::Byte, depth) => {
+                depth > 0
+            }
+            _ => false,
         };
         if complex {
             out.push(ParamRegister { index, register });

@@ -19,25 +19,16 @@ use diesel_migrations::{embed_migrations, EmbeddedMigrations};
 use serde::Serialize;
 use smalisa::AccessFlag;
 
-use crate::analysis::db::taint::models::{
-    AnalyzedMethod, AnalyzedMethodId, ExternalSinkId, FieldSinkId, InsertHiddenAnalyzedMethod,
-    InsertHiddenRoute, InstructionSinkId, MethodStatus, RouteId, SinkId, SinkKind, SourceKind,
-    TaintSourceId,
-};
-use crate::analysis::db::taint::schema::{
-    _hidden_analyzed_methods, _hidden_routes, call_graph_chains, external_sinks, field_sinks,
-    instruction_sinks, routes, sink_filters, sinks, source_calls, source_fields, source_params,
-    taint_sources,
-};
+use crate::analysis::taint::models::{ExternalFieldSinkId, NodeId, SubgraphId};
 use crate::analysis::taint::TaintSource;
 use crate::db::common::apply_connection_pragmas;
-use crate::db::graph::db::MethodSpecRow;
-use crate::db::graph::schema::{classes, methods, sources};
+use crate::db::graph::db::{FieldSpecRow, MethodSpecRow};
+use crate::db::graph::models::{FieldId, FieldSpec};
+use crate::db::graph::schema::{class_fields, classes, methods, sources};
 use crate::db::graph::MethodSpec;
 use crate::db::{query_exec, DatabaseId};
 use crate::utils::{ClassName, Container};
 use crate::{
-    analysis::db::taint::schema::{analyzed_methods, run_info},
     db::{
         self,
         common::Db,
@@ -51,6 +42,18 @@ use crate::{
 };
 use yoke::Yokeable;
 
+use super::models::{
+    AnalyzedMethod, AnalyzedMethodId, ExternalCallSinkId, InsertHiddenAnalyzedMethod,
+    InsertHiddenGraph, InstructionSinkId, MethodStatus, SinkId, SinkKind, SourceKind,
+    TaintSourceId,
+};
+use super::schema::{
+    _hidden_analyzed_methods, _hidden_graphs, edges, external_call_sinks, external_field_sinks,
+    graphs, instruction_sinks, nodes, reachable_nodes, sink_filters, source_calls, source_fields,
+    source_params, taint_sources,
+};
+use super::schema::{analyzed_methods, run_info};
+
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations/taint_migrations/");
 
 #[derive(Clone, Copy)]
@@ -63,39 +66,34 @@ pub enum TaintDatabaseValidity {
     OldSchema,
 }
 
-/// The chains a [UnresolvedOrigin::CallGraph] carries come from the call graph, not from the
-/// dataflow analysis: they say the method is reachable, not that anything tainted flows along them.
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnresolvedOrigin {
     /// The method was asked for directly
     Direct,
     /// The call graph led here from a method that was asked for
     ///
-    /// Each chain runs from the method that was asked for to this one, naming methods by id the
-    /// same way sinks do
-    CallGraph { chains: Vec<Vec<MethodId>> },
+    /// The route that got here is deliberately not recorded. There may be an enormous number of
+    /// them and they are all recoverable from the graph database, so anyone who decides a graph is
+    /// worth chasing can ask for the paths then.
+    Indirect,
 }
 
-pub enum ResolvedOrigin<'a> {
+pub enum ResolvedOrigin {
     /// The method was asked for directly
     Direct,
-    /// The call graph led here from a method that was asked for
-    ///
-    /// Each chain runs from the method that was asked for to this one, naming methods by id the
-    /// same way sinks do
-    CallGraph {
-        chains: Vec<Vec<&'a MethodSpecAndDisplay>>,
-    },
+    /// The call graph led here from a method that was asked for, see
+    /// [UnresolvedOrigin::Indirect]
+    Indirect,
 }
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize)]
 pub enum SinkDef {
-    Field {
+    ExternalField {
         class: ClassName,
         name: String,
     },
     Instruction(String),
-    External {
+    ExternalCall {
         class: ClassName,
         name: String,
         signature: String,
@@ -171,11 +169,16 @@ bitflags! {
         const Methods = 1 << 0;
         const Sinks = 1 << 1;
         const Sources = 1 << 2;
-        const All = Self::Methods.bits() | Self::Sinks.bits() | Self::Sources.bits();
+        const Fields = 1 << 3;
+        const All = Self::Methods.bits() | Self::Sinks.bits() | Self::Sources.bits() | Self::Fields.bits();
     }
 }
 
 impl ResolvableIds {
+    fn includes_fields(self) -> bool {
+        self.contains(Self::Fields)
+    }
+
     fn includes_methods(self) -> bool {
         self.contains(Self::Methods)
     }
@@ -202,9 +205,10 @@ where
     fixup.serialize(serializer)
 }
 
-/// Used to translate IDs into concrete types for a given analyssi run
+/// Used to translate IDs into concrete types for a given analysis run
 #[derive(Serialize)]
 pub struct ReportIdMap {
+    pub fields: Option<HashMap<FieldId, FieldSpecAndDisplay>>,
     pub methods: Option<HashMap<MethodId, MethodSpecAndDisplay>>,
     #[serde(serialize_with = "sinks_serialize")]
     pub sinks: Option<HashMap<SinkId, SinkDefAndDisplay>>,
@@ -217,6 +221,17 @@ pub enum IdLookupError {
     Missing { kind: ResolvableIds, id: i32 },
     #[error("id map wasn't built to resolve kind {kind:?}")]
     Unresolved { kind: ResolvableIds },
+}
+
+impl ReportIdMap {
+    pub fn new_empty() -> Self {
+        Self {
+            fields: None,
+            methods: None,
+            sinks: None,
+            sources: None,
+        }
+    }
 }
 
 impl ReportIdMap {
@@ -236,6 +251,10 @@ impl ReportIdMap {
                     id: id.into(),
                 })
             })
+    }
+
+    pub fn get_field(&self, id: FieldId) -> Result<&FieldSpecAndDisplay, IdLookupError> {
+        Self::get(&self.fields, id, ResolvableIds::Fields)
     }
 
     pub fn get_method(&self, id: MethodId) -> Result<&MethodSpecAndDisplay, IdLookupError> {
@@ -312,13 +331,181 @@ impl Deref for TaintAnalysisDb {
 }
 
 #[derive(Debug)]
+struct CreateTaintAnalysisSetup {
+    graph: GraphSqliteAttach,
+}
+
+impl CustomizeConnection<SqliteConnection, r2d2::Error> for CreateTaintAnalysisSetup {
+    fn on_acquire(&self, conn: &mut SqliteConnection) -> Result<(), r2d2::Error> {
+        apply_connection_pragmas(conn)?;
+
+        self.graph.attach(conn)?;
+
+        // Must be applied after the graph is attached which is why this is in here instead of in
+        // the SQL migration.
+
+        let sinks_triggers = r#"CREATE TEMP TRIGGER update_sink_filters_method
+AFTER INSERT ON nodes
+WHEN new.kind = 'call'
+BEGIN
+    INSERT INTO sink_filters (node, kind, class, name, args, ret)
+    SELECT
+        new.id,
+        new.kind,
+        classes.name,
+        methods.name,
+        methods.args,
+        methods.ret
+    FROM methods
+    JOIN classes ON classes.id = methods.class
+    WHERE methods.id = new.graph_id;
+END;
+
+CREATE TEMP TRIGGER update_sink_filters_fields
+AFTER INSERT ON nodes
+WHEN new.kind = 'field'
+BEGIN
+    INSERT INTO sink_filters (node, kind, class, name)
+    SELECT
+        new.id,
+        new.kind,
+        classes.name,
+        class_fields.name
+    FROM class_fields
+    JOIN classes ON classes.id = class_fields.class
+    WHERE class_fields.id = new.graph_id;
+END;
+"#;
+
+        _ = query!(sql_query(sinks_triggers)).execute(conn)?;
+
+        Ok(())
+    }
+}
+
+/// A database connection used for building a taint analysis DB
+///
+/// Use a [GraphTaintAnalysisDb] or [TaintAnalysisDb] for querying a taint analysis database, this
+/// is just for building them.
+pub struct TaintAnalysisDbWriter {
+    db: TaintAnalysisDb,
+    graph: GraphSqliteDatabase,
+}
+
+impl Deref for TaintAnalysisDbWriter {
+    type Target = TaintAnalysisDb;
+    fn deref(&self) -> &Self::Target {
+        &self.db
+    }
+}
+
+impl GraphTaintAnalysisDb {
+    /// Consume this into a [TaintAnalysisDbWriter]
+    pub fn into_writer(self) -> TaintAnalysisDbWriter {
+        TaintAnalysisDbWriter {
+            db: self.db,
+            graph: self.graph,
+        }
+    }
+}
+
+impl TaintAnalysisDbWriter {
+    /// Consume this writer into a [GraphTaintAnalysisDb]
+    pub fn into_graph(self) -> GraphTaintAnalysisDb {
+        GraphTaintAnalysisDb {
+            db: self.db,
+            graph: self.graph,
+        }
+    }
+
+    pub fn graph(&self) -> &GraphSqliteDatabase {
+        &self.graph
+    }
+
+    pub fn new_from_path<S: AsRef<str> + ?Sized>(ctx: &dyn Context, path: &S) -> db::Result<Self> {
+        let graph_path = ctx.get_sqlite_dir()?.join(GRAPH_DATABASE_FILE_NAME);
+        let graph_path_str = path_must_str(&graph_path);
+
+        let db = Db::new_from_path_with(
+            path,
+            MIGRATIONS,
+            #[cfg(test)]
+            MIGRATIONS,
+            Some(Box::new(CreateTaintAnalysisSetup {
+                graph: GraphSqliteAttach {
+                    path: graph_path_str.into(),
+                },
+            })),
+        )?;
+
+        if db.check_fts5() {
+            Self::setup_fts5(&db)?;
+        }
+
+        let taint_db = TaintAnalysisDb { db: db.clone() };
+        let graph = GraphSqliteDatabase::wrap(db);
+
+        Ok(Self {
+            db: taint_db,
+            graph,
+        })
+    }
+
+    fn setup_fts5(db: &Db) -> db::Result<()> {
+        let setup_sql = r#"
+CREATE VIRTUAL TABLE IF NOT EXISTS sink_filters_fts USING fts5(
+    class,
+    name,
+    args,
+    ret,
+    content='sink_filters',
+    content_rowid='id',
+    tokenize='trigram'
+);
+
+CREATE TRIGGER IF NOT EXISTS sink_filters_insert_fts5
+AFTER INSERT ON sink_filters
+BEGIN
+    INSERT INTO sink_filters_fts(rowid, class, name, args, ret)
+    VALUES (new.id, new.class, new.name, new.args, new.ret);
+END;
+
+CREATE TRIGGER IF NOT EXISTS sink_filters_delete_fts5 
+AFTER DELETE ON sink_filters
+BEGIN
+    INSERT INTO sink_filters_fts(sink_filters_fts, rowid, class, name, args, ret)
+    VALUES ('delete', old.id, old.class, old.name, old.args, old.ret);
+END;
+
+
+CREATE TRIGGER IF NOT EXISTS sink_filters_update_fts5
+AFTER UPDATE ON sink_filters
+BEGIN
+    INSERT INTO sink_filters_fts(sink_filters_fts, rowid, class, name, args, ret)
+    VALUES ('delete', old.id, old.class, old.name, old.args, old.ret);
+    INSERT INTO sink_filters_fts(rowid, class, name, args, ret)
+    VALUES (new.id, new.class, new.name, new.args, new.ret);
+END;
+
+INSERT INTO sink_filters_fts(rowid, class, name, args, ret)
+SELECT id, class, name, args, ret
+FROM sink_filters;
+ "#;
+
+        db.write(|c| {
+            _ = query!(sql_query(setup_sql)).execute(c)?;
+            Ok(())
+        })
+    }
+}
+
+#[derive(Debug)]
 struct GraphSqliteAttach {
     path: String,
 }
 
-impl CustomizeConnection<SqliteConnection, r2d2::Error> for GraphSqliteAttach {
-    fn on_acquire(&self, conn: &mut SqliteConnection) -> Result<(), r2d2::Error> {
-        apply_connection_pragmas(conn)?;
+impl GraphSqliteAttach {
+    fn attach(&self, conn: &mut SqliteConnection) -> Result<(), r2d2::Error> {
         let path = &self.path;
 
         // Try to attach with the URI and mode=ro first
@@ -338,6 +525,13 @@ impl CustomizeConnection<SqliteConnection, r2d2::Error> for GraphSqliteAttach {
                 Ok(())
             }
         }
+    }
+}
+
+impl CustomizeConnection<SqliteConnection, r2d2::Error> for GraphSqliteAttach {
+    fn on_acquire(&self, conn: &mut SqliteConnection) -> Result<(), r2d2::Error> {
+        apply_connection_pragmas(conn)?;
+        self.attach(conn)
     }
 }
 
@@ -364,35 +558,29 @@ diesel::table! {
 }
 
 diesel::allow_tables_to_appear_in_same_query!(sink_filters, sink_filters_fts);
-diesel::allow_tables_to_appear_in_same_query!(sinks, sink_filters_fts);
+diesel::allow_tables_to_appear_in_same_query!(nodes, sink_filters_fts);
 diesel::allow_tables_to_appear_in_same_query!(taint_sources, sink_filters_fts);
-diesel::allow_tables_to_appear_in_same_query!(routes, sink_filters_fts);
+diesel::allow_tables_to_appear_in_same_query!(graphs, sink_filters_fts);
 diesel::allow_tables_to_appear_in_same_query!(analyzed_methods, sink_filters_fts);
 
 diesel::joinable!(
     analyzed_methods -> methods (method)
 );
-diesel::joinable!(
-    call_graph_chains -> methods (method)
-);
-
-diesel::joinable!(
-    sinks -> methods (location)
-);
-
 macro_rules! can_methodspec {
     ($table:ident) => {
         diesel::allow_tables_to_appear_in_same_query!($table, methods);
         diesel::allow_tables_to_appear_in_same_query!($table, sources);
         diesel::allow_tables_to_appear_in_same_query!($table, classes);
+        diesel::allow_tables_to_appear_in_same_query!($table, class_fields);
     };
 }
 
 can_methodspec!(analyzed_methods);
-can_methodspec!(call_graph_chains);
-can_methodspec!(sinks);
+can_methodspec!(nodes);
 can_methodspec!(taint_sources);
-can_methodspec!(routes);
+can_methodspec!(graphs);
+can_methodspec!(edges);
+can_methodspec!(sink_filters);
 
 /// A [MethodSpec] with the smali form attached for display
 #[derive(Clone, Debug, Serialize)]
@@ -420,10 +608,37 @@ impl AsRef<str> for MethodSpecAndDisplay {
     }
 }
 
+/// A [FieldSpec] with the smali form attached for display
+#[derive(Clone, Debug, Serialize)]
+pub struct FieldSpecAndDisplay {
+    pub spec: FieldSpec,
+    pub display: String,
+}
+
+impl Deref for FieldSpecAndDisplay {
+    type Target = FieldSpec;
+    fn deref(&self) -> &Self::Target {
+        &self.spec
+    }
+}
+
+impl fmt::Display for FieldSpecAndDisplay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.display)
+    }
+}
+
+impl AsRef<str> for FieldSpecAndDisplay {
+    fn as_ref(&self) -> &str {
+        &self.display
+    }
+}
+
 pub struct AnalyzedMethodSpec {
     pub analysis_id: AnalyzedMethodId,
-    pub nchains: usize,
-    pub nroutes: usize,
+    /// False when the call graph led here rather than the method being asked for directly
+    pub direct: bool,
+    pub ngraphs: usize,
     pub spec: MethodSpec,
     pub status: MethodStatus,
     pub error: Option<String>,
@@ -437,53 +652,51 @@ impl Deref for AnalyzedMethodSpec {
 }
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
-pub enum UnresolvedTaintSinkKind {
+pub enum UnresolvedTaintSink {
     Phi,
     Array,
     Call(MethodId),
-    ExternalCall(ExternalSinkId),
-    Field(FieldSinkId),
+    Field(FieldId),
+    ExternalCall(ExternalCallSinkId),
+    ExternalField(ExternalFieldSinkId),
     Instruction(InstructionSinkId),
 }
 
-pub struct UnresolvedTaintSink {
-    pub in_method: MethodId,
-    pub sink: UnresolvedTaintSinkKind,
-}
-
 #[derive(Serialize, Debug)]
-pub enum ResolvedTaintSinkKind<'a> {
+pub enum ResolvedTaintSink<'a> {
     Phi,
     Array,
     Call(&'a MethodSpecAndDisplay),
+    Field(&'a FieldSpecAndDisplay),
     Instruction(&'a str),
     ExternalCall(&'a str),
-    Field(&'a str),
+    ExternalField(&'a str),
 }
 
-impl<'a> AsRef<str> for ResolvedTaintSinkKind<'a> {
+impl<'a> AsRef<str> for ResolvedTaintSink<'a> {
     fn as_ref(&self) -> &str {
         match self {
             Self::Phi => "<Phi(...)>",
             Self::Array => "<Array>",
             Self::Call(it) => &it.display,
-            Self::Instruction(it) | Self::ExternalCall(it) | Self::Field(it) => it,
+            Self::Field(it) => &it.display,
+            Self::Instruction(it) | Self::ExternalCall(it) | Self::ExternalField(it) => it,
         }
     }
 }
 
-impl<'a> fmt::Display for ResolvedTaintSinkKind<'a> {
+impl<'a> fmt::Display for ResolvedTaintSink<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_ref())
     }
 }
 
-impl<'a> ResolvedTaintSinkKind<'a> {
+impl<'a> ResolvedTaintSink<'a> {
     fn resolve(
-        unresolved: UnresolvedTaintSinkKind,
+        unresolved: UnresolvedTaintSink,
         map: &'a ReportIdMap,
     ) -> Result<Self, ResolveError> {
-        type USink = UnresolvedTaintSinkKind;
+        type USink = UnresolvedTaintSink;
 
         Ok(match unresolved {
             USink::Array => Self::Array,
@@ -491,6 +704,10 @@ impl<'a> ResolvedTaintSinkKind<'a> {
             USink::Call(id) => {
                 let method = map.get_method(id)?;
                 Self::Call(method)
+            }
+            USink::Field(id) => {
+                let field = map.get_field(id)?;
+                Self::Field(field)
             }
             USink::Instruction(id) => {
                 let sink = map.get_sink(id)?;
@@ -501,18 +718,22 @@ impl<'a> ResolvedTaintSinkKind<'a> {
                 Self::ExternalCall(&sink.display)
             }
 
-            USink::Field(id) => {
+            USink::ExternalField(id) => {
                 let sink = map.get_sink(id)?;
-                Self::Field(&sink.display)
+                Self::ExternalField(&sink.display)
             }
         })
     }
 }
 
 #[derive(Serialize, Debug)]
-pub struct ResolvedTaintSink<'a> {
-    pub sink: ResolvedTaintSinkKind<'a>,
+pub struct ResolvedNode<'a> {
+    pub id: NodeId,
+    pub sink: ResolvedTaintSink<'a>,
     pub in_method: &'a MethodSpecAndDisplay,
+    /// See [UnresolvedNode::parent]
+    pub parent: Option<NodeId>,
+    pub depth: u32,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -541,75 +762,6 @@ pub enum Filter {
 }
 
 impl Filter {
-    pub fn matches(&self, route: &ResolvedTaintRoute) -> bool {
-        match self {
-            // Can't match FTS5 against the route, it's only for database queries
-            Self::FTS5(_) => false,
-            Self::NoPhi => route.phis == 0,
-            Self::MinLength(len) => route.sinks.len() >= *len,
-            Self::MaxLength(len) => route.sinks.len() <= *len,
-
-            Self::FieldContains(needle) => route.sinks.iter().any(|sink| match sink.sink {
-                ResolvedTaintSinkKind::Phi
-                | ResolvedTaintSinkKind::Array
-                | ResolvedTaintSinkKind::Call(_)
-                | ResolvedTaintSinkKind::ExternalCall(_)
-                | ResolvedTaintSinkKind::Instruction(_) => false,
-                ResolvedTaintSinkKind::Field(f) => f
-                    .split_once("->")
-                    .is_some_and(|(_, field)| field.contains(needle)),
-            }),
-
-            Self::RetContains(needle) => route.sinks.iter().any(|sink| match sink.sink {
-                ResolvedTaintSinkKind::Phi
-                | ResolvedTaintSinkKind::Array
-                | ResolvedTaintSinkKind::Field(_)
-                | ResolvedTaintSinkKind::Instruction(_) => false,
-                ResolvedTaintSinkKind::Call(m) => m.spec.ret.as_str().contains(needle),
-                ResolvedTaintSinkKind::ExternalCall(s) => s
-                    .rsplit_once(')')
-                    .is_some_and(|(_, ret)| ret.contains(needle)),
-            }),
-
-            Self::SigContains(needle) => route.sinks.iter().any(|sink| match sink.sink {
-                ResolvedTaintSinkKind::Phi
-                | ResolvedTaintSinkKind::Array
-                | ResolvedTaintSinkKind::Field(_)
-                | ResolvedTaintSinkKind::Instruction(_) => false,
-                ResolvedTaintSinkKind::Call(m) => m.spec.signature.as_str().contains(needle),
-                ResolvedTaintSinkKind::ExternalCall(s) => {
-                    s.rsplit_once('(').is_some_and(|(_, rem)| {
-                        rem.split_once(')')
-                            .is_some_and(|(args, _)| args.contains(needle))
-                    })
-                }
-            }),
-
-            Self::MethodContains(needle) => route.sinks.iter().any(|sink| match sink.sink {
-                ResolvedTaintSinkKind::Phi
-                | ResolvedTaintSinkKind::Array
-                | ResolvedTaintSinkKind::Field(_)
-                | ResolvedTaintSinkKind::Instruction(_) => false,
-                ResolvedTaintSinkKind::Call(m) => m.spec.name.as_str().contains(needle),
-                ResolvedTaintSinkKind::ExternalCall(s) => {
-                    s.split_once("->").is_some_and(|(_, rem)| {
-                        rem.split_once('(')
-                            .is_some_and(|(method, _)| method.contains(needle))
-                    })
-                }
-            }),
-            Self::ClassContains(needle) => route.sinks.iter().any(|sink| match sink.sink {
-                ResolvedTaintSinkKind::Phi
-                | ResolvedTaintSinkKind::Array
-                | ResolvedTaintSinkKind::Instruction(_) => false,
-                ResolvedTaintSinkKind::Call(m) => m.spec.class.as_str().contains(needle),
-                ResolvedTaintSinkKind::ExternalCall(s) | ResolvedTaintSinkKind::Field(s) => s
-                    .split_once("->")
-                    .is_some_and(|(cls, _)| cls.contains(needle)),
-            }),
-        }
-    }
-
     fn parse_len(param: &str, value: Option<&str>) -> anyhow::Result<usize> {
         let parsed = value
             .ok_or_else(|| anyhow::Error::msg(format!("need a value for {param}")))
@@ -672,14 +824,13 @@ impl FromStr for Filter {
 
 impl UnresolvedTaintSink {
     pub fn resolve<'a>(&self, map: &'a ReportIdMap) -> Result<ResolvedTaintSink<'a>, ResolveError> {
-        let in_method = map.get_method(self.in_method)?;
-        let sink = ResolvedTaintSinkKind::resolve(self.sink, map)?;
-        Ok(ResolvedTaintSink { sink, in_method })
+        ResolvedTaintSink::resolve(*self, map)
     }
 }
 
-pub struct UnresolvedTaintRoutes {
-    pub routes: Vec<UnresolvedTaintRoute>,
+/// A collection of all graphs reachable via some taint source
+pub struct UnresolvedTaintGraphs {
+    pub graphs: Vec<UnresolvedTaintGraph>,
     /// If this is [UnresolvedOrigin::CallGraph], it is the chains until the start method. This
     /// happens when the taint analysis was run with seeding. Note that this is multi dimensional
     /// because there can be multiple paths to the analyzed method. This list is complete as far as
@@ -687,180 +838,284 @@ pub struct UnresolvedTaintRoutes {
     pub origin: UnresolvedOrigin,
 }
 
-impl Deref for UnresolvedTaintRoutes {
-    type Target = Vec<UnresolvedTaintRoute>;
+impl Deref for UnresolvedTaintGraphs {
+    type Target = Vec<UnresolvedTaintGraph>;
     fn deref(&self) -> &Self::Target {
-        &self.routes
+        &self.graphs
     }
 }
 
-/// The taint routes in a report completely unresolved; use a [ReportIdMap] to resolve as needed or
-/// use [Self::resolve] to resolve it.
-pub struct UnresolvedTaintRoute {
-    pub id: RouteId,
-    pub incomplete: bool,
-    pub phis: usize,
-    pub source: TaintSourceId,
-    pub sinks: Vec<UnresolvedTaintSink>,
+/// One node reached by tainted data, completely unresolved
+pub struct UnresolvedNode {
+    pub id: NodeId,
+    pub location: MethodId,
+    pub sink: UnresolvedTaintSink,
+    /// The node this one was first discovered from, `None` for the entry node.
+    ///
+    /// This is a convenience for laying the graph out as a tree. It is one incoming edge out of
+    /// however many there are: [UnresolvedTaintGraph::edges] is the authoritative structure.
+    pub parent: Option<NodeId>,
+    /// Distance from the entry node along the discovery path, see [Self::parent]
+    pub depth: u32,
 }
 
-#[derive(Serialize, Debug)]
-pub struct ResolvedTaintRoute<'a> {
-    pub id: RouteId,
-    pub incomplete: bool,
-    pub phis: usize,
-    pub source: &'a TaintSourceAndDisplay,
-    pub sinks: Vec<ResolvedTaintSink<'a>>,
-}
-
-impl<'a> ResolvedTaintRoute<'a> {
-    fn resolve(
-        unresolved: &UnresolvedTaintRoute,
-        map: &'a ReportIdMap,
-    ) -> Result<Self, ResolveError> {
-        let UnresolvedTaintRoute {
-            id,
-            incomplete,
-            phis,
-            sinks,
-            source,
-        } = unresolved;
-
-        let source = map.get_source(*source)?;
-
-        let mut resolved_sinks = Vec::with_capacity(sinks.len());
-
-        for sink in sinks {
-            let resolved = sink.resolve(map)?;
-            resolved_sinks.push(resolved);
-        }
-
-        Ok(ResolvedTaintRoute {
-            id: *id,
-            incomplete: *incomplete,
-            phis: *phis,
-            source,
-            sinks: resolved_sinks,
+impl UnresolvedNode {
+    fn resolve<'a>(&self, map: &'a ReportIdMap) -> Result<ResolvedNode<'a>, ResolveError> {
+        Ok(ResolvedNode {
+            id: self.id,
+            sink: self.sink.resolve(map)?,
+            in_method: map.get_method(self.location)?,
+            parent: self.parent,
+            depth: self.depth,
         })
     }
 }
 
-impl UnresolvedTaintRoute {
+/// One taint graph in a report completely unresolved; use a [ReportIdMap] to resolve as needed or
+/// use [Self::resolve] to resolve it.
+///
+/// The graph is given as its complete node and edge sets rather than as a tree. A tree can only
+/// hold one incoming edge per node, and roughly a tenth of these nodes are reached more than one
+/// way, which is usually the interesting part: data arriving from `getData` is not the same
+/// finding as the same data arriving from `getStringExtra`.
+pub struct UnresolvedTaintGraph {
+    pub id: SubgraphId,
+    pub source: TaintSourceId,
+    pub entry: NodeId,
+    pub nodes: Vec<UnresolvedNode>,
+    /// Every edge in the graph, including the ones no tree could express
+    pub edges: Vec<(NodeId, NodeId)>,
+}
+
+impl UnresolvedTaintGraph {
+    /// How many of this graph's nodes are [UnresolvedTaintSink::Phi]
+    pub fn phis(&self) -> usize {
+        self.nodes
+            .iter()
+            .filter(|it| matches!(it.sink, UnresolvedTaintSink::Phi))
+            .count()
+    }
+}
+
+#[derive(Serialize, Debug)]
+pub struct ResolvedTaintGraph<'a> {
+    pub id: SubgraphId,
+    pub source: &'a TaintSourceAndDisplay,
+    pub entry: NodeId,
+    pub nodes: Vec<ResolvedNode<'a>>,
+    /// Every edge in the graph, see [UnresolvedTaintGraph::edges]
+    pub edges: Vec<(NodeId, NodeId)>,
+}
+
+impl<'a> ResolvedTaintGraph<'a> {
+    /// How many of this graph's nodes are [ResolvedTaintSink::Phi]
+    pub fn phis(&self) -> usize {
+        self.nodes
+            .iter()
+            .filter(|it| matches!(it.sink, ResolvedTaintSink::Phi))
+            .count()
+    }
+
+    fn resolve(
+        unresolved: &UnresolvedTaintGraph,
+        map: &'a ReportIdMap,
+    ) -> Result<Self, ResolveError> {
+        let mut nodes = Vec::with_capacity(unresolved.nodes.len());
+        for node in &unresolved.nodes {
+            nodes.push(node.resolve(map)?);
+        }
+
+        Ok(ResolvedTaintGraph {
+            id: unresolved.id,
+            source: map.get_source(unresolved.source)?,
+            entry: unresolved.entry,
+            nodes,
+            edges: unresolved.edges.clone(),
+        })
+    }
+}
+
+impl UnresolvedTaintGraph {
     pub fn resolve<'a>(
         &self,
         map: &'a ReportIdMap,
-    ) -> Result<ResolvedTaintRoute<'a>, ResolveError> {
-        ResolvedTaintRoute::resolve(self, map)
+    ) -> Result<ResolvedTaintGraph<'a>, ResolveError> {
+        ResolvedTaintGraph::resolve(self, map)
     }
 }
 
 #[derive(Yokeable)]
-pub struct ResolvedTaintRoutes<'a> {
-    pub routes: Vec<ResolvedTaintRoute<'a>>,
-    pub origin: ResolvedOrigin<'a>,
+pub struct ResolvedTaintGraphs<'a> {
+    pub graphs: Vec<ResolvedTaintGraph<'a>>,
+    pub origin: ResolvedOrigin,
 }
 
-impl<'a> Deref for ResolvedTaintRoutes<'a> {
-    type Target = Vec<ResolvedTaintRoute<'a>>;
+impl<'a> Deref for ResolvedTaintGraphs<'a> {
+    type Target = Vec<ResolvedTaintGraph<'a>>;
     fn deref(&self) -> &Self::Target {
-        &self.routes
+        &self.graphs
     }
 }
 
-pub struct YokedResolvedTaintRoutes(yoke::Yoke<ResolvedTaintRoutes<'static>, Rc<ReportIdMap>>);
+pub struct YokedResolvedTaintGraphs(yoke::Yoke<ResolvedTaintGraphs<'static>, Rc<ReportIdMap>>);
 
-impl Container for YokedResolvedTaintRoutes {
-    type Item<'a> = ResolvedTaintRoute<'a>;
+impl Container for YokedResolvedTaintGraphs {
+    type Item<'a> = ResolvedTaintGraph<'a>;
     fn len(&self) -> usize {
         self.0.get().len()
     }
     fn get_item<'a>(&'a self, index: usize) -> &'a Self::Item<'a> {
-        &self.0.get().routes[index]
+        &self.0.get().graphs[index]
     }
 }
 
-pub struct ResolvedTaintRoutesIter<'a> {
-    routes: &'a [ResolvedTaintRoute<'a>],
+pub struct ResolvedTaintGraphsIter<'a> {
+    graphs: &'a [ResolvedTaintGraph<'a>],
     at: usize,
 }
 
-impl<'a> Iterator for ResolvedTaintRoutesIter<'a> {
-    type Item = &'a ResolvedTaintRoute<'a>;
+impl<'a> Iterator for ResolvedTaintGraphsIter<'a> {
+    type Item = &'a ResolvedTaintGraph<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let route = self.routes.get(self.at)?;
+        let graph = self.graphs.get(self.at)?;
         self.at += 1;
-        Some(route)
+        Some(graph)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.routes.len() - self.at;
+        let remaining = self.graphs.len() - self.at;
         (remaining, Some(remaining))
     }
 }
 
-impl<'a> ExactSizeIterator for ResolvedTaintRoutesIter<'a> {}
+impl<'a> ExactSizeIterator for ResolvedTaintGraphsIter<'a> {}
 
-impl YokedResolvedTaintRoutes {
-    pub fn iter(&self) -> ResolvedTaintRoutesIter<'_> {
-        let routes = &self.0.get().routes;
-        ResolvedTaintRoutesIter { routes, at: 0 }
+impl YokedResolvedTaintGraphs {
+    pub fn iter(&self) -> ResolvedTaintGraphsIter<'_> {
+        let graphs = &self.0.get().graphs;
+        ResolvedTaintGraphsIter { graphs, at: 0 }
     }
 
-    pub fn get<'a>(&'a self) -> &'a ResolvedTaintRoutes<'a> {
+    pub fn get<'a>(&'a self) -> &'a ResolvedTaintGraphs<'a> {
         self.0.get()
     }
 }
 
-impl ResolvedTaintRoutes<'_> {
+impl ResolvedTaintGraphs<'_> {
     pub fn resolve<'a>(
-        routes: UnresolvedTaintRoutes,
+        graphs: UnresolvedTaintGraphs,
         map: &'a ReportIdMap,
-    ) -> Result<ResolvedTaintRoutes<'a>, ResolveError> {
+    ) -> Result<ResolvedTaintGraphs<'a>, ResolveError> {
         let mut resolved = Vec::new();
-        for route in routes.routes {
-            resolved.push(ResolvedTaintRoute::resolve(&route, map)?);
+        for graph in graphs.graphs {
+            resolved.push(ResolvedTaintGraph::resolve(&graph, map)?);
         }
 
-        let origin = match routes.origin {
+        let origin = match graphs.origin {
             UnresolvedOrigin::Direct => ResolvedOrigin::Direct,
-            UnresolvedOrigin::CallGraph {
-                chains: unresolved_chains,
-            } => {
-                let mut chains = Vec::new();
-                for chain in unresolved_chains {
-                    // Shouldn't happen, right?
-                    if chain.len() == 0 {
-                        continue;
-                    }
-                    let mut resolved_chain = Vec::new();
-                    for method in chain {
-                        let resolved = map.get_method(method)?;
-                        resolved_chain.push(resolved);
-                    }
-                    chains.push(resolved_chain);
-                }
-
-                ResolvedOrigin::CallGraph { chains }
-            }
+            UnresolvedOrigin::Indirect => ResolvedOrigin::Indirect,
         };
 
-        Ok(ResolvedTaintRoutes {
-            routes: resolved,
+        Ok(ResolvedTaintGraphs {
+            graphs: resolved,
             origin,
         })
     }
 
-    /// Resolve into a yoked [ResolvedTaintRoute] with the [ReportIdMap] attached as the cart. This
+    /// Resolve into a yoked [ResolvedTaintGraph] with the [ReportIdMap] attached as the cart. This
     /// takes ownership of the map, but the map can still be used via the cart.
     pub fn resolve_yoked(
-        routes: UnresolvedTaintRoutes,
+        graphs: UnresolvedTaintGraphs,
         map: ReportIdMap,
-    ) -> Result<YokedResolvedTaintRoutes, ResolveError> {
+    ) -> Result<YokedResolvedTaintGraphs, ResolveError> {
         let rc_map = Rc::new(map);
 
-        yoke::Yoke::try_attach_to_cart(rc_map, |map| Self::resolve(routes, map))
-            .map(YokedResolvedTaintRoutes)
+        yoke::Yoke::try_attach_to_cart(rc_map, |map| Self::resolve(graphs, map))
+            .map(YokedResolvedTaintGraphs)
+    }
+}
+
+/// One row produced by [GraphTaintAnalysisDb::nodes_for_analysis]: a node reachable from some
+/// graph's entry node, with just enough information to tell what it is
+#[derive(QueryableByName, Debug)]
+#[diesel(check_for_backend(Sqlite))]
+struct WalkedNode {
+    #[diesel(sql_type = Integer)]
+    location: i32,
+    #[diesel(sql_type = Text)]
+    kind: SinkKind,
+    #[diesel(sql_type = Nullable<Integer>)]
+    sink_id: Option<i32>,
+    /// Either `graph.methods.id` or `graph.class_fields.id`, depending on [Self::kind]
+    #[diesel(sql_type = Nullable<Integer>)]
+    graph_ref: Option<i32>,
+}
+
+/// One row of a graph's node tree, as walked from its entry node down through [edges]
+///
+/// `parent_id` is `None` only for the entry node of `graph_id`.
+#[derive(QueryableByName, Debug)]
+#[diesel(check_for_backend(Sqlite))]
+struct TreeNodeRow {
+    #[diesel(sql_type = Integer)]
+    graph_id: i32,
+    #[diesel(sql_type = Nullable<Integer>)]
+    parent_id: Option<i32>,
+    #[diesel(sql_type = Integer)]
+    node_id: i32,
+    #[diesel(sql_type = Integer)]
+    depth: i32,
+    #[diesel(sql_type = Integer)]
+    location: i32,
+    #[diesel(sql_type = Text)]
+    kind: SinkKind,
+    #[diesel(sql_type = Nullable<Integer>)]
+    sink_id: Option<i32>,
+    /// Either `graph.methods.id` or `graph.class_fields.id`, depending on [Self::kind]
+    #[diesel(sql_type = Nullable<Integer>)]
+    graph_ref: Option<i32>,
+}
+
+/// One edge between two nodes of the same graph
+#[derive(QueryableByName, Debug)]
+#[diesel(check_for_backend(Sqlite))]
+struct GraphEdgeRow {
+    #[diesel(sql_type = Integer)]
+    graph_id: i32,
+    #[diesel(sql_type = Integer)]
+    src: i32,
+    #[diesel(sql_type = Integer)]
+    dst: i32,
+}
+
+impl TreeNodeRow {
+    /// The [UnresolvedTaintSink] this row's `kind` names
+    fn sink(&self) -> anyhow::Result<UnresolvedTaintSink> {
+        Ok(match self.kind {
+            SinkKind::Phi => UnresolvedTaintSink::Phi,
+            SinkKind::Array => UnresolvedTaintSink::Array,
+            SinkKind::Call => match self.graph_ref {
+                None => bail!("BUG! graph_id NULL for call kind!"),
+                Some(v) => UnresolvedTaintSink::Call(v.into()),
+            },
+            SinkKind::Field => match self.graph_ref {
+                None => bail!("BUG! graph_id NULL for field kind!"),
+                Some(v) => UnresolvedTaintSink::Field(v.into()),
+            },
+            SinkKind::Instruction => match self.sink_id {
+                None => bail!("BUG! sink_id NULL for instr kind!"),
+                Some(v) => UnresolvedTaintSink::Instruction(v.into()),
+            },
+            SinkKind::ExternalCall => match self.sink_id {
+                None => bail!("BUG! sink_id NULL for ext-call kind!"),
+                Some(v) => UnresolvedTaintSink::ExternalCall(v.into()),
+            },
+            SinkKind::ExternalField => match self.sink_id {
+                None => bail!("BUG! sink_id NULL for ext-field kind!"),
+                Some(v) => UnresolvedTaintSink::ExternalField(v.into()),
+            },
+        })
     }
 }
 
@@ -980,11 +1235,14 @@ impl GraphTaintAnalysisDb {
         format!("\"{}\"", s.replace('"', "\"\""))
     }
 
-    fn get_analysis_matching_fts5(
-        &self,
+    /// Collect the text-search and shape filters shared by the matching queries below
+    ///
+    /// Returns the FTS5 match expressions (already formatted per-column) plus the no-phi/length
+    /// filters. Bails if a text filter is used without FTS5 support.
+    fn collect_filters(
         filters: &[Filter],
-        filter_fields: bool,
-    ) -> anyhow::Result<Vec<AnalyzedMethodId>> {
+        text_search_allowed: bool,
+    ) -> anyhow::Result<(Vec<String>, bool, Option<usize>, Option<usize>)> {
         let mut seen_kinds = HashSet::new();
         let mut fts5_queries = Vec::new();
         let mut no_phi = false;
@@ -996,37 +1254,47 @@ impl GraphTaintAnalysisDb {
                 continue;
             }
             match filter {
-                Filter::FTS5(s) => {
-                    fts5_queries.push(Self::quote_fts5(s));
-                }
+                Filter::NoPhi => no_phi = true,
+                Filter::MinLength(len) => min_length = Some(*len),
+                Filter::MaxLength(len) => max_length = Some(*len),
+                _ if !text_search_allowed => bail!("text search requires FTS5"),
+                Filter::FTS5(s) => fts5_queries.push(Self::quote_fts5(s)),
                 Filter::SigContains(s) => {
-                    fts5_queries.push(format!("args:{}", Self::quote_fts5(s)));
+                    fts5_queries.push(format!("args:{}", Self::quote_fts5(s)))
                 }
                 Filter::ClassContains(s) => {
-                    fts5_queries.push(format!("class:{}", Self::quote_fts5(s)));
+                    fts5_queries.push(format!("class:{}", Self::quote_fts5(s)))
                 }
                 Filter::MethodContains(s) | Filter::FieldContains(s) => {
-                    fts5_queries.push(format!("name:{}", Self::quote_fts5(s)));
+                    fts5_queries.push(format!("name:{}", Self::quote_fts5(s)))
                 }
-                Filter::RetContains(s) => {
-                    fts5_queries.push(format!("ret:{}", Self::quote_fts5(s)));
-                }
-                Filter::NoPhi => {
-                    no_phi = true;
-                }
-                Filter::MinLength(len) => {
-                    min_length = Some(*len);
-                }
-                Filter::MaxLength(len) => {
-                    max_length = Some(*len);
-                }
+                Filter::RetContains(s) => fts5_queries.push(format!("ret:{}", Self::quote_fts5(s))),
             }
         }
+
+        Ok((fts5_queries, no_phi, min_length, max_length))
+    }
+
+    fn get_analysis_matching_fts5(
+        &self,
+        filters: &[Filter],
+        filter_fields: bool,
+    ) -> anyhow::Result<Vec<AnalyzedMethodId>> {
+        let (fts5_queries, no_phi, min_length, max_length) = Self::collect_filters(filters, true)?;
 
         let kind_condition = if filter_fields {
             "sink_filters.kind = 'field'"
         } else {
             "sink_filters.kind != 'field'"
+        };
+
+        // Only reach for graph_metadata when a filter actually reads it. It is written per
+        // completed analysis, so a graph without a row would otherwise be dropped by the join
+        // even when the text match found it.
+        let metadata_join = if no_phi || min_length.is_some() || max_length.is_some() {
+            "INNER JOIN graph_metadata ON graph_metadata.graph = t.graph"
+        } else {
+            ""
         };
 
         let fts_condition = if fts5_queries.is_empty() {
@@ -1036,48 +1304,31 @@ impl GraphTaintAnalysisDb {
         };
 
         let no_phi_condition = if no_phi {
-            "AND routes.phi_count = 0"
+            "AND graph_metadata.nphi = 0"
         } else {
             ""
         };
-
         let min_length_condition = if min_length.is_some() {
-            r#"
-        AND (
-            SELECT COUNT(*)
-            FROM sinks AS min_sinks
-            WHERE min_sinks.route = routes.id
-        ) >= ?
-        "#
+            "AND graph_metadata.depth >= ?"
         } else {
             ""
         };
-
         let max_length_condition = if max_length.is_some() {
-            r#"
-        AND (
-            SELECT COUNT(*)
-            FROM sinks AS max_sinks
-            WHERE max_sinks.route = routes.id
-        ) < ?
-        "#
+            "AND graph_metadata.depth <= ?"
         } else {
             ""
         };
 
         let sql = format!(
-            r#"
-        SELECT DISTINCT taint_sources.analyzed_method AS id
-        FROM sink_filters_fts
+            r#"SELECT DISTINCT graphs.analyzed_method AS id
+        FROM reachable_nodes AS t
+        INNER JOIN graphs
+            ON graphs.id = t.graph
+        {metadata_join}
         INNER JOIN sink_filters
-            ON sink_filters.rowid = sink_filters_fts.rowid
-        INNER JOIN sinks
-            ON sinks.route = sink_filters.route
-           AND sinks.idx = sink_filters.idx
-        INNER JOIN routes
-            ON routes.id = sinks.route
-        INNER JOIN taint_sources
-            ON taint_sources.id = routes.source
+            ON sink_filters.node = t.node
+        INNER JOIN sink_filters_fts
+            ON sink_filters_fts.rowid = sink_filters.id
         WHERE {kind_condition}
         {fts_condition}
         {no_phi_condition}
@@ -1107,67 +1358,57 @@ impl GraphTaintAnalysisDb {
         &self,
         filters: &[Filter],
     ) -> anyhow::Result<Vec<AnalyzedMethodId>> {
-        let mut query = analyzed_methods::table
-            .select(analyzed_methods::id)
-            .into_boxed();
+        let (_, no_phi, min_length, max_length) = Self::collect_filters(filters, false)?;
 
-        let mut seen_kinds = HashSet::new();
+        let no_phi_condition = if no_phi {
+            "AND EXISTS (SELECT 1 FROM graph_metadata AS gm WHERE gm.analyzed_method = am.id AND gm.nphi = 0)"
+        } else {
+            ""
+        };
+        let min_length_condition = if min_length.is_some() {
+            "AND EXISTS (SELECT 1 FROM graph_metadata AS gm WHERE gm.analyzed_method = am.id AND gm.depth >= ?)"
+        } else {
+            ""
+        };
+        let max_length_condition = if max_length.is_some() {
+            "AND EXISTS (SELECT 1 FROM graph_metadata AS gm WHERE gm.analyzed_method = am.id AND gm.depth <= ?)"
+        } else {
+            ""
+        };
 
-        for filter in filters {
-            if !seen_kinds.insert(discriminant(filter)) {
-                continue;
-            }
+        let sql = format!(
+            r#"SELECT am.id AS id
+        FROM analyzed_methods am
+        WHERE true
+        {no_phi_condition}
+        {min_length_condition}
+        {max_length_condition}
+        "#
+        );
 
-            match filter {
-                Filter::NoPhi => {
-                    query = query.filter(diesel::dsl::exists(
-                        taint_sources::table
-                            .inner_join(routes::table.on(routes::source.eq(taint_sources::id)))
-                            .filter(taint_sources::analyzed_method.eq(analyzed_methods::id))
-                            .filter(routes::phi_count.eq(0)),
-                    ));
-                }
-                Filter::MinLength(len) => {
-                    query = query.filter(diesel::dsl::exists(
-                        taint_sources::table
-                            .inner_join(routes::table.on(routes::source.eq(taint_sources::id)))
-                            .inner_join(sinks::table.on(sinks::route.eq(routes::id)))
-                            .filter(taint_sources::analyzed_method.eq(analyzed_methods::id))
-                            .group_by(routes::id)
-                            .having(diesel::dsl::count(sinks::idx).ge(*len as i64)),
-                    ));
-                }
-                Filter::MaxLength(len) => {
-                    query = query.filter(diesel::dsl::exists(
-                        taint_sources::table
-                            .inner_join(routes::table.on(routes::source.eq(taint_sources::id)))
-                            .inner_join(sinks::table.on(sinks::route.eq(routes::id)))
-                            .filter(taint_sources::analyzed_method.eq(analyzed_methods::id))
-                            .group_by(routes::id)
-                            .having(diesel::dsl::count(sinks::idx).lt(*len as i64)),
-                    ));
-                }
-                _ => bail!("text search requires FTS5"),
-            }
+        let mut query = sql_query(sql).into_boxed();
+
+        if let Some(len) = min_length {
+            query = query.bind::<Integer, _>(len as i32);
         }
 
-        Ok(self.query(|c| query!(query).get_results(c))?)
+        if let Some(len) = max_length {
+            query = query.bind::<Integer, _>(len as i32);
+        }
+
+        Ok(self.query(|c| query!(query).get_results::<AnalyzedMethodId>(c))?)
     }
 
-    pub fn get_routes_matching(
+    pub fn get_graphs_matching(
         &self,
         analysis_id: AnalyzedMethodId,
         filters: &[Filter],
-    ) -> anyhow::Result<Vec<RouteId>> {
-        // See comments above analysis IDs
-
+    ) -> anyhow::Result<Vec<SubgraphId>> {
         if filters.len() == 0 {
             return Ok(self.query(|c| {
-                query!(analyzed_methods::table
-                    .inner_join(taint_sources::table)
-                    .inner_join(routes::table.on(routes::source.eq(taint_sources::id)))
-                    .select(routes::id)
-                    .filter(analyzed_methods::id.eq(analysis_id)))
+                query!(graphs::table
+                    .select(graphs::id)
+                    .filter(graphs::analyzed_method.eq(analysis_id)))
                 .get_results(c)
             })?);
         }
@@ -1191,61 +1432,32 @@ impl GraphTaintAnalysisDb {
         let fts5 = self.db.db.check_fts5();
 
         if fts5 {
-            return self.get_routes_matching_fts5(analysis_id, filters, filter_fields);
+            return self.get_graphs_matching_fts5(analysis_id, filters, filter_fields);
         }
-        self.get_routes_matching_no_fts5(analysis_id, filters)
+        self.get_graphs_matching_no_fts5(analysis_id, filters)
     }
 
-    fn get_routes_matching_fts5(
+    fn get_graphs_matching_fts5(
         &self,
         analysis_id: AnalyzedMethodId,
         filters: &[Filter],
         filter_fields: bool,
-    ) -> anyhow::Result<Vec<RouteId>> {
-        let mut seen_kinds = HashSet::new();
-
-        let mut fts5_queries = Vec::new();
-        let mut no_phi = false;
-        let mut min_length = None;
-        let mut max_length = None;
-
-        for filter in filters {
-            if !seen_kinds.insert(discriminant(filter)) {
-                continue;
-            }
-
-            match filter {
-                Filter::FTS5(s) => {
-                    fts5_queries.push(Self::quote_fts5(s));
-                }
-                Filter::SigContains(s) => {
-                    fts5_queries.push(format!("args:{}", Self::quote_fts5(s)));
-                }
-                Filter::ClassContains(s) => {
-                    fts5_queries.push(format!("class:{}", Self::quote_fts5(s)));
-                }
-                Filter::MethodContains(s) | Filter::FieldContains(s) => {
-                    fts5_queries.push(format!("name:{}", Self::quote_fts5(s)));
-                }
-                Filter::RetContains(s) => {
-                    fts5_queries.push(format!("ret:{}", Self::quote_fts5(s)));
-                }
-                Filter::NoPhi => {
-                    no_phi = true;
-                }
-                Filter::MinLength(len) => {
-                    min_length = Some(*len);
-                }
-                Filter::MaxLength(len) => {
-                    max_length = Some(*len);
-                }
-            }
-        }
+    ) -> anyhow::Result<Vec<SubgraphId>> {
+        let (fts5_queries, no_phi, min_length, max_length) = Self::collect_filters(filters, true)?;
 
         let kind_condition = if filter_fields {
             "sink_filters.kind = 'field'"
         } else {
             "sink_filters.kind != 'field'"
+        };
+
+        // Only reach for graph_metadata when a filter actually reads it. It is written per
+        // completed analysis, so a graph without a row would otherwise be dropped by the join
+        // even when the text match found it.
+        let metadata_join = if no_phi || min_length.is_some() || max_length.is_some() {
+            "INNER JOIN graph_metadata ON graph_metadata.graph = t.graph"
+        } else {
+            ""
         };
 
         let fts_condition = if fts5_queries.is_empty() {
@@ -1255,49 +1467,32 @@ impl GraphTaintAnalysisDb {
         };
 
         let no_phi_condition = if no_phi {
-            "AND routes.phi_count = 0"
+            "AND graph_metadata.nphi = 0"
         } else {
             ""
         };
-
         let min_length_condition = if min_length.is_some() {
-            r#"
-        AND (
-            SELECT COUNT(*)
-            FROM sinks AS min_sinks
-            WHERE min_sinks.route = routes.id
-        ) >= ?
-        "#
+            "AND graph_metadata.depth >= ?"
         } else {
             ""
         };
-
         let max_length_condition = if max_length.is_some() {
-            r#"
-        AND (
-            SELECT COUNT(*)
-            FROM sinks AS max_sinks
-            WHERE max_sinks.route = routes.id
-        ) < ?
-        "#
+            "AND graph_metadata.depth <= ?"
         } else {
             ""
         };
 
         let sql = format!(
-            r#"
-        SELECT DISTINCT routes.id AS id
-        FROM sink_filters_fts
+            r#"SELECT DISTINCT t.graph AS id
+        FROM reachable_nodes AS t
+        INNER JOIN graphs
+            ON graphs.id = t.graph
+        {metadata_join}
         INNER JOIN sink_filters
-            ON sink_filters.rowid = sink_filters_fts.rowid
-        INNER JOIN sinks
-            ON sinks.route = sink_filters.route
-           AND sinks.idx = sink_filters.idx
-        INNER JOIN routes
-            ON routes.id = sinks.route
-        INNER JOIN taint_sources
-            ON taint_sources.id = routes.source
-        WHERE taint_sources.analyzed_method = ?
+            ON sink_filters.node = t.node
+        INNER JOIN sink_filters_fts
+            ON sink_filters_fts.rowid = sink_filters.id
+        WHERE graphs.analyzed_method = ?
           AND {kind_condition}
           {fts_condition}
           {no_phi_condition}
@@ -1322,53 +1517,51 @@ impl GraphTaintAnalysisDb {
             query = query.bind::<Integer, _>(len as i32);
         }
 
-        Ok(self.query(|conn| query!(query).get_results::<RouteId>(conn))?)
+        Ok(self.query(|conn| query!(query).get_results::<SubgraphId>(conn))?)
     }
 
-    fn get_routes_matching_no_fts5(
+    fn get_graphs_matching_no_fts5(
         &self,
         analysis_id: AnalyzedMethodId,
         filters: &[Filter],
-    ) -> anyhow::Result<Vec<RouteId>> {
-        let mut query = analyzed_methods::table
-            .inner_join(taint_sources::table)
-            .inner_join(routes::table.on(routes::source.eq(taint_sources::id)))
-            .select(routes::id)
-            .filter(analyzed_methods::id.eq(analysis_id))
-            .into_boxed();
+    ) -> anyhow::Result<Vec<SubgraphId>> {
+        let (_, no_phi, min_length, max_length) = Self::collect_filters(filters, false)?;
 
-        let mut seen_kinds = HashSet::new();
+        let no_phi_condition = if no_phi { "AND gm.nphi = 0" } else { "" };
+        let min_length_condition = if min_length.is_some() {
+            "AND gm.depth >= ?"
+        } else {
+            ""
+        };
+        let max_length_condition = if max_length.is_some() {
+            "AND gm.depth <= ?"
+        } else {
+            ""
+        };
 
-        for filter in filters {
-            if !seen_kinds.insert(discriminant(filter)) {
-                continue;
-            }
+        let sql = format!(
+            r#"SELECT gm.graph AS id
+        FROM graph_metadata AS gm
+        WHERE gm.analyzed_method = ?
+        {no_phi_condition}
+        {min_length_condition}
+        {max_length_condition}
+        "#
+        );
 
-            match filter {
-                Filter::NoPhi => {
-                    query = query.filter(routes::phi_count.eq(0));
-                }
-                Filter::MinLength(len) => {
-                    query = query.filter(diesel::dsl::exists(
-                        sinks::table
-                            .filter(sinks::route.eq(routes::id))
-                            .group_by(sinks::route)
-                            .having(diesel::dsl::count(sinks::idx).ge(*len as i64)),
-                    ));
-                }
-                Filter::MaxLength(len) => {
-                    query = query.filter(diesel::dsl::exists(
-                        sinks::table
-                            .filter(sinks::route.eq(routes::id))
-                            .group_by(sinks::route)
-                            .having(diesel::dsl::count(sinks::idx).lt(*len as i64)),
-                    ));
-                }
-                _ => bail!("text search requires FTS5"),
-            }
+        let mut query = sql_query(sql).into_boxed();
+
+        query = query.bind::<Integer, _>(analysis_id.raw());
+
+        if let Some(len) = min_length {
+            query = query.bind::<Integer, _>(len as i32);
         }
 
-        Ok(self.query(|c| query!(query).get_results(c))?)
+        if let Some(len) = max_length {
+            query = query.bind::<Integer, _>(len as i32);
+        }
+
+        Ok(self.query(|c| query!(query).get_results::<SubgraphId>(c))?)
     }
 
     /// Get the [AnalyzedMethod] for the given [AnalyzedMethodId]
@@ -1401,6 +1594,37 @@ impl GraphTaintAnalysisDb {
         })
     }
 
+    /// Every node reached by tainted data for `id`, or every node in the database if `id` is
+    /// `None`
+    ///
+    /// A node has no column naming its owning graph, so membership comes from [reachable_nodes],
+    /// which records every node reachable from each graph's entry node.
+    fn nodes_for_analysis(&self, id: Option<AnalyzedMethodId>) -> db::Result<Vec<WalkedNode>> {
+        let root_filter = if id.is_some() {
+            "WHERE g.analyzed_method = ?"
+        } else {
+            ""
+        };
+
+        let sql = format!(
+            r#"
+        SELECT DISTINCT rn.location AS location, n.kind AS kind, n.sink_id AS sink_id,
+               n.graph_id AS graph_ref
+        FROM reachable_nodes AS rn
+        INNER JOIN graphs g ON g.id = rn.graph
+        INNER JOIN nodes n ON n.id = rn.node
+        {root_filter}
+        "#
+        );
+
+        let mut query = sql_query(sql).into_boxed();
+        if let Some(id) = id {
+            query = query.bind::<Integer, _>(id.raw());
+        }
+
+        self.query(|c| query!(query).get_results::<WalkedNode>(c))
+    }
+
     fn get_sources_map(
         &self,
         ana: Option<&AnalyzedMethod>,
@@ -1413,9 +1637,12 @@ impl GraphTaintAnalysisDb {
 
                 map.extend(
                     query!(source_params::table
-                        .inner_join(taint_sources::table)
+                        .inner_join(
+                            taint_sources::table.on(taint_sources::source_id.eq(source_params::id))
+                        )
+                        .inner_join(graphs::table.on(graphs::source.eq(taint_sources::id)))
                         .filter(taint_sources::kind.eq(SourceKind::Param))
-                        .filter(OptionalId::new(taint_sources::analyzed_method, id))
+                        .filter(OptionalId::new(graphs::analyzed_method, id))
                         .select((taint_sources::id, source_params::register))
                         .distinct())
                     .get_results::<(TaintSourceId, i32)>(c)?
@@ -1435,9 +1662,12 @@ impl GraphTaintAnalysisDb {
 
                 map.extend(
                     query!(source_fields::table
-                        .inner_join(taint_sources::table)
+                        .inner_join(
+                            taint_sources::table.on(taint_sources::source_id.eq(source_fields::id))
+                        )
+                        .inner_join(graphs::table.on(graphs::source.eq(taint_sources::id)))
                         .filter(taint_sources::kind.eq(SourceKind::Field))
-                        .filter(OptionalId::new(taint_sources::analyzed_method, id))
+                        .filter(OptionalId::new(graphs::analyzed_method, id))
                         .select((taint_sources::id, source_fields::class, source_fields::name))
                         .distinct())
                     .get_results::<(TaintSourceId, ClassName, String)>(c)?
@@ -1456,9 +1686,12 @@ impl GraphTaintAnalysisDb {
 
                 map.extend(
                     query!(source_calls::table
-                        .inner_join(taint_sources::table)
+                        .inner_join(
+                            taint_sources::table.on(taint_sources::source_id.eq(source_calls::id))
+                        )
+                        .inner_join(graphs::table.on(graphs::source.eq(taint_sources::id)))
                         .filter(taint_sources::kind.eq(SourceKind::Call))
-                        .filter(OptionalId::new(taint_sources::analyzed_method, id))
+                        .filter(OptionalId::new(graphs::analyzed_method, id))
                         .select((
                             taint_sources::id,
                             source_calls::class,
@@ -1508,35 +1741,47 @@ impl GraphTaintAnalysisDb {
         ana: Option<&AnalyzedMethod>,
     ) -> db::Result<HashMap<SinkId, SinkDefAndDisplay>> {
         let id = ana.map(|it| it.id);
+        let rows = self.nodes_for_analysis(id)?;
 
-        self.query(|c| -> db::Result<HashMap<SinkId, SinkDefAndDisplay>> {
-            let mut map: HashMap<SinkId, SinkDefAndDisplay> = HashMap::new();
+        let mut ext_call_ids = HashSet::new();
+        let mut ext_field_ids = HashSet::new();
+        let mut instruction_ids = HashSet::new();
 
+        for row in &rows {
+            let Some(sink_id) = row.sink_id else {
+                continue;
+            };
+            match row.kind {
+                SinkKind::ExternalCall => _ = ext_call_ids.insert(sink_id),
+                SinkKind::ExternalField => _ = ext_field_ids.insert(sink_id),
+                SinkKind::Instruction => _ = instruction_ids.insert(sink_id),
+                SinkKind::Call | SinkKind::Field | SinkKind::Phi | SinkKind::Array => {}
+            }
+        }
+
+        let mut map = HashMap::new();
+
+        if !ext_call_ids.is_empty() {
+            let ids = Vec::from_iter(ext_call_ids);
             map.extend(
-                query!(analyzed_methods::table
-                    .inner_join(taint_sources::table)
-                    .inner_join(routes::table.on(routes::source.eq(taint_sources::id)))
-                    .inner_join(sinks::table.on(sinks::route.eq(routes::id)))
-                    .inner_join(
-                        external_sinks::table
-                            .on(external_sinks::id.eq(sinks::sink_id.assume_not_null())),
-                    )
-                    .filter(OptionalId::new(analyzed_methods::id, id))
-                    .filter(sinks::kind.eq(SinkKind::External))
-                    .select((
-                        external_sinks::id,
-                        external_sinks::class,
-                        external_sinks::name,
-                        external_sinks::signature,
-                    )))
-                .get_results::<(ExternalSinkId, ClassName, String, String)>(c)?
+                self.query(|c| {
+                    query!(external_call_sinks::table
+                        .filter(external_call_sinks::id.eq_any(&ids))
+                        .select((
+                            external_call_sinks::id,
+                            external_call_sinks::class,
+                            external_call_sinks::name,
+                            external_call_sinks::signature,
+                        )))
+                    .get_results::<(ExternalCallSinkId, ClassName, String, String)>(c)
+                })?
                 .into_iter()
                 .map(|(id, class, name, signature)| {
                     let display = format!("{class}->{name}({signature})");
                     (
-                        SinkId::External(id),
+                        SinkId::ExternalCall(id),
                         SinkDefAndDisplay {
-                            sink_def: SinkDef::External {
+                            sink_def: SinkDef::ExternalCall {
                                 class,
                                 name,
                                 signature,
@@ -1546,45 +1791,44 @@ impl GraphTaintAnalysisDb {
                     )
                 }),
             );
+        }
 
+        if !ext_field_ids.is_empty() {
+            let ids = Vec::from_iter(ext_field_ids);
             map.extend(
-                query!(analyzed_methods::table
-                    .inner_join(taint_sources::table)
-                    .inner_join(routes::table.on(routes::source.eq(taint_sources::id)))
-                    .inner_join(sinks::table.on(sinks::route.eq(routes::id)))
-                    .inner_join(
-                        field_sinks::table.on(field_sinks::id.eq(sinks::sink_id.assume_not_null())),
-                    )
-                    .filter(OptionalId::new(analyzed_methods::id, id))
-                    .filter(sinks::kind.eq(SinkKind::Field))
-                    .select((field_sinks::id, field_sinks::class, field_sinks::name)))
-                .get_results::<(FieldSinkId, ClassName, String)>(c)?
+                self.query(|c| {
+                    query!(external_field_sinks::table
+                        .filter(external_field_sinks::id.eq_any(&ids))
+                        .select((
+                            external_field_sinks::id,
+                            external_field_sinks::class,
+                            external_field_sinks::name,
+                        )))
+                    .get_results::<(ExternalFieldSinkId, ClassName, String)>(c)
+                })?
                 .into_iter()
                 .map(|(id, class, name)| {
                     let display = format!("{class}->{name}");
                     (
-                        SinkId::Field(id),
+                        SinkId::ExternalField(id),
                         SinkDefAndDisplay {
-                            sink_def: SinkDef::Field { class, name },
+                            sink_def: SinkDef::ExternalField { class, name },
                             display,
                         },
                     )
                 }),
             );
+        }
 
+        if !instruction_ids.is_empty() {
+            let ids = Vec::from_iter(instruction_ids);
             map.extend(
-                query!(analyzed_methods::table
-                    .inner_join(taint_sources::table)
-                    .inner_join(routes::table.on(routes::source.eq(taint_sources::id)))
-                    .inner_join(sinks::table.on(sinks::route.eq(routes::id)))
-                    .inner_join(
-                        instruction_sinks::table
-                            .on(instruction_sinks::id.eq(sinks::sink_id.assume_not_null())),
-                    )
-                    .filter(OptionalId::new(analyzed_methods::id, id))
-                    .filter(sinks::kind.eq(SinkKind::Instruction))
-                    .select((instruction_sinks::id, instruction_sinks::instruction)))
-                .get_results::<(InstructionSinkId, String)>(c)?
+                self.query(|c| {
+                    query!(instruction_sinks::table
+                        .filter(instruction_sinks::id.eq_any(&ids))
+                        .select((instruction_sinks::id, instruction_sinks::instruction)))
+                    .get_results::<(InstructionSinkId, String)>(c)
+                })?
                 .into_iter()
                 .map(|(id, ins)| {
                     let display = ins.clone();
@@ -1597,9 +1841,9 @@ impl GraphTaintAnalysisDb {
                     )
                 }),
             );
+        }
 
-            Ok(map)
-        })
+        Ok(map)
     }
 
     fn get_methods_map(
@@ -1609,58 +1853,87 @@ impl GraphTaintAnalysisDb {
         let id = ana.map(|it| it.id);
 
         // Grab every method referenced by this analyzed method. This includes:
-        //  - sinks.location
-        //  - sinks.sink_id when sink.kind = 'call'
-        //  - call_graph_chains.method
+        //  - reachable_nodes.location
+        //  - nodes.graph_id when the node's kind is 'call'
         //  - analyzed_methods.method
 
-        let all_methods = self.query(|c| {
+        let mut method_ids = HashSet::new();
+
+        for row in self.nodes_for_analysis(id)? {
+            method_ids.insert(row.location);
+            if row.kind == SinkKind::Call {
+                if let Some(method) = row.graph_ref {
+                    method_ids.insert(method);
+                }
+            }
+        }
+
+        method_ids.extend(
+            self.query(|c| {
+                query!(analyzed_methods::table
+                    .select(analyzed_methods::method)
+                    .filter(OptionalId::new(analyzed_methods::id, id))
+                    .distinct())
+                .get_results::<MethodId>(c)
+            })?
+            .into_iter()
+            .map(DatabaseId::id),
+        );
+
+        if method_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let ids = Vec::from_iter(method_ids);
+
+        let rows = self.query(|c| {
             query!(methods::table
-                .inner_join(call_graph_chains::table)
                 .inner_join(classes::table)
                 .inner_join(sources::table.on(sources::id.eq(classes::source)))
                 .select(MethodSpecRow::as_select())
-                .filter(OptionalId::new(call_graph_chains::analyzed_method, id))
-                .distinct()
-                .union(
-                    taint_sources::table
-                        .inner_join(routes::table)
-                        .inner_join(sinks::table.on(sinks::route.eq(routes::id)))
-                        .inner_join(methods::table.on(methods::id.eq(sinks::location)))
-                        .inner_join(classes::table.on(classes::id.eq(methods::class)))
-                        .inner_join(sources::table.on(sources::id.eq(classes::source)))
-                        .select(MethodSpecRow::as_select())
-                        .filter(OptionalId::new(taint_sources::analyzed_method, id))
-                )
-                .union(
-                    taint_sources::table
-                        .inner_join(routes::table)
-                        .inner_join(sinks::table.on(sinks::route.eq(routes::id)))
-                        .inner_join(
-                            methods::table.on(methods::id.eq(sinks::method_id.assume_not_null())),
-                        )
-                        .inner_join(classes::table.on(classes::id.eq(methods::class)))
-                        .inner_join(sources::table.on(sources::id.eq(classes::source)))
-                        .select(MethodSpecRow::as_select())
-                        .filter(OptionalId::new(taint_sources::analyzed_method, id))
-                        .filter(sinks::kind.eq(SinkKind::Call)),
-                )
-                .union(
-                    methods::table
-                        .inner_join(analyzed_methods::table)
-                        .inner_join(classes::table)
-                        .inner_join(sources::table.on(sources::id.eq(classes::source)))
-                        .select(MethodSpecRow::as_select())
-                        .filter(OptionalId::new(analyzed_methods::id, id))
-                        .limit(1)
-                ))
+                .filter(methods::id.eq_any(&ids)))
             .get_results::<MethodSpecRow>(c)
         })?;
 
-        Ok(HashMap::from_iter(all_methods.into_iter().map(|it| {
+        Ok(HashMap::from_iter(rows.into_iter().map(|it| {
             let spec = MethodSpec::from(it);
             let display = spec.as_smali();
             (spec.id, MethodSpecAndDisplay { spec, display })
+        })))
+    }
+
+    fn get_fields_map(
+        &self,
+        ana: Option<&AnalyzedMethod>,
+    ) -> db::Result<HashMap<FieldId, FieldSpecAndDisplay>> {
+        let id = ana.map(|it| it.id);
+
+        let field_ids: HashSet<i32> = self
+            .nodes_for_analysis(id)?
+            .into_iter()
+            .filter(|row| row.kind == SinkKind::Field)
+            .filter_map(|row| row.graph_ref)
+            .collect();
+
+        if field_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let ids = Vec::from_iter(field_ids);
+
+        let rows = self.query(|c| {
+            query!(class_fields::table
+                .inner_join(classes::table)
+                .inner_join(sources::table.on(sources::id.eq(classes::source)))
+                .select(FieldSpecRow::as_select())
+                .filter(class_fields::id.eq_any(&ids)))
+            .get_results::<FieldSpecRow>(c)
+        })?;
+
+        Ok(HashMap::from_iter(rows.into_iter().map(|it| {
+            let spec = FieldSpec::from(it);
+            let display = spec.to_string();
+            (spec.id, FieldSpecAndDisplay { spec, display })
         })))
     }
 
@@ -1671,6 +1944,12 @@ impl GraphTaintAnalysisDb {
     ) -> db::Result<ReportIdMap> {
         let methods = if select.includes_methods() {
             self.get_methods_map(ana).map(Some)?
+        } else {
+            None
+        };
+
+        let fields = if select.includes_fields() {
+            self.get_fields_map(ana).map(Some)?
         } else {
             None
         };
@@ -1689,6 +1968,7 @@ impl GraphTaintAnalysisDb {
 
         Ok(ReportIdMap {
             methods,
+            fields,
             sinks,
             sources,
         })
@@ -1709,157 +1989,143 @@ impl GraphTaintAnalysisDb {
         self._get_report_id_map(Some(ana), select)
     }
 
-    /// Get all [UnresolvedTaintRoute]s for the given analysis
+    /// Turn one graph's rows into its node set
+    fn build_nodes(rows: &[TreeNodeRow]) -> anyhow::Result<Vec<UnresolvedNode>> {
+        rows.iter()
+            .map(|row| {
+                Ok(UnresolvedNode {
+                    id: row.node_id.into(),
+                    location: row.location.into(),
+                    sink: row.sink()?,
+                    parent: row.parent_id.map(NodeId::from),
+                    depth: row.depth as u32,
+                })
+            })
+            .collect()
+    }
+
+    /// Get all [UnresolvedTaintGraph]s for the given analysis
     ///
-    /// To resolve all of the IDs, use a [ReportIdMap] with [ResolvedTaintRoutes::resolve]
-    pub fn get_routes_for_analysis(
+    /// To resolve all of the IDs, use a [ReportIdMap] with [ResolvedTaintGraphs::resolve]
+    pub fn get_graphs_for_analysis(
         &self,
         ana: &AnalyzedMethod,
-    ) -> anyhow::Result<UnresolvedTaintRoutes> {
-        let all_sinks = self.db.query(|c| {
-            query!(analyzed_methods::table
-                .inner_join(taint_sources::table)
-                .inner_join(routes::table.on(routes::source.eq(taint_sources::id)))
-                .inner_join(sinks::table.on(sinks::route.eq(routes::id)))
-                .filter(analyzed_methods::id.eq(ana.id))
-                .order_by(sinks::route)
-                .then_order_by(sinks::idx)
-                .select((
-                    taint_sources::id,
-                    routes::id,
-                    routes::incomplete,
-                    routes::phi_count,
-                    sinks::kind,
-                    sinks::sink_id,
-                    sinks::method_id,
-                    sinks::location,
-                    sinks::idx
-                )))
-            .get_results::<(
-                TaintSourceId,
-                RouteId,
-                bool,
-                i32,
-                SinkKind,
-                Option<i32>,
-                Option<MethodId>,
-                MethodId,
-                i32,
-            )>(c)
+    ) -> anyhow::Result<UnresolvedTaintGraphs> {
+        let graph_sources = self.db.query(|c| {
+            query!(graphs::table
+                .inner_join(
+                    analyzed_methods::table.on(analyzed_methods::id.eq(graphs::analyzed_method))
+                )
+                .select((graphs::id, graphs::source, graphs::entry_node))
+                .filter(graphs::analyzed_method.eq(ana.id))
+                .filter(analyzed_methods::status.eq(MethodStatus::Done)))
+            .get_results::<(SubgraphId, TaintSourceId, NodeId)>(c)
         })?;
 
         let origin = if ana.direct {
             UnresolvedOrigin::Direct
         } else {
-            let chains = self.get_chains_for_analysis(ana)?;
-            UnresolvedOrigin::CallGraph { chains }
+            UnresolvedOrigin::Indirect
         };
 
-        let mut routes = Vec::new();
+        if graph_sources.len() == 0 {
+            return Ok(UnresolvedTaintGraphs {
+                graphs: vec![],
+                origin,
+            });
+        }
 
-        for (taint_source, route_id, incomplete, phis, kind, sink_id, method_id, location, idx) in
-            all_sinks
-        {
-            let sink = match kind {
-                SinkKind::Call => match method_id {
-                    None => bail!("BUG! method_id NULL for call kind!"),
-                    Some(v) => UnresolvedTaintSinkKind::Call(v),
-                },
-                SinkKind::Phi => UnresolvedTaintSinkKind::Phi,
-                SinkKind::Array => UnresolvedTaintSinkKind::Array,
-                SinkKind::Field => match sink_id {
-                    None => bail!("BUG! sink_id NULL for field kind!"),
-                    Some(v) => UnresolvedTaintSinkKind::Field(v.into()),
-                },
-                SinkKind::Instruction => match sink_id {
-                    None => bail!("BUG! sink_id NULL for instruction kind!"),
-                    Some(v) => UnresolvedTaintSinkKind::Instruction(v.into()),
-                },
-                SinkKind::External => match sink_id {
-                    None => bail!("BUG! sink_id NULL for external kind!"),
-                    Some(v) => UnresolvedTaintSinkKind::ExternalCall(v.into()),
-                },
+        let sql = r#"
+        SELECT rn.graph AS graph_id,
+               rn.parent AS parent_id,
+               rn.node AS node_id,
+               rn.depth AS depth,
+               rn.location AS location,
+               n.kind AS kind,
+               n.sink_id AS sink_id,
+               n.graph_id AS graph_ref
+        FROM reachable_nodes AS rn
+        INNER JOIN graphs g
+            ON g.id = rn.graph
+        INNER JOIN nodes n 
+            ON n.id = rn.node
+        WHERE g.analyzed_method = ?
+        ORDER BY rn.graph, rn.depth, rn.node
+        "#;
+
+        let query = sql_query(sql).bind::<Integer, _>(ana.id.raw());
+        let rows = self
+            .db
+            .query(|c| query!(query).get_results::<TreeNodeRow>(c))?;
+
+        let mut rows_by_graph: HashMap<i32, Vec<TreeNodeRow>> = HashMap::new();
+        for row in rows {
+            rows_by_graph.entry(row.graph_id).or_default().push(row);
+        }
+
+        // Every edge between two nodes of the same graph
+        let edge_sql = r#"
+        SELECT rs.graph AS graph_id, e.src AS src, e.dst AS dst
+        FROM edges AS e
+        INNER JOIN reachable_nodes AS rs
+            ON rs.node = e.src
+        INNER JOIN reachable_nodes AS rd
+            ON rd.node = e.dst AND rd.graph = rs.graph
+        INNER JOIN graphs g
+            ON g.id = rs.graph
+        WHERE g.analyzed_method = ?
+        GROUP BY rs.graph, e.src, e.dst
+        "#;
+
+        let edge_query = sql_query(edge_sql).bind::<Integer, _>(ana.id.raw());
+        let edge_rows = self
+            .db
+            .query(|c| query!(edge_query).get_results::<GraphEdgeRow>(c))?;
+
+        let mut edges_by_graph: HashMap<i32, Vec<(NodeId, NodeId)>> = HashMap::new();
+        for row in edge_rows {
+            edges_by_graph
+                .entry(row.graph_id)
+                .or_default()
+                .push((row.src.into(), row.dst.into()));
+        }
+
+        let mut graphs = Vec::with_capacity(graph_sources.len());
+
+        for (id, source, entry) in graph_sources {
+            // Every done graph is materialised, so this should not happen. Skipping rather than
+            // failing keeps one anomaly from hiding every other graph in the analysis.
+            let Some(rows) = rows_by_graph.get(&id.raw()) else {
+                log::warn!("graph {id} has no materialised nodes, skipping it");
+                continue;
             };
 
-            let sink = UnresolvedTaintSink {
-                in_method: location,
-                sink,
-            };
-
-            if idx == 0 {
-                let new = UnresolvedTaintRoute {
-                    id: route_id,
-                    incomplete,
-                    source: taint_source,
-                    phis: phis as usize,
-                    sinks: vec![sink],
-                };
-                routes.push(new);
-            } else {
-                match routes.last_mut() {
-                    Some(v) => {
-                        v.sinks.push(sink);
-                    }
-                    None => {
-                        let new = UnresolvedTaintRoute {
-                            id: route_id,
-                            incomplete,
-                            source: taint_source,
-                            phis: phis as usize,
-                            sinks: vec![sink],
-                        };
-                        routes.push(new);
-                    }
-                }
-            }
+            graphs.push(UnresolvedTaintGraph {
+                id,
+                source,
+                entry,
+                nodes: Self::build_nodes(rows)?,
+                edges: edges_by_graph.remove(&id.raw()).unwrap_or_default(),
+            });
         }
 
-        Ok(UnresolvedTaintRoutes { routes, origin })
-    }
-
-    pub fn get_chains_for_analysis(&self, ana: &AnalyzedMethod) -> db::Result<Vec<Vec<MethodId>>> {
-        if ana.direct {
-            return Ok(Vec::new());
-        }
-        let results = self.query(|c| {
-            query!(call_graph_chains::table
-                .select((call_graph_chains::method, call_graph_chains::idx))
-                .filter(call_graph_chains::analyzed_method.eq(ana.id))
-                .order_by(call_graph_chains::chain)
-                .then_order_by(call_graph_chains::idx))
-            .get_results::<(MethodId, i32)>(c)
-        })?;
-
-        let mut chains = Vec::new();
-        for (method, idx) in results {
-            if idx == 0 {
-                chains.push(vec![method]);
-            } else {
-                let Some(chain) = chains.last_mut() else {
-                    chains.push(vec![method]);
-                    continue;
-                };
-                chain.push(method);
-            }
-        }
-
-        Ok(chains)
+        Ok(UnresolvedTaintGraphs { graphs, origin })
     }
 
     pub fn get_all_analyzed_method_specs(&self) -> db::Result<Vec<AnalyzedMethodSpec>> {
         #[derive(QueryableByName)]
         #[diesel(check_for_backend(Sqlite))]
         pub struct QueryResult {
-            #[diesel(sql_type = BigInt)]
-            chain_count: i64,
             #[diesel(sql_type = Integer)]
             analyzed_method: i32,
+            #[diesel(sql_type = Bool)]
+            direct: bool,
             #[diesel(sql_type = Text)]
             status: MethodStatus,
             #[diesel(sql_type = Nullable<Text>)]
             error: Option<String>,
-            #[diesel(sql_type = Integer)]
-            route_count: i32,
+            #[diesel(sql_type = BigInt)]
+            graph_count: i64,
             #[diesel(sql_type = Integer)]
             class_id: i32,
             #[diesel(sql_type = Text)]
@@ -1881,19 +2147,19 @@ impl GraphTaintAnalysisDb {
         let rows = self.db.query(|c| {
             query!(sql_query(
                 r#"
-SELECT  count(DISTINCT cg.chain) AS chain_count,
-        am.id           AS analyzed_method,
-        am.status       AS status,
-        am.error        AS error,
-        am.route_count  AS route_count,
-        c.id            AS class_id,
-        c.name          AS class,
-        m.id            AS id,
-        m.name          AS name,
-        m.args          AS args,
-        m.ret           AS ret,
-        m.access_flags  AS access_flags,
-        s.name          AS source
+SELECT  am.id                     AS analyzed_method,
+        am.direct                 AS direct,
+        am.status                 AS status,
+        am.error                  AS error,
+        count(DISTINCT g.id)      AS graph_count,
+        c.id                      AS class_id,
+        c.name                    AS class,
+        m.id                      AS id,
+        m.name                    AS name,
+        m.args                    AS args,
+        m.ret                     AS ret,
+        m.access_flags            AS access_flags,
+        s.name                    AS source
 FROM methods AS m
 JOIN analyzed_methods AS am
     ON am.method = m.id
@@ -1901,8 +2167,8 @@ JOIN classes AS c
     ON c.id = m.class
 JOIN sources AS s
     ON s.id = c.source
-LEFT JOIN call_graph_chains AS cg
-    ON cg.analyzed_method = am.id
+LEFT JOIN graphs AS g
+    ON g.analyzed_method = am.id
 GROUP BY am.id;"#
             ))
             .get_results::<QueryResult>(c)
@@ -1912,11 +2178,11 @@ GROUP BY am.id;"#
             .into_iter()
             .map(
                 |QueryResult {
-                     chain_count,
                      analyzed_method,
+                     direct,
                      status,
                      error,
-                     route_count,
+                     graph_count,
                      class_id,
                      class,
                      id,
@@ -1927,8 +2193,8 @@ GROUP BY am.id;"#
                      source,
                  }| AnalyzedMethodSpec {
                     analysis_id: analyzed_method.into(),
-                    nchains: chain_count as usize,
-                    nroutes: route_count as usize,
+                    direct,
+                    ngraphs: graph_count as usize,
                     status,
                     error,
                     spec: MethodSpec {
@@ -1993,21 +2259,21 @@ impl TaintAnalysisDb {
             query!(analyzed_methods::table
                 .select(analyzed_methods::method)
                 .distinct()
-                .union(sinks::table.select(sinks::location))
+                .union(reachable_nodes::table.select(reachable_nodes::location))
                 .union(
-                    sinks::table
-                        .select(sinks::sink_id.assume_not_null())
-                        .filter(sinks::sink_id.is_not_null())
-                        .filter(sinks::kind.eq(SinkKind::Call)),
+                    nodes::table
+                        .select(nodes::graph_id.assume_not_null())
+                        .filter(nodes::graph_id.is_not_null())
+                        .filter(nodes::kind.eq(SinkKind::Call)),
                 ))
             .get_results::<MethodId>(c)
         })
     }
 
-    pub fn unhide_route(&self, route: RouteId) -> db::Result<()> {
+    pub fn unhide_graph(&self, graph: SubgraphId) -> db::Result<()> {
         self.write(|c| -> db::Result<()> {
             query_exec!(
-                delete(_hidden_routes::table).filter(_hidden_routes::route.eq(route)),
+                delete(_hidden_graphs::table).filter(_hidden_graphs::graph.eq(graph)),
                 c
             )?;
             Ok(())
@@ -2038,20 +2304,20 @@ impl TaintAnalysisDb {
         })
     }
 
-    pub fn hide_route(&self, route: RouteId) -> db::Result<()> {
+    pub fn hide_graph(&self, graph: SubgraphId) -> db::Result<()> {
         self.write(|c| -> db::Result<()> {
-            let value = InsertHiddenRoute { route };
+            let value = InsertHiddenGraph { graph };
             query_exec!(
-                insert_or_ignore_into(_hidden_routes::table).values(&value),
+                insert_or_ignore_into(_hidden_graphs::table).values(&value),
                 c
             )?;
             Ok(())
         })
     }
 
-    pub fn get_hidden_routes(&self) -> db::Result<Vec<RouteId>> {
+    pub fn get_hidden_graphs(&self) -> db::Result<Vec<SubgraphId>> {
         Ok(self.query(|c| {
-            query!(_hidden_routes::table.select(_hidden_routes::route)).get_results::<RouteId>(c)
+            query!(_hidden_graphs::table.select(_hidden_graphs::graph)).get_results::<SubgraphId>(c)
         })?)
     }
 

@@ -17,8 +17,7 @@ diesel::table! {
 }
 
 diesel::table! {
-    calls (rowid) {
-        rowid -> Integer,
+    calls (caller, callee) {
         caller -> Integer,
         callee -> Integer,
     }
@@ -44,8 +43,7 @@ diesel::table! {
 }
 
 diesel::table! {
-    interfaces (rowid) {
-        rowid -> Integer,
+    interfaces (interface, class) {
         interface -> Integer,
         class -> Integer,
     }
@@ -93,8 +91,7 @@ diesel::table! {
 }
 
 diesel::table! {
-    supers (rowid) {
-        rowid -> Integer,
+    supers (parent, child) {
         parent -> Integer,
         child -> Integer,
     }

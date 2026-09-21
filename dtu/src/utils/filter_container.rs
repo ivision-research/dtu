@@ -126,7 +126,9 @@ where
     type Item = &'a C::Item<'a>;
     fn next(&mut self) -> Option<Self::Item> {
         let at = self.at;
-        if at >= self.container.idx.max {
+        // Bound by the number of filtered items, not by `idx.max`, which is the highest valid
+        // selection index and so is one less
+        if at >= self.container.len() {
             return None;
         }
         self.at += 1;
@@ -134,7 +136,7 @@ where
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let size = self.container.idx.max - self.at;
+        let size = self.container.len() - self.at;
         (size, Some(size))
     }
 }
@@ -294,5 +296,54 @@ where
 
     pub fn dec_sel_get(&mut self) -> usize {
         self.idx.dec_get()
+    }
+}
+
+#[cfg(test)]
+mod iter_test {
+    use super::*;
+
+    fn collect(c: &FilterVec<i32>) -> Vec<i32> {
+        c.iter().copied().collect()
+    }
+
+    #[test]
+    fn iter_yields_every_item() {
+        let c: FilterVec<i32> = FilterVec::new_vec(vec![1, 2, 3, 4]);
+        assert_eq!(collect(&c), vec![1, 2, 3, 4]);
+        assert_eq!(c.iter().count(), c.len());
+    }
+
+    #[test]
+    fn iter_yields_the_only_item() {
+        let c: FilterVec<i32> = FilterVec::new_vec(vec![42]);
+        assert_eq!(collect(&c), vec![42]);
+    }
+
+    #[test]
+    fn iter_yields_every_surviving_item_after_a_filter() {
+        let mut c: FilterVec<i32> = FilterVec::new_vec(vec![1, 2, 3, 4, 5]);
+        c.filter(|it| *it == 3);
+        assert_eq!(c.len(), 1);
+        assert_eq!(collect(&c), vec![3]);
+
+        c.filter(|it| *it % 2 == 1);
+        assert_eq!(collect(&c), vec![1, 3, 5]);
+    }
+
+    #[test]
+    fn iter_is_empty_when_nothing_survives() {
+        let mut c: FilterVec<i32> = FilterVec::new_vec(vec![1, 2, 3]);
+        c.filter(|it| *it == 99);
+        assert_eq!(c.len(), 0);
+        assert_eq!(c.iter().count(), 0);
+    }
+
+    #[test]
+    fn size_hint_matches_what_is_yielded() {
+        let c: FilterVec<i32> = FilterVec::new_vec(vec![1, 2, 3]);
+        let it = c.iter();
+        assert_eq!(it.size_hint(), (3, Some(3)));
+        assert_eq!(it.count(), 3);
     }
 }

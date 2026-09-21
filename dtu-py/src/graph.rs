@@ -8,7 +8,7 @@ use dtu::{
         get_default_graphdb,
         models::{
             ClassSearch, FieldAccessOp, FieldId, FieldRef, FieldSearch, FieldSpec, MethodCallPath,
-            MethodId, MethodSearch, MethodSpec,
+            MethodCallPaths, MethodId, MethodSearch, MethodSpec, PathLimits,
         },
         ClassSpec, DefaultGraphDatabase, GraphDatabase, StringSearch,
     },
@@ -192,9 +192,11 @@ impl GraphDB {
 
     /// Find every method that calls the given one and is reachable from `from`
     ///
-    /// Unlike `find_callers` this is not depth bounded: reachability is decided before any route
-    /// is built, so no work is spent on routes that turn out not to exist.
-    #[pyo3(signature = (from_, *, class_ = None, name = None, signature = None, return_type = None, method_source = None))]
+    /// Reachability is decided before any route is built, so no work is spent on routes that
+    /// turn out not to exist. Route building is bounded by `max_depth` and `max_paths` because
+    /// the number of routes is exponential in the depth; when the bound is hit the result is a
+    /// subset and `truncated` says so.
+    #[pyo3(signature = (from_, *, class_ = None, name = None, signature = None, return_type = None, method_source = None, max_depth = None, max_paths = None))]
     fn find_callers_from(
         &self,
         from_: Vec<i32>,
@@ -203,7 +205,9 @@ impl GraphDB {
         signature: Option<&str>,
         return_type: Option<&str>,
         method_source: Option<&str>,
-    ) -> PyResult<Vec<PyMethodCallPath>> {
+        max_depth: Option<usize>,
+        max_paths: Option<usize>,
+    ) -> PyResult<PyMethodCallPaths> {
         let cn = class_.map(ClassName::from);
         let search =
             MethodSearch::new_from_opts(cn.as_ref(), name, signature, method_source, return_type)
@@ -212,17 +216,15 @@ impl GraphDB {
 
         Ok(self
             .0
-            .find_callers_from(&search, &from)
+            .find_callers_from(&search, &from, path_limits(max_depth, max_paths))
             .map_err(GraphError)?
-            .into_iter()
-            .map(PyMethodCallPath::from)
-            .collect())
+            .into())
     }
 
     /// Find every method that references the given field and is reachable from `from`
     ///
     /// The field analogue of `find_callers_from`.
-    #[pyo3(signature = (from_, *, class_, name = None, ty = None, field_source = None, only_write = false))]
+    #[pyo3(signature = (from_, *, class_, name = None, ty = None, field_source = None, only_write = false, max_depth = None, max_paths = None))]
     fn find_field_refs_from(
         &self,
         from_: Vec<i32>,
@@ -231,7 +233,9 @@ impl GraphDB {
         ty: Option<&str>,
         field_source: Option<&str>,
         only_write: bool,
-    ) -> PyResult<Vec<PyMethodCallPath>> {
+        max_depth: Option<usize>,
+        max_paths: Option<usize>,
+    ) -> PyResult<PyMethodCallPaths> {
         let cn = ClassName::from(class_);
         let search = FieldSearch::new_from_opts(&cn, name, ty, field_source)
             .map_err(|e| DtuError::new_err(format!("invalid field search: {e}")))?;
@@ -244,11 +248,9 @@ impl GraphDB {
 
         Ok(self
             .0
-            .find_field_refs_from(&search, action, &from)
+            .find_field_refs_from(&search, action, &from, path_limits(max_depth, max_paths))
             .map_err(GraphError)?
-            .into_iter()
-            .map(PyMethodCallPath::from)
-            .collect())
+            .into())
     }
 
     /// Find all callers of the given class up to a certain depth.
@@ -626,6 +628,54 @@ impl From<MethodSpec> for PyMethodSpec {
 impl From<PyMethodSpec> for MethodSpec {
     fn from(v: PyMethodSpec) -> Self {
         v.0
+    }
+}
+
+/// Build the bounds for a path search, falling back to the defaults for anything not given
+fn path_limits(max_depth: Option<usize>, max_paths: Option<usize>) -> PathLimits {
+    let defaults = PathLimits::default();
+    PathLimits {
+        max_depth: max_depth.unwrap_or(defaults.max_depth),
+        max_paths: max_paths.unwrap_or(defaults.max_paths),
+    }
+}
+
+#[pyclass(module = "dtu", frozen, name = "MethodCallPaths")]
+#[derive(Clone)]
+pub struct PyMethodCallPaths {
+    /// The routes that were found, at most `max_paths` of them
+    #[pyo3(get)]
+    pub paths: Vec<PyMethodCallPath>,
+    /// True when a bound stopped the search, so `paths` is a subset of what exists
+    #[pyo3(get)]
+    pub truncated: bool,
+}
+
+impl From<MethodCallPaths> for PyMethodCallPaths {
+    fn from(value: MethodCallPaths) -> Self {
+        Self {
+            paths: value
+                .paths
+                .into_iter()
+                .map(PyMethodCallPath::from)
+                .collect(),
+            truncated: value.truncated,
+        }
+    }
+}
+
+#[pymethods]
+impl PyMethodCallPaths {
+    fn __len__(&self) -> usize {
+        self.paths.len()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "MethodCallPaths(paths={}, truncated={})",
+            self.paths.len(),
+            self.truncated
+        )
     }
 }
 

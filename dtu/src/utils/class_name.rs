@@ -14,10 +14,6 @@ use diesel::{
     AsExpression,
 };
 
-// This file and the ClassName type has gone through a bunch of internal changes and at this point
-// it really would benefit from a redesign similar to the way smali handles things. The ClassName
-// type has resulted in so many completely unnecessary string copies :(
-
 /// Single type to represent both smali and java class names
 ///
 /// This class always appears as the smali format of the class, but it allows operations as if it
@@ -361,17 +357,9 @@ mod test {
         let java_name = ClassName::from("java.lang.String");
         let smali_name = ClassName::from("Ljava/lang/String;");
         let java_name = java_name.pkg_as_java();
-        assert_eq!(
-            java_name.as_str(),
-            "java.lang",
-            "bad java name for java class"
-        );
+        assert_eq!(java_name, "java.lang", "bad java name for java class");
         let java_name = smali_name.pkg_as_java();
-        assert_eq!(
-            java_name.as_str(),
-            "java.lang",
-            "bad java name for smali class"
-        );
+        assert_eq!(java_name, "java.lang", "bad java name for smali class");
     }
 
     #[test]
@@ -379,10 +367,10 @@ mod test {
         let java_name = ClassName::from("java.lang.String");
         let smali_name = ClassName::from("Ljava/lang/String;");
         assert_eq!(java_name, smali_name);
-        assert_eq(java_name, "Ljava/lang/String;");
-        assert_eq(java_name, "java.lang.String");
-        assert_eq(smali_name, "Ljava/lang/String;");
-        assert_eq(smali_name, "java.lang.String");
+        assert_eq!(java_name, "Ljava/lang/String;");
+        assert_eq!(java_name, "java.lang.String");
+        assert_eq!(smali_name, "Ljava/lang/String;");
+        assert_eq!(smali_name, "java.lang.String");
     }
 
     #[test]

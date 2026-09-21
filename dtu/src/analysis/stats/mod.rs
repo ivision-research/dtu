@@ -2,10 +2,10 @@
 pub mod enabled;
 
 #[cfg(feature = "lru_stats")]
-pub use enabled::{YokeCacheStats, CacheStats};
+pub use enabled::{CacheStats, YokeCacheStats};
 
 #[cfg(not(feature = "lru_stats"))]
 pub mod disabled;
 
 #[cfg(not(feature = "lru_stats"))]
-pub use disabled::{YokeCacheStats, CacheStats};
+pub use disabled::{CacheStats, YokeCacheStats};

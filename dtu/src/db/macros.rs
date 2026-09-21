@@ -15,6 +15,7 @@ macro_rules! database_id {
             PartialOrd,
             Ord,
             Debug,
+            Default,
             serde::Serialize,
             serde::Deserialize,
             diesel::expression::AsExpression,
@@ -30,6 +31,10 @@ macro_rules! database_id {
             }
             pub const fn raw(self) -> i32 {
                 self.0
+            }
+
+            pub const fn next(self) -> Self {
+                Self(self.0 + 1)
             }
         }
 

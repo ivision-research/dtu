@@ -11,9 +11,9 @@ use ratatui::{
     Frame,
 };
 
-use crate::taint::ui::{Tools, WindowAction};
+use crate::taint::ui::{config::Config, Tools, WindowAction};
 
-pub type CommandFunc<T> = fn(Vec<String>, &Tools, &mut T) -> anyhow::Result<()>;
+pub type CommandFunc<T> = fn(Vec<String>, &Tools, &mut Config, &mut T) -> anyhow::Result<()>;
 
 pub struct Command<T> {
     pub help: Option<&'static str>,
@@ -37,17 +37,26 @@ enum Help {
 
 pub struct CommandHandler<T> {
     help: Help,
+    keys_help: &'static str,
     command: Option<String>,
     commands: HashMap<&'static str, Command<T>>,
 }
 
 impl<T> CommandHandler<T> {
-    pub fn new(commands: HashMap<&'static str, Command<T>>) -> Self {
+    /// `keys_help` is what `keys` and `help keys` display. Each window binds its own keys, so
+    /// the handler cannot know them.
+    pub fn new(commands: HashMap<&'static str, Command<T>>, keys_help: &'static str) -> Self {
         Self {
             help: Help::Inactive,
             command: None,
             commands,
+            keys_help,
         }
+    }
+
+    /// Show the key list, as `keys` and `help keys` do
+    pub fn show_keys(&mut self) {
+        self.help = Help::Command(Some(self.keys_help));
     }
 
     pub fn activate(&mut self) {
@@ -89,6 +98,7 @@ impl<T> CommandHandler<T> {
         &mut self,
         evt: KeyEvent,
         tools: &Tools,
+        cfg: &mut Config,
         state: &mut T,
     ) -> anyhow::Result<WindowAction> {
         match evt.modifiers {
@@ -103,7 +113,9 @@ impl<T> CommandHandler<T> {
                 KeyCode::Esc => self.clear(),
                 KeyCode::Backspace => self.delete(),
                 KeyCode::Char(c) => self.push(c),
-                KeyCode::Enter => return self.submit(tools, state).and(Ok(WindowAction::Redraw)),
+                KeyCode::Enter => {
+                    return self.submit(tools, cfg, state).and(Ok(WindowAction::Redraw))
+                }
                 _ => return Ok(WindowAction::default()),
             },
             _ => return Ok(WindowAction::default()),
@@ -133,6 +145,10 @@ impl<T> CommandHandler<T> {
             Help::Inactive => Text::raw("BUG! unreachable state for help"),
             Help::All => {
                 let mut txt = Text::default();
+                txt.lines.push(Line::from(vec![
+                    Span::styled("keys", Style::new().bold()),
+                    Span::raw(": every bound key"),
+                ]));
                 for (cmdname, cmd) in &self.commands {
                     let Some(shorthelp) = cmd.help else {
                         txt.lines.push(Line::styled(*cmdname, Style::new().bold()));
@@ -194,6 +210,7 @@ impl<T> CommandHandler<T> {
 
         if !self.commands.keys().any(|it| it.starts_with(command_name))
             && !"help".starts_with(command_name)
+            && !"keys".starts_with(command_name)
         {
             cmd_box = cmd_box.red();
         }
@@ -267,6 +284,11 @@ impl<T> CommandHandler<T> {
             return;
         };
 
+        if name == "keys" {
+            self.help = Help::Command(Some(self.keys_help));
+            return;
+        }
+
         if let Some(cmd) = self.commands.get(name) {
             let display = match cmd.long_help {
                 Some(v) => Some(v),
@@ -306,6 +328,7 @@ impl<T> CommandHandler<T> {
         &mut self,
         state: &mut T,
         tools: &Tools,
+        cfg: &mut Config,
         command: String,
     ) -> anyhow::Result<()> {
         log::debug!("Handling command: `{command}`");
@@ -317,6 +340,11 @@ impl<T> CommandHandler<T> {
 
         if cmdstr == "help" {
             self.on_help(args);
+            return Ok(());
+        }
+
+        if cmdstr == "keys" {
+            self.help = Help::Command(Some(self.keys_help));
             return Ok(());
         }
 
@@ -346,12 +374,12 @@ impl<T> CommandHandler<T> {
             Some(v) => Self::split_args(v),
         };
 
-        func(argv, tools, state)
+        func(argv, tools, cfg, state)
     }
 
-    fn submit(&mut self, tools: &Tools, state: &mut T) -> anyhow::Result<()> {
+    fn submit(&mut self, tools: &Tools, cfg: &mut Config, state: &mut T) -> anyhow::Result<()> {
         if let Some(cmd) = self.command.take() {
-            return self.on_command_submitted(state, tools, cmd);
+            return self.on_command_submitted(state, tools, cfg, cmd);
         }
         Ok(())
     }

@@ -16,8 +16,8 @@ use super::schema::*;
 use crate::db::common::Db;
 use crate::db::common::*;
 use crate::db::graph::models::{
-    ClassId, ClassSearch, FieldId, FieldRef, FieldSearchParams, MethodCallPath, MethodId,
-    MethodSearch, MethodSearchParams, MethodSpec, SourceId, SourcedString,
+    ClassId, ClassSearch, FieldId, FieldRef, FieldSearchParams, MethodCallPath, MethodCallPaths,
+    MethodId, MethodSearch, MethodSearchParams, MethodSpec, PathLimits, SourceId, SourcedString,
 };
 use crate::db::graph::models::{FieldAccessOp, FieldSearch, FieldSpec, Source};
 use crate::db::graph::{ClassSpec, GraphDatabase, StringSearch};
@@ -244,6 +244,29 @@ SELECT ct.path FROM calls_to AS ct WHERE ct.distance > 0;"#,
     ///
     /// A method usually appears in many routes, so each distinct id is fetched once and cloned
     /// into place rather than hydrated once per occurrence.
+    /// Turn route rows into paths, reporting whether [PathLimits::max_paths] cut the search off
+    ///
+    /// One extra row is always asked for, so an over-long result is how truncation is detected.
+    fn bounded_paths(&self, rows: Vec<RouteRow>, limits: PathLimits) -> Result<MethodCallPaths> {
+        let truncated = rows.len() > limits.max_paths;
+
+        let mut paths = self
+            .hydrate_routes(rows)?
+            .into_iter()
+            .map(MethodCallPath::from)
+            .collect::<Vec<_>>();
+        paths.truncate(limits.max_paths);
+
+        // The query can't sort without materialising everything first, so it happens here
+        paths.sort_by(|a, b| {
+            let first = a.path.first().map(|it| it.id);
+            let other = b.path.first().map(|it| it.id);
+            first.cmp(&other).then(a.path.len().cmp(&b.path.len()))
+        });
+
+        Ok(MethodCallPaths { paths, truncated })
+    }
+
     fn hydrate_routes(&self, rows: Vec<RouteRow>) -> Result<Vec<Vec<MethodSpec>>> {
         let routes = rows
             .into_iter()
@@ -475,16 +498,17 @@ impl GraphDatabase for GraphSqliteDatabase {
         &self,
         method: &MethodSearch,
         methods: &[MethodId],
-    ) -> Result<Vec<MethodCallPath>> {
+        limits: PathLimits,
+    ) -> Result<MethodCallPaths> {
         if methods.is_empty() {
-            return Ok(Vec::new());
+            return Ok(MethodCallPaths::default());
         }
 
         let mid_query = method.id_query();
         let method_ids = self.query(|c| mid_query.load::<MethodId>(c))?;
 
         if method_ids.is_empty() {
-            return Ok(Vec::new());
+            return Ok(MethodCallPaths::default());
         }
 
         let entry_json = to_json_array(methods);
@@ -527,9 +551,8 @@ impl GraphDatabase for GraphSqliteDatabase {
     direct_target_callers(id) AS (
         SELECT DISTINCT c.caller
         FROM calls AS c
-        JOIN entry_reachable_methods AS r
-            ON r.id = c.caller
         WHERE c.callee IN (SELECT id FROM target_methods)
+          AND c.caller IN (SELECT id FROM entry_reachable_methods)
     ),
 
     dtc_reaching_methods(id) AS (
@@ -560,30 +583,115 @@ impl GraphDatabase for GraphSqliteDatabase {
         FROM route AS r
         JOIN calls AS c
             ON r.id = c.caller
-        JOIN relevant_methods AS rel
-            ON rel.id = c.callee
         WHERE
-            NOT EXISTS (SELECT 1 FROM json_each(r.path) je WHERE je.value = c.callee)
+            c.callee IN (SELECT id FROM relevant_methods)
+            AND r.depth < ?3
+            AND NOT EXISTS (SELECT 1 FROM json_each(r.path) je WHERE je.value = c.callee)
     )
-
 SELECT r.path
 FROM route AS r
 JOIN direct_target_callers AS d ON d.id = r.id
-ORDER BY r.id, r.depth;
+LIMIT ?4;
     "#,
         )
         .bind::<Text, _>(entry_json)
-        .bind::<Text, _>(targets_json);
+        .bind::<Text, _>(targets_json)
+        .bind::<BigInt, _>(limits.max_depth as i64)
+        .bind::<BigInt, _>(limits.max_paths as i64 + 1);
 
         let q = query!(q);
 
         let rows = self.query(|c| q.get_results::<RouteRow>(c))?;
 
-        Ok(self
-            .hydrate_routes(rows)?
-            .into_iter()
-            .map(MethodCallPath::from)
-            .collect())
+        self.bounded_paths(rows, limits)
+    }
+
+    fn find_callers_reachable_from(
+        &self,
+        targets: &[MethodId],
+        methods: &[MethodId],
+    ) -> Result<Vec<MethodSpec>> {
+        if methods.is_empty() || targets.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // The final SELECT statement contains some `IN (SELECT ...)`s. These help sqlite plan
+        // better and have a significant performance impact.
+
+        let q = sql_query(
+            r#"WITH RECURSIVE
+
+    entry(id) AS (SELECT value FROM json_each(?1)),
+
+    target_methods(id) AS (SELECT value FROM json_each(?2)),
+
+    entry_reachable_methods(id) AS (
+        SELECT id FROM entry
+        UNION
+        SELECT c.callee
+        FROM calls AS c
+        JOIN entry_reachable_methods AS r
+            ON c.caller = r.id
+    )
+
+SELECT DISTINCT c.caller AS id
+FROM calls AS c
+WHERE c.callee IN (SELECT id FROM target_methods)
+  AND c.caller IN (SELECT id FROM entry_reachable_methods);
+    "#,
+        )
+        .bind::<Text, _>(to_json_array(methods))
+        .bind::<Text, _>(to_json_array(targets));
+
+        let q = query!(q);
+        let rows = self.query(|c| q.get_results::<MethodIdRow>(c))?;
+
+        self.get_methods_by_id(&rows.into_iter().map(|it| it.id()).collect::<Vec<_>>())
+    }
+
+    fn find_field_refs_reachable_from(
+        &self,
+        targets: &[FieldId],
+        action: FieldAccessOp,
+        methods: &[MethodId],
+    ) -> Result<Vec<MethodSpec>> {
+        if methods.is_empty() || targets.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // See the note in the callers analogue for why the `IN (SELECT ..)`s are important.
+
+        let q = sql_query(
+            r#"WITH RECURSIVE
+
+    entry(id) AS (SELECT value FROM json_each(?1)),
+
+    target_fields(id) AS (SELECT value FROM json_each(?2)),
+
+    entry_reachable_methods(id) AS (
+        SELECT id FROM entry
+        UNION
+        SELECT c.callee
+        FROM calls AS c
+        JOIN entry_reachable_methods AS r
+            ON c.caller = r.id
+    )
+
+SELECT DISTINCT mfa.method AS id
+FROM method_field_access AS mfa
+WHERE mfa.field IN (SELECT id FROM target_fields)
+  AND mfa.action = ?3
+  AND mfa.method IN (SELECT id FROM entry_reachable_methods);
+    "#,
+        )
+        .bind::<Text, _>(to_json_array(methods))
+        .bind::<Text, _>(to_json_array(targets))
+        .bind::<Integer, _>(action as i32);
+
+        let q = query!(q);
+        let rows = self.query(|c| q.get_results::<MethodIdRow>(c))?;
+
+        self.get_methods_by_id(&rows.into_iter().map(|it| it.id()).collect::<Vec<_>>())
     }
 
     fn find_field_refs_from(
@@ -591,18 +699,19 @@ ORDER BY r.id, r.depth;
         field: &FieldSearch,
         action: FieldAccessOp,
         methods: &[MethodId],
-    ) -> Result<Vec<MethodCallPath>> {
+        limits: PathLimits,
+    ) -> Result<MethodCallPaths> {
         // This implementation is very similar to the method one, the only difference is
         // `direct_field_users`
         if methods.is_empty() {
-            return Ok(Vec::new());
+            return Ok(MethodCallPaths::default());
         }
 
         let fid_query = field.id_query();
         let field_ids = self.query(|c| fid_query.load::<FieldId>(c))?;
 
         if field_ids.is_empty() {
-            return Ok(Vec::new());
+            return Ok(MethodCallPaths::default());
         }
 
         let entry_json = to_json_array(methods);
@@ -627,8 +736,9 @@ ORDER BY r.id, r.depth;
     direct_field_users(id) AS (
       SELECT DISTINCT mfa.method
       FROM method_field_access AS mfa
-      JOIN entry_reachable_methods AS er ON er.id = mfa.method
-      WHERE mfa.field IN (SELECT id FROM target_fields) AND mfa.action = ?3
+      WHERE mfa.field IN (SELECT id FROM target_fields)
+        AND mfa.action = ?3
+        AND mfa.method IN (SELECT id FROM entry_reachable_methods)
     ),
 
     dfu_reaching_methods(id) AS (
@@ -659,31 +769,29 @@ ORDER BY r.id, r.depth;
         FROM route AS r
         JOIN calls AS c
             ON r.id = c.caller
-        JOIN relevant_methods AS rel
-            ON rel.id = c.callee
         WHERE
-            NOT EXISTS (SELECT 1 FROM json_each(r.path) je WHERE je.value = c.callee)
+            c.callee IN (SELECT id FROM relevant_methods)
+            AND r.depth < ?4
+            AND NOT EXISTS (SELECT 1 FROM json_each(r.path) je WHERE je.value = c.callee)
     )
 
 SELECT r.path
 FROM route AS r
 JOIN direct_field_users AS d ON d.id = r.id
-ORDER BY r.id, r.depth;
+LIMIT ?5;
     "#,
         )
         .bind::<Text, _>(entry_json)
         .bind::<Text, _>(targets_json)
-        .bind::<Integer, _>(action as i32);
+        .bind::<Integer, _>(action as i32)
+        .bind::<BigInt, _>(limits.max_depth as i64)
+        .bind::<BigInt, _>(limits.max_paths as i64 + 1);
 
         let q = query!(q);
 
         let rows = self.query(|c| q.get_results::<RouteRow>(c))?;
 
-        Ok(self
-            .hydrate_routes(rows)?
-            .into_iter()
-            .map(MethodCallPath::from)
-            .collect())
+        self.bounded_paths(rows, limits)
     }
 
     fn wipe(&self, ctx: &dyn Context) -> Result<()> {
@@ -1282,7 +1390,7 @@ impl From<ClassSpecRow> for ClassSpec {
 }
 
 #[derive(Queryable, Debug)]
-struct FieldSpecRow {
+pub(crate) struct FieldSpecRow {
     #[diesel(sql_type = Integer)]
     id: FieldId,
     #[diesel(sql_type = Text)]
@@ -1398,6 +1506,19 @@ impl From<MethodSpecRow> for MethodSpec {
 /// Only the ids come back from the query. The specs are fetched separately because the same
 /// method appears in many routes.
 #[derive(QueryableByName, Debug)]
+struct MethodIdRow {
+    #[diesel(sql_type = Integer)]
+    id: i32,
+}
+
+impl MethodIdRow {
+    fn id(&self) -> MethodId {
+        MethodId::new(self.id)
+    }
+}
+
+#[derive(QueryableByName)]
+#[diesel(check_for_backend(Sqlite))]
 struct RouteRow {
     #[diesel(sql_type = Text)]
     path: String,
@@ -1579,7 +1700,7 @@ mod test {
             let results = db
                 .get_methods_for("framework")
                 .expect("failed to get methods");
-            assert_eq!(results.len(), 75);
+            assert_eq!(results.len(), 69);
         });
     }
 
@@ -1707,8 +1828,9 @@ mod test {
             // Reaches the target one hop away, so the route covers the method in between
             let entry = entries!("Lal/al;", "fi", "IZLjava/lang/String;", None);
             assert_eq!(
-                db.find_callers_from(&target, &entry)
-                    .expect("find_callers_from"),
+                db.find_callers_from(&target, &entry, PathLimits::default())
+                    .expect("find_callers_from")
+                    .paths,
                 vec![path!(
                     {class: "al.al", name: "fi", signature: "IZLjava/lang/String;", source: "C", ret: "C"},
                     {class: "bs.bs", name: "fe", signature: "J", source: "framework", ret: "C"}
@@ -1718,8 +1840,9 @@ mod test {
             // An entry that calls the target itself is a route of one
             let entry = entries!("Lbs/bs;", "fe", "J", None);
             assert_eq!(
-                db.find_callers_from(&target, &entry)
-                    .expect("find_callers_from"),
+                db.find_callers_from(&target, &entry, PathLimits::default())
+                    .expect("find_callers_from")
+                    .paths,
                 vec![path!(
                     {class: "bs.bs", name: "fe", signature: "J", source: "framework", ret: "C"}
                 )]
@@ -1728,14 +1851,16 @@ mod test {
             // The same signature in a source that can't reach the target finds nothing
             let entry = entries!("Lax/ax;", "ds", "FIJ", Some("D"));
             assert!(db
-                .find_callers_from(&target, &entry)
+                .find_callers_from(&target, &entry, PathLimits::default())
                 .expect("find_callers_from")
+                .paths
                 .is_empty());
 
             // No entries means there is nothing to search from
             assert!(db
-                .find_callers_from(&target, &[])
+                .find_callers_from(&target, &[], PathLimits::default())
                 .expect("find_callers_from")
+                .paths
                 .is_empty());
         });
     }

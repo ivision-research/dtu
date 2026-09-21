@@ -3,24 +3,24 @@ use dtu::{prereqs::Prereq, utils::ensure_prereq, DefaultContext};
 
 mod activity_intents;
 mod common;
+mod filter;
 mod methods;
 mod providers;
-mod filter;
 mod receiver_intents;
 mod service_binders;
 mod sqlite;
 mod system_services;
 mod ui;
 
-use ui::Ui;
 use activity_intents::ActivityIntents;
+use filter::Filter;
 use methods::Methods;
 use providers::Providers;
-use filter::Filter;
 use receiver_intents::ReceiverIntents;
 use service_binders::ServiceBinders;
 use sqlite::Sqlite;
 use system_services::SystemServices;
+use ui::Ui;
 
 #[derive(Args)]
 pub struct Taint {

@@ -1,5 +1,27 @@
 pub mod widgets;
 
+/// Shorten `text` to `width` columns, dropping from the middle so that both the package a name
+/// starts with and the method it ends with survive
+pub fn fit(text: &str, width: usize) -> String {
+    let len = text.chars().count();
+    if len <= width {
+        return text.to_string();
+    }
+    // Below this there is no room for an ellipsis plus a character either side of it
+    if width < 3 {
+        return text.chars().take(width).collect();
+    }
+
+    let keep = width - 1;
+    // The tail gets the odd character: a smali display ends with the method name
+    let head = keep / 2;
+    let tail = keep - head;
+    let mut out: String = text.chars().take(head).collect();
+    out.push('\u{2026}');
+    out.extend(text.chars().skip(len - tail));
+    out
+}
+
 use std::io::{self, Stdout};
 
 use anyhow;
@@ -64,3 +86,28 @@ pub fn restore_terminal(terminal: &mut TerminalImpl) -> anyhow::Result<()> {
 }
 
 pub type RenderFunc = dyn FnOnce(Rect, &mut Buffer);
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn fit_keeps_both_ends_of_a_long_name() {
+        assert_eq!(fit("short", 10), "short");
+        assert_eq!(fit("exact", 5), "exact");
+        assert_eq!(fit("abcdefghij", 5), "ab\u{2026}ij");
+        assert_eq!(fit("abcdefghij", 4), "a\u{2026}ij");
+        // No room for an ellipsis with a character either side, so just cut
+        assert_eq!(fit("abcdefghij", 2), "ab");
+        assert_eq!(fit("abcdefghij", 0), "");
+        assert_eq!(fit("", 0), "");
+    }
+
+    #[test]
+    fn fit_never_exceeds_the_width() {
+        let name = "Lcom/example/really/long/package/Class;->method(Ljava/lang/String;)V";
+        for width in 0..name.chars().count() + 4 {
+            assert!(fit(name, width).chars().count() <= width.max(0));
+        }
+    }
+}

@@ -1,5 +1,3 @@
-use std::ops::Deref;
-
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{quote, ToTokens};
 use syn::parse::{Parse, ParseStream};
@@ -112,13 +110,18 @@ pub(crate) fn sql_db_row(
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DtuAttr {
     InsertKeepId,
+    InsertOwned,
 }
 
-struct DtuAttrs(Vec<DtuAttr>);
-impl Deref for DtuAttrs {
-    type Target = Vec<DtuAttr>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
+struct DtuAttrs(Punctuated<DtuAttr, Token![,]>);
+
+impl DtuAttrs {
+    fn iter(&self) -> impl Iterator<Item = &DtuAttr> {
+        self.0.iter()
+    }
+
+    fn contains(&self, attr: DtuAttr) -> bool {
+        self.iter().any(|it| *it == attr)
     }
 }
 
@@ -127,6 +130,10 @@ impl Parse for DtuAttr {
         let ident: Ident = input.parse()?;
         if ident == "insert_keep_id" {
             return Ok(Self::InsertKeepId);
+        }
+
+        if ident == "insert_owned" {
+            return Ok(Self::InsertOwned);
         }
 
         Err(syn::Error::new(
@@ -138,12 +145,7 @@ impl Parse for DtuAttr {
 
 impl Parse for DtuAttrs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut attrs = Vec::new();
-        while !input.is_empty() {
-            let attr: DtuAttr = input.parse()?;
-            attrs.push(attr);
-        }
-
+        let attrs = Punctuated::<DtuAttr, Token![,]>::parse_terminated(input)?;
         Ok(Self(attrs))
     }
 }
@@ -173,7 +175,7 @@ fn attr_path_matches_simple(att: &Attribute, simple: &str) -> bool {
     if path.segments.len() != 1 {
         return false;
     }
-    path.segments.first().unwrap().ident == Ident::new(simple, Span::call_site())
+    path.segments.first().unwrap().ident == simple
 }
 
 fn try_find_table_name(diesel_attrs: &Vec<Attribute>) -> Option<Ident> {
@@ -269,15 +271,25 @@ fn define_insertable(
         }]
     };
 
-    let keep_id = dtu_attrs
+    let (keep_id, no_borrow) = dtu_attrs
         .as_ref()
-        .is_some_and(|it| it.contains(&DtuAttr::InsertKeepId));
+        .map(|it| {
+            (
+                it.contains(DtuAttr::InsertKeepId),
+                it.contains(DtuAttr::InsertOwned),
+            )
+        })
+        .unwrap_or((false, false));
     let mut has_string_or_class = false;
 
     let transformed_fields = stripped_fields
         .iter()
         .filter(|f| keep_id || (*f).ident.as_ref().unwrap().to_string() != "id")
         .map(|f| {
+            if no_borrow {
+                return f.clone();
+            }
+
             if is_string(f) {
                 has_string_or_class |= true;
                 transform_type_to_ref(f, "str")
@@ -325,6 +337,12 @@ fn define_insertable(
     let code = quote! {
         /// Auto generated type for inserting into the database
         #[derive(Insertable)]
+        // Without this, diesel omits an `Option` field's column entirely from the `INSERT`
+        // when it's `None` rather than writing `NULL`. Rows whose optional fields differ in
+        // which are `Some` then end up with different column lists, and diesel can't combine
+        // rows with different column lists into one multi-row `INSERT ... VALUES (...), (...)`
+        // statement: it silently falls back to one statement per row, breaking batch inserts.
+        #[diesel(treat_none_as_default_value = false)]
         #(#atts)*
         #vis struct #new_name #lifetime {
             #(

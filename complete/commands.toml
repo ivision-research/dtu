@@ -38,8 +38,9 @@ options = [
 options = [
     ["threads", "j", "Uncompletable", ""],
     ["depth", "d", "Uncompletable", ""],
-    ["only-new", "n", "None", ""],
     ["diff-source", "S", "DiffSource", ""],
+    ["only-new", "n", "None", ""],
+    ["only-open", "O", "None", ""],
     ["only-public", "P", "None", ""],
     ["only-enabled", "E", "None", ""],
 ]
@@ -49,6 +50,7 @@ options = [
     ["threads", "j", "Uncompletable", ""],
     ["depth", "d", "Uncompletable", ""],
     ["only-new", "n", "None", ""],
+    ["only-open", "O", "None", ""],
     ["diff-source", "S", "DiffSource", ""],
     ["only-public", "P", "None", ""],
     ["only-enabled", "E", "None", ""],
@@ -59,6 +61,7 @@ options = [
     ["threads", "j", "Uncompletable", ""],
     ["depth", "d", "Uncompletable", ""],
     ["only-new", "n", "None", ""],
+    ["only-open", "O", "None", ""],
     ["diff-source", "S", "DiffSource", ""],
     ["only-public", "P", "None", ""],
     ["only-enabled", "E", "None", ""],

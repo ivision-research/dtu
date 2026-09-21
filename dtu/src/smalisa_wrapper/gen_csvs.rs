@@ -9,7 +9,7 @@ use csv;
 use itertools::Itertools;
 use rayon::prelude::*;
 use smalisa::instructions::{InvArgs, Invocation};
-use smalisa::{AccessFlag, Arena, Field, Lexer, Line, LineParse, Parser, Primitive, RawLiteral};
+use smalisa::{AccessFlag, Arena, Field, Lexer, Line, LineParse, Parser, RawLiteral};
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fmt;
@@ -217,17 +217,12 @@ impl SendChannels {
     }
 
     fn send_field(&self, class: &str, field: &Field) {
-        let ty = match field.ty.as_smali_str() {
-            // If we can't get a smali format for any reason we don't really want to go forward.
-            // This really shouldn't happen so I don't think it's a big deal.
-            None => return,
-            Some(v) => v.as_ref().into(),
-        };
+        let ty = field.ty.as_smali_str();
 
         let _ = self.class_fields.send(ClassField {
             class: class.into(),
             name: field.name.into(),
-            ty,
+            ty: ty.into_owned(),
             access_flags: field.access.bits(),
         });
     }
@@ -639,7 +634,7 @@ struct SeenCall<'a> {
     class: &'a str,
     name: &'a str,
     args: &'a str,
-    ret: Option<Cow<'a, str>>,
+    ret: Cow<'a, str>,
 }
 
 const IGNORE_SUPERS: &'static [&'static str] = &["Ljava/lang/Object;"];
@@ -672,11 +667,7 @@ fn on_field_access(
         FieldAccessOp::Read
     };
 
-    let ty = match fref.ty.as_smali_str() {
-        // Match the behavior in send_field
-        None => return,
-        Some(v) => v.as_ref().into(),
-    };
+    let ty = fref.ty.as_smali_str();
 
     let it = MethodFieldAccess {
         class: fref.class.to_string(),
@@ -684,7 +675,7 @@ fn on_field_access(
         method_class: class.into(),
         method: method.into(),
         method_args: method_args.into(),
-        ty,
+        ty: ty.into_owned(),
         op,
     };
 
@@ -784,9 +775,7 @@ where
                     class,
                     mh.name,
                     mh.args,
-                    mh.return_type
-                        .as_smali_str()
-                        .unwrap_or(Cow::Borrowed(Primitive::Void.as_smali_str())),
+                    mh.return_type.as_smali_str(),
                     mh.access,
                 );
             }
@@ -829,10 +818,7 @@ where
                             target_class.as_ref(),
                             mref.name,
                             mref.args,
-                            &mref
-                                .return_type
-                                .as_smali_str()
-                                .unwrap_or_else(|| Cow::Borrowed(Primitive::Void.as_smali_str())),
+                            &mref.return_type.as_smali_str(),
                         );
                     }
                 } else if let InvArgs::OneRegLiteral(_, RawLiteral::String(s)) = inv.args() {

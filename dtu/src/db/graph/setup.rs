@@ -319,7 +319,18 @@ impl GraphSqliteDatabase {
         self.write(|c| {
             Self::add_indices(c)?;
             Self::update_built_at(c)
-        })
+        })?;
+
+        // Best effort: a checkpoint needs the other readers to be done with the frames it
+        // wants to reclaim, and failing to shrink a file is not a reason to fail the build.
+        if let Err(e) = self.write(|c| -> Result<()> {
+            c.batch_execute("PRAGMA wal_checkpoint(TRUNCATE);")?;
+            Ok(())
+        }) {
+            log::warn!("failed to checkpoint the write-ahead log: {e}");
+        }
+
+        Ok(())
     }
 
     /// Record that the graph finished building
@@ -599,8 +610,6 @@ WHERE dst.id != src.id"#
 
                 CREATE INDEX IF NOT EXISTS method_field_access_method ON method_field_access(method);
 
-                CREATE INDEX IF NOT EXISTS class_fields_class ON class_fields(class);
-
                 ANALYZE;
                 "#,
         )?)
@@ -842,7 +851,7 @@ mod test {
 
     /// The methods the source declares on `class`, which the test fixture never touches
     fn method_names(db: &GraphSqliteDatabase, source: &str, class: &str) -> Vec<String> {
-        db.query(|c| {
+        db.query(|c| -> Result<Vec<String>> {
             let sid = sources::table
                 .filter(sources::name.eq(source))
                 .select(sources::id)
@@ -879,7 +888,7 @@ mod test {
             (CSV::Interfaces, "Lz/A;,Lz/Iface;\n"),
             (
                 CSV::Calls,
-                "Lz/A;,alpha,,Lz/B;,gamma,\nLz/A;,alpha,,Lz/Absent;,missing,\n",
+                "Lz/A;,alpha,,Lz/B;,gamma,,V\nLz/A;,alpha,,Lz/Absent;,missing,,Z\n",
             ),
             (CSV::ClassFields, "Lz/A;,field1,I,2\n"),
             (CSV::MethodStrings, "hello-ingest,alpha,,Lz/A;\n"),
@@ -1009,8 +1018,8 @@ mod test {
         let methods = db.get_methods_for(SOURCE).expect("get_methods_for failed");
         assert_eq!(
             sorted(methods.iter().map(|it| it.name.clone())),
-            vec!["alpha", "beta", "gamma", "missing"],
-            "the callee this source never declares is added to it"
+            vec!["alpha", "beta", "gamma"],
+            "the source only has methods it declaes"
         );
 
         let child = ClassName::from("Lz/B;");
@@ -1070,7 +1079,7 @@ mod test {
 
     /// A callee's class that the source never declares belongs to the framework
     #[rstest]
-    fn test_ingest_puts_unknown_callee_classes_in_the_framework(tmp_context: TestContext) {
+    fn test_ingest_puts_unknown_callee_in_the_framework(tmp_context: TestContext) {
         let ctx = &tmp_context;
         let db = GraphSqliteDatabase::new(ctx).expect("failed to open the graph database");
         let dir = import_dir(ctx);
@@ -1093,6 +1102,20 @@ mod test {
                 .any(|it| it.get_smali_name() == "Lz/Absent;"),
             "the unknown callee class lands in the framework"
         );
+
+        let methods = db.get_methods_for(SOURCE).expect("get_methods_for failed");
+        assert!(
+            !methods.iter().any(|it| it.name == "missing"),
+            "the callee method this source never declared wasn't added to itself"
+        );
+
+        let methods = db
+            .get_methods_for(FRAMEWORK_SOURCE)
+            .expect("get_methods_for failed");
+        assert!(
+            methods.iter().any(|it| it.name == "missing"),
+            "the callee class this source never declared was added to the framework"
+        );
     }
 
     /// A load must not leave `foreign_keys=OFF` behind on the connection it borrowed
@@ -1106,6 +1129,20 @@ mod test {
         let dir = import_dir(ctx);
         add_source(&db, SOURCE);
 
+        // A second handle, held open for the rest of the test. The CSV load switches the
+        // database to WAL, and `journal_mode` is a property of the database rather than the
+        // connection, so switching it back needs every other connection closed and fails with
+        // "database is locked" while this one exists. Without it the restore usually succeeds
+        // and the test only catches a regression when the pool happens to be holding a second
+        // connection, which is what made this flaky.
+        let other = GraphSqliteDatabase::new(ctx).expect("failed to open a second handle");
+        other
+            .query(|c| {
+                diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>("(SELECT 1)"))
+                    .get_result::<i32>(c)
+            })
+            .expect("the second handle works");
+
         let classes = write_csv(&dir, "classes.csv", "Lz/A;,1\n");
         load(&db, ctx, &classes, SOURCE, CSV::Classes);
 
@@ -1115,8 +1152,6 @@ mod test {
         });
         assert!(enforced.is_ok(), "the connection still works");
 
-        // A row pointing at a class id that cannot exist is only rejected with foreign key
-        // enforcement on
         let res = db.write(|c| -> Result<()> {
             insert_into(classes::table)
                 .values((

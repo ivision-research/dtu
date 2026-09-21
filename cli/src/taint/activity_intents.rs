@@ -2,10 +2,7 @@ use std::collections::HashMap;
 
 use clap::{self, Args};
 use dtu::{
-    analysis::{
-        db::GraphTaintAnalysisDb,
-        taint::{TaintSeedOptions, TaintSource},
-    },
+    analysis::taint::{db::TaintAnalysisDbWriter, TaintSeedOptions, TaintSource},
     db::{
         graph::{models::MethodId, MethodSpec, FRAMEWORK_SOURCE},
         meta::get_default_metadb,
@@ -36,7 +33,7 @@ pub struct ActivityIntents {
 
 impl ActivityIntents {
     pub fn run(self, ctx: &dyn Context) -> anyhow::Result<()> {
-        let db = GraphTaintAnalysisDb::new_from_path(ctx, &self.opts.run.out_file)?;
+        let db = TaintAnalysisDbWriter::new_from_path(ctx, &self.opts.run.out_file)?;
 
         analyze(ctx, db, &self.opts.run, |gdb| {
             let meta = get_default_metadb(ctx)?;

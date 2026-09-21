@@ -13,7 +13,7 @@ impl YokeCacheStats {
 pub struct CacheStats;
 
 impl CacheStats {
-    pub fn new() -> Self {
+    pub fn new(_name: &'static str) -> Self {
         Self
     }
     pub fn lookup_attempt(&self) {}

@@ -868,6 +868,7 @@ dependencies = [
  "sha2",
  "signal-hook",
  "tempfile",
+ "toml 0.8.23",
  "unicode-width 0.2.0",
 ]
 
@@ -2744,7 +2745,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 [[package]]
 name = "smalisa"
 version = "1.0.0"
-source = "git+https://github.com/ivision-research/smalisa.git?branch=ssa#478ee12777220acfbeecf2db971c6c5afe88aa83"
+source = "git+https://github.com/ivision-research/smalisa.git?branch=ssa#0ae528dd973b306d91c07b31ffd0646b2c3889af"
 dependencies = [
  "bitflags 2.13.1",
  "bumpalo",

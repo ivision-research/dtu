@@ -1,20 +1,21 @@
 use clap::{self, Args};
 use crossterm::event;
-use dtu::{analysis::db::taint::db::GraphTaintAnalysisDb, Context};
+use dtu::{analysis::taint::db::GraphTaintAnalysisDb, Context};
 
 use crate::ui::{restore_terminal, setup_terminal, TerminalImpl};
 
 mod applet;
 mod command;
+mod config;
 mod error_window;
-mod method_paths;
+mod graph_view;
 mod select_method;
 mod window;
 use applet::Applet;
 
 pub(super) use command::*;
 pub(super) use error_window::*;
-pub(super) use method_paths::*;
+pub(super) use graph_view::*;
 pub(super) use select_method::*;
 pub(super) use window::*;
 
@@ -29,8 +30,8 @@ impl Ui {
     pub fn run(self, ctx: &dyn Context) -> anyhow::Result<()> {
         let db = GraphTaintAnalysisDb::new_from_path(ctx, &self.file)?;
         db.get_validity_err()?;
-        let mut term = setup_terminal()?;
         let applet = Applet::new(ctx, &db)?;
+        let mut term = setup_terminal()?;
         let res = tui_loop(&mut term, applet);
         let restore_res = restore_terminal(&mut term);
 

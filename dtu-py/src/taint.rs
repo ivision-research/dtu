@@ -5,8 +5,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use dtu::analysis::db::taint::writer::RunMeta;
-use dtu::analysis::db::GraphTaintAnalysisDb;
+use dtu::analysis::taint::db::GraphTaintAnalysisDb;
+use dtu::analysis::taint::writer::RunMeta;
 use dtu::analysis::taint::{
     TaintAnalyzer, TaintAnalyzerOptions, TaintSeedOptions, TaintSeeds, TaintSink, TaintSinkKind,
     TaintSource,
@@ -24,7 +24,7 @@ use crate::{
     types::PyClassName,
 };
 
-#[pyclass(module = "dtu", name = "TaintSource")]
+#[pyclass(module = "dtu", name = "TaintAnalysisDb")]
 #[derive(Clone)]
 pub struct PyTaintAnalysisDb(GraphTaintAnalysisDb);
 
@@ -107,7 +107,6 @@ impl From<PyTaintSource> for TaintSource {
 
 #[pymethods]
 impl PyTaintSource {
-    /// Parse the text form a report prints, e.g. `p1` or `*->getIntent()Landroid/content/Intent;`
     #[staticmethod]
     fn parse(value: &str) -> PyResult<Self> {
         TaintSource::from_str(value)
@@ -153,11 +152,14 @@ pub enum PyTaintSinkKind {
     },
     Array(),
     Field {
-        class_: PyClassName,
-        name: String,
+        field: i32,
     },
     MethodCall {
         method: i32,
+    },
+    ExternalField {
+        class_: PyClassName,
+        name: String,
     },
     ExternalCall {
         class_: PyClassName,
@@ -172,12 +174,13 @@ impl From<TaintSinkKind> for PyTaintSinkKind {
             TaintSinkKind::Phi => Self::Phi(),
             TaintSinkKind::Array => Self::Array(),
             TaintSinkKind::Instruction { opcode } => Self::Instruction { opcode },
-            TaintSinkKind::Field { class, name } => Self::Field {
-                class_: class.into(),
-                name,
-            },
+            TaintSinkKind::Field { field } => Self::Field { field: field.raw() },
             TaintSinkKind::MethodCall { method } => Self::MethodCall {
                 method: method.raw(),
+            },
+            TaintSinkKind::ExternalField { class, name } => Self::ExternalField {
+                class_: class.into(),
+                name,
             },
             TaintSinkKind::ExternalCall { class, name, args } => Self::ExternalCall {
                 class_: class.into(),
@@ -195,10 +198,11 @@ impl PyTaintSinkKind {
             Self::Phi() => String::from("phi"),
             Self::Array() => String::from("array"),
             Self::Instruction { opcode } => opcode.clone(),
-            Self::Field { class_, name } => {
+            Self::Field { field } => format!("field {field}"),
+            Self::MethodCall { method } => format!("method {method}"),
+            Self::ExternalField { class_, name } => {
                 format!("{}->{name}", AsRef::<ClassName>::as_ref(class_))
             }
-            Self::MethodCall { method } => format!("method {method}"),
             Self::ExternalCall { class_, name, args } => {
                 format!("{}->{name}({args})", AsRef::<ClassName>::as_ref(class_))
             }
@@ -420,12 +424,14 @@ pub fn run_taint_analysis(
     )
     .map_err(|e| DtuBaseError::from(e.to_string()))?;
     let mut analyzer = TaintAnalyzer::new(ctx, cancel, opts, seeds, loader);
+    // The analyzer builds the artifact, so it wants the writer half of the same connection
+    let writer = db.0.into_writer();
 
     // The analysis polls its cancel check from its own threads, but only the main thread ever
     // sees a signal, so it runs beside us and we do the watching.
     let mut interrupted: Option<PyErr> = None;
     let joined = std::thread::scope(|scope| {
-        let handle = scope.spawn(|| analyzer.run(methods, db.0, &meta));
+        let handle = scope.spawn(|| analyzer.run(methods, writer, &meta));
         while !handle.is_finished() {
             py.detach(|| std::thread::sleep(Duration::from_millis(100)));
             if let Err(e) = py.check_signals() {
@@ -443,5 +449,5 @@ pub fn run_taint_analysis(
 
     let res = joined.map_err(|_| DtuError::new_err("the analysis thread panicked"))?;
     let db = res.map_err(|e| DtuBaseError::from(e.to_string()))?;
-    Ok(PyTaintAnalysisDb(db))
+    Ok(PyTaintAnalysisDb(db.into_graph()))
 }

@@ -38,12 +38,14 @@ mod pydtu {
 
     #[pymodule_export]
     use super::graph::{
-        GraphDB, PyClassSpec, PyFieldRef, PyFieldSpec, PyMethodCallPath, PyMethodSpec,
+        GraphDB, PyClassSpec, PyFieldRef, PyFieldSpec, PyMethodCallPath, PyMethodCallPaths,
+        PyMethodSpec,
     };
 
     #[pymodule_export]
     use super::taint::{
-        PyTaintOptions, PyTaintSeedOptions, PyTaintSink, PyTaintSinkKind, PyTaintSource,
+        PyTaintAnalysisDb, PyTaintOptions, PyTaintSeedOptions, PyTaintSink, PyTaintSinkKind,
+        PyTaintSource,
     };
 
     #[pymodule_export]

@@ -4,14 +4,17 @@ use clap::{self, Args};
 
 use dtu::{
     analysis::{
-        db::taint::{db::GraphTaintAnalysisDb, writer::RunMeta},
-        taint::{TaintAnalyzer, TaintAnalyzerOptions, TaintSeedOptions, TaintSeeds},
+        taint::{
+            db::TaintAnalysisDbWriter, writer::RunMeta, TaintAnalyzer, TaintAnalyzerOptions,
+            TaintSeedOptions, TaintSeeds,
+        },
         SsaClassLoader,
     },
     db::{
+        self,
         device::models::DiffedApkIPC,
         graph::{GraphDatabase, MethodSearch, MethodSearchParams, MethodSpec},
-        ApkIPC, DeviceDatabase, Diffable,
+        ApkIPC, ApkIPCKind, DeviceDatabase, Diffable, PermissionMode,
     },
     utils::ClassName,
     Context,
@@ -61,6 +64,10 @@ pub struct ComponentOpts {
     #[arg(short = 'S', long, value_parser = DiffSourceValueParser)]
     pub diff_source: Option<dtu::db::device::models::DiffSource>,
 
+    /// Only show entries with open or normal level permissions
+    #[arg(short = 'O', long)]
+    pub only_open: bool,
+
     /// Only show public entries
     #[arg(short = 'P', long)]
     pub only_public: bool,
@@ -85,10 +92,7 @@ impl ComponentOpts {
         D: DiffedApkIPC<Inner = T> + Diffable + AsRef<T>,
     {
         if !self.only_new {
-            return Ok(all()?
-                .into_iter()
-                .filter(|it| self.keep(it.is_enabled(), it.is_exported()))
-                .collect());
+            return Ok(all()?.into_iter().filter(|it| self.keep(db, it)).collect());
         }
 
         let source = get_diff_source(ctx, meta, db, &self.diff_source)?;
@@ -96,15 +100,70 @@ impl ComponentOpts {
             .into_iter()
             .filter(|it| {
                 let inner = it.as_ref();
-                !it.in_diff() && self.keep(inner.is_enabled(), inner.is_exported())
+                !it.in_diff() && self.keep(db, inner)
             })
             .map(DiffedApkIPC::into_apk_ipc)
             .collect())
     }
 
-    fn keep(&self, enabled: bool, exported: bool) -> bool {
-        (!self.only_enabled || enabled) && (!self.only_public || exported)
+    fn keep<T>(&self, db: &DeviceDatabase, it: &T) -> bool
+    where
+        T: ApkIPC,
+    {
+        if self.only_enabled && !it.is_enabled() {
+            return false;
+        }
+
+        if self.only_public && !it.is_exported() {
+            return false;
+        }
+
+        if !self.only_open {
+            return true;
+        }
+
+        let kind = it.get_kind();
+
+        // Fail true in the case of DB failure: if we can't find the permission assume it is normal
+        // level. This just means we'll eventually be like "oh oops" instead of missing something.
+
+        match kind {
+            ApkIPCKind::Service | ApkIPCKind::Receiver | ApkIPCKind::Activity => {
+                let Some(raw_perm) = it.get_generic_permission() else {
+                    return true;
+                };
+
+                permission_is_normal(db, raw_perm).unwrap_or(true)
+            }
+            ApkIPCKind::Provider => {
+                let mut had_perm = false;
+                let mut had_db_failure = false;
+
+                for mode in [
+                    PermissionMode::Read,
+                    PermissionMode::Write,
+                    PermissionMode::Generic,
+                ] {
+                    if let Some(raw_perm) = it.get_permission_for_mode(mode) {
+                        had_perm = true;
+                        let Ok(is_normal) = permission_is_normal(db, raw_perm) else {
+                            had_db_failure = true;
+                            continue;
+                        };
+                        if is_normal {
+                            return true;
+                        }
+                    }
+                }
+                // No permission was found or a db failure was encounted so we fail true
+                !had_perm || had_db_failure
+            }
+        }
     }
+}
+
+fn permission_is_normal(db: &DeviceDatabase, raw_perm: &str) -> db::Result<bool> {
+    Ok(db.get_permission_by_name(raw_perm)?.protection_level == "normal")
 }
 
 /// Every method the graph database has for the given class
@@ -168,7 +227,7 @@ impl Analysis {
 /// the expensive part of every command, so nothing about it can appear in the key.
 pub fn analyze<F>(
     ctx: &dyn Context,
-    db: GraphTaintAnalysisDb,
+    db: TaintAnalysisDbWriter,
     opts: &RunOpts,
     resolve: F,
 ) -> anyhow::Result<()>

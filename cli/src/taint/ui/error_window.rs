@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::KeyEvent;
 use ratatui::{
     layout::{Alignment, Constraint, Layout},
     style::Stylize,
@@ -7,7 +7,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::taint::ui::{Tools, Window, WindowAction};
+use crate::taint::ui::{config::Config, Tools, Window, WindowAction};
 
 pub struct ErrorWindow {
     msg: String,
@@ -20,7 +20,7 @@ impl ErrorWindow {
 }
 
 impl Window for ErrorWindow {
-    fn draw(&self, _tools: &Tools, frame: &mut Frame) {
+    fn draw(&self, _tools: &Tools, _cfg: &mut Config, frame: &mut Frame) {
         let layout = Layout::vertical(&[
             Constraint::Length(1),
             Constraint::Fill(1),
@@ -28,7 +28,7 @@ impl Window for ErrorWindow {
         ]);
         let [title_area, body_area, esc_area] = frame.area().layout(&layout);
         let title = Line::from("Error").centered().bold().red();
-        let esc = Line::from("Esc to go back").centered();
+        let esc = Line::from("Any key to go back").centered();
         let body = Paragraph::new(self.msg.as_str())
             .wrap(Wrap::default())
             .alignment(Alignment::Center)
@@ -38,10 +38,12 @@ impl Window for ErrorWindow {
         frame.render_widget(esc, esc_area);
     }
 
-    fn on_key_event(&mut self, _tools: &Tools, evt: KeyEvent) -> anyhow::Result<WindowAction> {
-        if matches!(evt.modifiers, KeyModifiers::NONE) && matches!(evt.code, KeyCode::Esc) {
-            return Ok(WindowAction::PopWindow);
-        }
-        Ok(WindowAction::default())
+    fn on_key_event(
+        &mut self,
+        _tools: &Tools,
+        _cfg: &mut Config,
+        _evt: KeyEvent,
+    ) -> anyhow::Result<WindowAction> {
+        Ok(WindowAction::PopWindow)
     }
 }

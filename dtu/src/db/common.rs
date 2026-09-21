@@ -12,6 +12,7 @@ use diesel::r2d2::{
     self, ConnectionManager, CustomizeConnection, Pool, PoolError, PooledConnection,
 };
 use diesel::result::{DatabaseErrorInformation, DatabaseErrorKind, Error as DieselError};
+use diesel::sql_types::Text;
 use diesel::sqlite::Sqlite;
 use diesel::{prelude::*, sql_query};
 use diesel::{ConnectionError, SqliteConnection};
@@ -115,14 +116,16 @@ impl From<DieselError> for Error {
 
 pub type Result<T> = result::Result<T, Error>;
 
-/// Every pragma any part of the crate changes must appear here at its baseline value, since
-/// this is also what [Db::write_with_pragmas] restores afterwards. That is why you'll see a lot of
-/// SQLite defaults in here.
+/// Every connection pragma any part of the crate changes must appear here at its baseline value,
+/// since this is also what [Db::write_with_pragmas] restores afterwards. That is why you'll see a
+/// lot of SQLite defaults in here.
+///
+/// Note that something like `journal_mode` doesn't belong here! That's not connection based, that's
+/// a property of the database itself.
 const CONNECTION_PRAGMAS: &str = "\
-PRAGMA journal_mode = DELETE;
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
-PRAGMA synchronous = FULL;
+PRAGMA synchronous = NORMAL;
 PRAGMA temp_store = DEFAULT;";
 
 /// Apply [CONNECTION_PRAGMAS] to a connection
@@ -167,20 +170,26 @@ struct DbInner {
     write_lock: Mutex<()>,
 }
 
+/// Return if the given compile option is set or not
+pub fn get_compile_option(option: &str, conn: &mut SqliteConnection) -> Result<bool> {
+    #[derive(QueryableByName)]
+    struct CompileOption {
+        #[diesel(sql_type = diesel::sql_types::Integer)]
+        enabled: i32,
+    }
+    Ok(
+        query!(sql_query("SELECT sqlite_compileoption_used(?) AS enabled").bind::<Text, _>(option))
+            .get_result::<CompileOption>(conn)
+            .map(|it| it.enabled == 1)?,
+    )
+}
+
 impl Db {
+    pub const FTS5_COMPILE_OPTION: &'static str = "ENABLE_FTS5";
+
     pub fn check_fts5(&self) -> bool {
-        #[derive(QueryableByName)]
-        struct CompileOption {
-            #[diesel(sql_type = diesel::sql_types::Integer)]
-            enabled: i32,
-        }
-        self.query(|c| {
-            query!(sql_query(
-                "SELECT sqlite_compileoption_used('ENABLE_FTS5') AS enabled"
-            ))
-            .get_result::<CompileOption>(c)
-        })
-        .is_ok_and(|it| it.enabled == 1)
+        self.query(|c| get_compile_option(Self::FTS5_COMPILE_OPTION, c))
+            .unwrap_or(false)
     }
 
     /// Read using any available connection
@@ -263,10 +272,15 @@ struct PragmaReset(PooledSqlite);
 
 impl Drop for PragmaReset {
     fn drop(&mut self) {
-        if let Err(e) = self.0.batch_execute(CONNECTION_PRAGMAS) {
-            // Nothing here can evict the connection from the pool, so all this can do is
-            // say so as loudly as it can
-            log::error!("failed to restore the connection pragmas: {}", e);
+        // One statement at a time. As a single batch, one failing pragma skips every pragma
+        // after it, and the connection goes back to the pool with, say, foreign keys still
+        // off. Restoring what can be restored beats stopping at the first problem.
+        for pragma in CONNECTION_PRAGMAS.lines().filter(|it| !it.is_empty()) {
+            if let Err(e) = self.0.batch_execute(pragma) {
+                // Nothing here can evict the connection from the pool, so all this can do is
+                // say so as loudly as it can
+                log::error!("failed to restore `{}`: {}", pragma, e);
+            }
         }
     }
 }
@@ -409,6 +423,20 @@ impl Db {
     ) -> Result<Self> {
         log::debug!("connecting to the database at {}", url);
 
+        // Migrations run once, on a connection outside the pool, before the pool (and its
+        // customizer) ever touches the file. r2d2 customizes a connection as soon as it's
+        // created rather than on checkout, and `min_idle` below makes the pool create one
+        // eagerly in `build()`, so by the time `pool.get()` could run migrations the
+        // customizer would already have run against a pre-migration schema. A customizer
+        // that assumes the schema exists (e.g. to create triggers) would then fail with
+        // something like "no such table".
+        let mut conn = SqliteConnection::establish(url).map_err(Error::ConnectionError)?;
+        conn.run_pending_migrations(migrations)?;
+        #[cfg(test)]
+        conn.run_pending_migrations(test_migrations)
+            .expect("failed to load test migrations");
+        drop(conn);
+
         let pool = Pool::builder()
             .max_size(max_connections())
             // Connections are opened on demand, not all at once up front
@@ -419,15 +447,6 @@ impl Db {
             .connection_customizer(customizer)
             .build(ConnectionManager::<SqliteConnection>::new(url))
             .map_err(Error::from)?;
-
-        // Migrations run once, before the pool serves anyone else. Several connections
-        // running them on one file concurrently is not safe.
-        let mut conn = pool.get().map_err(Error::from)?;
-        conn.run_pending_migrations(migrations)?;
-        #[cfg(test)]
-        conn.run_pending_migrations(test_migrations)
-            .expect("failed to load test migrations");
-        drop(conn);
 
         Ok(Self(Arc::new(DbInner {
             pool,

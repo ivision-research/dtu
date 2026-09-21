@@ -1,12 +1,12 @@
 use std::collections::{BTreeSet, HashMap};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use clap::{self, Args};
-use dtu::analysis::db::GraphTaintAnalysisDb;
 use dtu::{
     analysis::{
         get_ssa_method,
-        taint::TaintSource,
+        taint::{db::TaintAnalysisDbWriter, TaintSource},
         typing::{complex_param_sources, resolve_returned_classes},
         SsaClassLoader,
     },
@@ -57,12 +57,12 @@ fn report_unresolved(unresolved: &[(ClassName, String)]) {
 struct Endpoint {
     binder: ClassName,
     iface: ClassName,
-    source: String,
+    source: Rc<str>,
 }
 
 impl ServiceBinders {
     pub fn run(self, ctx: &dyn Context) -> anyhow::Result<()> {
-        let db = GraphTaintAnalysisDb::new_from_path(ctx, &self.opts.run.out_file)?;
+        let db = TaintAnalysisDbWriter::new_from_path(ctx, &self.opts.run.out_file)?;
 
         let mut unresolved: Vec<(ClassName, String)> = Vec::new();
 
@@ -90,7 +90,7 @@ impl ServiceBinders {
                 let source = apk.device_path.as_squashed_str().to_string();
                 let class = service.get_class_name();
 
-                match self.resolve_endpoints(ctx, gdb, &loader, &class, &source) {
+                match self.resolve_endpoints(ctx, gdb, &loader, &class, source.into()) {
                     Ok(found) if found.is_empty() => {
                         log::warn!("no binder interface resolved for {class}, skipping it");
                         unresolved.push((class, String::from("no binder interface resolved")));
@@ -131,9 +131,9 @@ impl ServiceBinders {
         gdb: &dyn GraphDatabase,
         loader: &SsaClassLoader,
         class: &ClassName,
-        source: &str,
+        source: Rc<str>,
     ) -> anyhow::Result<Vec<Endpoint>> {
-        let on_bind = self.find_on_bind(gdb, class, source)?;
+        let on_bind = self.find_on_bind(gdb, class, &source)?;
         let ssa_class =
             loader.get_ssa_class(ctx, on_bind.class_id, &on_bind.class, &on_bind.source)?;
         let Some(ssa) = get_ssa_method(ssa_class.get(), &on_bind) else {
@@ -149,7 +149,7 @@ impl ServiceBinders {
                 log::warn!("{class}->onBind only resolved to IBinder, cannot find the interface");
                 continue;
             }
-            out.extend(self.resolve_candidates(gdb, class, &binder, source)?);
+            out.extend(self.resolve_candidates(gdb, class, &binder, &source)?);
         }
         Ok(out)
     }
@@ -167,7 +167,7 @@ impl ServiceBinders {
         gdb: &dyn GraphDatabase,
         service: &ClassName,
         binder: &ClassName,
-        source: &str,
+        source: &Rc<str>,
     ) -> anyhow::Result<Vec<Endpoint>> {
         // If we found classes implementing the class, then it is an interface and we should use
         // those child classes. We return early here and don't include the class itself in the list.
@@ -179,7 +179,7 @@ impl ServiceBinders {
                 .map(|it| Endpoint {
                     binder: it.name,
                     iface: binder.clone(),
-                    source: source.to_string(),
+                    source: Rc::clone(source),
                 })
                 .collect());
         }
@@ -203,7 +203,7 @@ impl ServiceBinders {
                 out.push(Endpoint {
                     binder: binder.clone(),
                     iface,
-                    source: source.to_string(),
+                    source: Rc::clone(source),
                 });
             }
         }
@@ -301,7 +301,7 @@ impl ServiceBinders {
                 MethodSearchParams::ByClass {
                     class: &endpoint.binder,
                 },
-                Some(endpoint.source.as_str()),
+                Some(endpoint.source.as_ref()),
                 None,
             );
 

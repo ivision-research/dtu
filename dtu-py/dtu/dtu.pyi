@@ -8,8 +8,8 @@ def split_smali_args(args: str) -> list[str]:
     """
 
 
-def find_files_for_class(
-    self, class_name: "ClassName", *, ctx: Optional["Context"] = None
+def find_smali_files_for_class(
+    class_name: "ClassName", *, ctx: Optional["Context"] = None
 ) -> list[Path]:
     """Searches the entire smali directory for the files that implement the given class.
 
@@ -18,7 +18,6 @@ def find_files_for_class(
 
 
 def get_smali_file_for_class(
-    self,
     class_name: "ClassName",
     *,
     apk_path: Optional["DevicePath"] = None,
@@ -30,6 +29,28 @@ def get_smali_file_for_class(
     If apk_path is None, the smali file is resolved within the framework.
     If ctx is None, the default context is used.
     """
+
+
+class Version:
+    @property
+    def major(self) -> int: ...
+    @property
+    def minor(self) -> int: ...
+    @property
+    def patch(self) -> int: ...
+    @property
+    def extra(self) -> Optional[str]: ...
+    @property
+    def commit(self) -> str: ...
+
+    def __str__(self) -> str: ...
+    def __repr__(self) -> str: ...
+
+
+VERSION: Version
+
+
+class DtuError(Exception): ...
 
 
 class Context:
@@ -298,15 +319,39 @@ class GraphDB:
 
     def get_methods(
         self,
-        /,
+        *,
         class_: Optional[str] = ...,
         name: Optional[str] = ...,
         signature: Optional[str] = ...,
+        return_type: Optional[str] = ...,
         source: Optional[str] = ...,
-    ) -> list[MethodSpec]: ...
+    ) -> list[MethodSpec]:
+        """At least one of class_ or name is required"""
+
+    def get_fields(
+        self,
+        class_: str,
+        *,
+        name: Optional[str] = ...,
+        type_: Optional[str] = ...,
+        source: Optional[str] = ...,
+    ) -> list[FieldSpec]: ...
+
+    def find_classes_with_method(
+        self,
+        name: str,
+        *,
+        args: Optional[str] = ...,
+        source: Optional[str] = ...,
+    ) -> list[ClassSpec]: ...
 
     def get_method_by_id(self, method: int) -> MethodSpec: ...
     def get_methods_by_id(self, methods: Sequence[int]) -> list[MethodSpec]: ...
+
+    def get_method_field_refs(self, method: int) -> list[FieldRef]: ...
+    def get_methods_referencing_field(
+        self, field: int, *, only_read: bool = ..., only_write: bool = ...
+    ) -> list[MethodSpec]: ...
 
     def get_strings_for_method(self, method: int) -> list[str]: ...
     def get_methods_for_string(self, string: str) -> list[MethodSpec]: ...
@@ -334,7 +379,14 @@ class GraphDB:
         signature: Optional[str] = ...,
         return_type: Optional[str] = ...,
         method_source: Optional[str] = ...,
-    ) -> list[MethodCallPath]: ...
+        max_depth: Optional[int] = ...,
+        max_paths: Optional[int] = ...,
+    ) -> MethodCallPaths:
+        """Find every method that calls the given one and is reachable from from_
+
+        Route building is bounded by max_depth and max_paths since the number of routes is
+        exponential in the depth. When a bound is hit the result is a subset and truncated is set.
+        """
 
     def find_field_refs_from(
         self,
@@ -345,7 +397,10 @@ class GraphDB:
         ty: Optional[str] = ...,
         field_source: Optional[str] = ...,
         only_write: bool = ...,
-    ) -> list[MethodCallPath]: ...
+        max_depth: Optional[int] = ...,
+        max_paths: Optional[int] = ...,
+    ) -> MethodCallPaths:
+        """The field analogue of find_callers_from"""
 
     def find_outgoing_calls(
         self,
@@ -354,14 +409,12 @@ class GraphDB:
         name: Optional[str] = ...,
         signature: Optional[str] = ...,
         source: Optional[str] = ...,
+        return_type: Optional[str] = ...,
         depth: int = ...,
     ) -> list[MethodCallPath]: ...
 
     def get_classes_for(self, src: str) -> list[ClassName]: ...
     def get_methods_for(self, source: str) -> list[MethodSpec]: ...
-
-
-class CachingGraphDB(GraphDB): ...
 
 
 class ClassSpec:
@@ -379,6 +432,8 @@ class ClassSpec:
 
 
 class FieldSpec:
+    @property
+    def id(self) -> int: ...
     @property
     def class_(self) -> ClassName: ...
     @property
@@ -429,42 +484,109 @@ class MethodCallPath:
     def initial(self) -> MethodSpec: ...
 
 
+class MethodCallPaths:
+    @property
+    def paths(self) -> list[MethodCallPath]: ...
+
+    @property
+    def truncated(self) -> bool:
+        """True when a bound stopped the search, so paths is a subset of what exists"""
+
+    def __len__(self) -> int: ...
+    def __repr__(self) -> str: ...
+
+
 class TaintSource:
-    @staticmethod
-    def Param(*, register: int) -> TaintSource: ...
-    @staticmethod
-    def MethodCall(
-        *,
-        class_: Optional[ClassName],
-        method: str,
-        args: str,
-        ret: Optional[str],
-    ) -> TaintSource: ...
-    @staticmethod
-    def Field(*, class_: ClassName, name: str) -> TaintSource: ...
+    """Where tainted data enters a method"""
+
+    class Param(TaintSource):
+        def __new__(cls, register: int) -> TaintSource.Param: ...
+        @property
+        def register(self) -> int: ...
+
+    class MethodCall(TaintSource):
+        def __new__(
+            cls,
+            class_: Optional[ClassName],
+            method: str,
+            args: str,
+            ret: Optional[str],
+        ) -> TaintSource.MethodCall: ...
+        @property
+        def class_(self) -> Optional[ClassName]:
+            """None when the source matches any receiver type"""
+        @property
+        def method(self) -> str: ...
+        @property
+        def args(self) -> str: ...
+        @property
+        def ret(self) -> Optional[str]:
+            """None when the source matches any return type"""
+
+    class Field(TaintSource):
+        def __new__(cls, class_: ClassName, name: str) -> TaintSource.Field: ...
+        @property
+        def class_(self) -> ClassName: ...
+        @property
+        def name(self) -> str: ...
 
     @staticmethod
-    def parse(value: str) -> TaintSource: ...
+    def parse(value: str) -> TaintSource:
+        """Parse the text form, e.g. `p1` or `*->getIntent()Landroid/content/Intent;`"""
 
     def __str__(self) -> str: ...
     def __repr__(self) -> str: ...
 
 
 class TaintSinkKind:
-    @staticmethod
-    def Phi() -> TaintSinkKind: ...
-    @staticmethod
-    def Array() -> TaintSinkKind: ...
-    @staticmethod
-    def Instruction(*, opcode: str) -> TaintSinkKind: ...
-    @staticmethod
-    def Field(*, class_: ClassName, name: str) -> TaintSinkKind: ...
-    @staticmethod
-    def MethodCall(*, method: int) -> TaintSinkKind: ...
-    @staticmethod
-    def ExternalCall(
-        *, class_: ClassName, name: str, args: str
-    ) -> TaintSinkKind: ...
+    class Phi(TaintSinkKind):
+        def __new__(cls) -> TaintSinkKind.Phi: ...
+
+    class Array(TaintSinkKind):
+        def __new__(cls) -> TaintSinkKind.Array: ...
+
+    class Instruction(TaintSinkKind):
+        def __new__(cls, opcode: str) -> TaintSinkKind.Instruction: ...
+        @property
+        def opcode(self) -> str: ...
+
+    class Field(TaintSinkKind):
+        """A field in the graph database"""
+
+        def __new__(cls, field: int) -> TaintSinkKind.Field: ...
+        @property
+        def field(self) -> int:
+            """The field id, see FieldSpec.id"""
+
+    class MethodCall(TaintSinkKind):
+        """A call to a method in the graph database"""
+
+        def __new__(cls, method: int) -> TaintSinkKind.MethodCall: ...
+        @property
+        def method(self) -> int:
+            """The method id, see GraphDB.get_method_by_id"""
+
+    class ExternalField(TaintSinkKind):
+        """A field that is not in the graph database"""
+
+        def __new__(cls, class_: ClassName, name: str) -> TaintSinkKind.ExternalField: ...
+        @property
+        def class_(self) -> ClassName: ...
+        @property
+        def name(self) -> str: ...
+
+    class ExternalCall(TaintSinkKind):
+        """A call to a method that is not in the graph database"""
+
+        def __new__(
+            cls, class_: ClassName, name: str, args: str
+        ) -> TaintSinkKind.ExternalCall: ...
+        @property
+        def class_(self) -> ClassName: ...
+        @property
+        def name(self) -> str: ...
+        @property
+        def args(self) -> str: ...
 
     def __str__(self) -> str: ...
     def __repr__(self) -> str: ...
@@ -472,60 +594,24 @@ class TaintSinkKind:
 
 class TaintSink:
     @property
-    def location(self) -> int: ...
+    def location(self) -> int:
+        """The id of the method the sink occurred in"""
     @property
     def kind(self) -> TaintSinkKind: ...
 
     def __repr__(self) -> str: ...
 
 
-class SourceTaint:
-    @property
-    def source(self) -> TaintSource: ...
-    @property
-    def paths(self) -> list[list[TaintSink]]: ...
+class TaintAnalysisDb:
+    """A taint analysis result database, attached to the project's graph database"""
 
-    def __repr__(self) -> str: ...
-
-
-class Origin:
-    @staticmethod
-    def Direct() -> Origin: ...
-    @staticmethod
-    def CallGraph(*, chains: Sequence[Sequence[int]]) -> Origin: ...
-
-    def __str__(self) -> str: ...
-    def __repr__(self) -> str: ...
-
-
-class MethodTaint:
-    @property
-    def method(self) -> int: ...
-    @property
-    def origin(self) -> Origin: ...
-    @property
-    def taint(self) -> list[SourceTaint]: ...
-
-    def __repr__(self) -> str: ...
-
-
-class TaintReport:
-    @staticmethod
-    def from_json(value: str) -> TaintReport: ...
-    @staticmethod
-    def from_file(path: str | Path) -> TaintReport: ...
-
-    @property
-    def analysis(self) -> list[MethodTaint]: ...
-    @property
-    def methods(self) -> list[MethodSpec]: ...
-
-    def method(self, id: int) -> Optional[MethodSpec]: ...
-
-    def __repr__(self) -> str: ...
+    def __new__(cls, ctx: Context, path: str) -> TaintAnalysisDb:
+        """Open the database at path, creating it if it does not exist"""
 
 
 class TaintSeedOptions:
+    """Where the call graph may look for seeds beyond the methods asked for"""
+
     def __new__(
         cls,
         sources: Sequence[str] = ...,
@@ -533,7 +619,9 @@ class TaintSeedOptions:
     ) -> TaintSeedOptions: ...
 
     sources: list[str]
+    """Restrict target lookups to these graph sources, empty for any"""
     deny_classes: list[ClassName]
+    """Never seed methods in these classes, even when the graph reaches them"""
 
     def __repr__(self) -> str: ...
 
@@ -548,19 +636,27 @@ class TaintOptions:
 
     num_threads: Optional[int]
     depth: Optional[int]
+    """Maximum call depth, capped by the analyzer itself"""
     seed: Optional[TaintSeedOptions]
+    """None to only analyze the methods that were asked for"""
 
     def __repr__(self) -> str: ...
 
 
-def run_taint(
-    gdb: GraphDB,
+def run_taint_analysis(
+    db: TaintAnalysisDb,
     methods: Sequence[MethodSpec],
     seeds: Sequence[TaintSource] | Mapping[int, Sequence[TaintSource]],
     *,
     ctx: Optional[Context] = ...,
     options: Optional[TaintOptions] = ...,
-) -> TaintReport: ...
+) -> TaintAnalysisDb:
+    """Run the taint analysis over methods, writing the results into db
+
+    seeds is either one list applied to every method, or a dict keyed by method id. A
+    TaintSource.Param only means something against the signature it was written for, so a
+    register seed belongs in the dict form.
+    """
 
 
 class DeviceDB:

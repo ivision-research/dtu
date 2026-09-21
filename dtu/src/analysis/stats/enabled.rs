@@ -67,13 +67,15 @@ impl Drop for YokeCacheStats {
 }
 
 pub struct CacheStats {
+    name: &'static str,
     attempts: usize,
     lru_hits: usize,
 }
 
 impl CacheStats {
-    pub fn new() -> Self {
+    pub fn new(name: &'static str) -> Self {
         Self {
+            name,
             attempts: 0,
             lru_hits: 0,
         }
@@ -91,7 +93,7 @@ impl Drop for CacheStats {
         let attempts = self.attempts;
         let lru_hits = self.lru_hits;
 
-        eprintln!("CacheStats stats:");
+        eprintln!("CacheStats stats ({}):", self.name);
         eprintln!("\tLookups: {}", attempts);
         let lru_pct = 100.0f32 * (lru_hits as f32) / (attempts as f32);
         eprintln!("\tLRU hits: {} ({:.2}%)", lru_hits, lru_pct);

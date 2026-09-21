@@ -1,8 +1,10 @@
 use std::ops::Deref;
 
 use crossterm::event::{KeyEvent, MouseEvent};
-use dtu::{analysis::db::taint::db::GraphTaintAnalysisDb, Context};
+use dtu::{analysis::taint::db::GraphTaintAnalysisDb, Context};
 use ratatui::Frame;
+
+use crate::taint::ui::config::Config;
 
 #[derive(Default)]
 pub enum WindowAction {
@@ -34,11 +36,21 @@ impl<'a> Deref for Tools<'a> {
 }
 
 pub trait Window {
-    fn on_key_event(&mut self, _tools: &Tools, _evt: KeyEvent) -> anyhow::Result<WindowAction> {
+    fn on_key_event(
+        &mut self,
+        _tools: &Tools,
+        _cfg: &mut Config,
+        _evt: KeyEvent,
+    ) -> anyhow::Result<WindowAction> {
         Ok(WindowAction::default())
     }
-    fn on_mouse_event(&mut self, _tools: &Tools, _evt: MouseEvent) -> anyhow::Result<WindowAction> {
+    fn on_mouse_event(
+        &mut self,
+        _tools: &Tools,
+        _cfg: &mut Config,
+        _evt: MouseEvent,
+    ) -> anyhow::Result<WindowAction> {
         Ok(WindowAction::default())
     }
-    fn draw(&self, tools: &Tools, frame: &mut Frame);
+    fn draw(&self, tools: &Tools, cfg: &mut Config, frame: &mut Frame);
 }

@@ -3,8 +3,7 @@ use std::collections::HashMap;
 use clap::{self, Args};
 use dtu::{
     analysis::{
-        db::GraphTaintAnalysisDb,
-        taint::{TaintSeedOptions, TaintSource},
+        taint::{db::TaintAnalysisDbWriter, TaintSeedOptions, TaintSource},
         typing::complex_param_sources,
     },
     db::graph::{models::MethodId, MethodSearch, MethodSpec, FRAMEWORK_SOURCE},
@@ -60,7 +59,7 @@ impl Methods {
             anyhow::bail!("nothing to track, pass --taint or --complex-params");
         }
 
-        let db = GraphTaintAnalysisDb::new_from_path(ctx, &self.run.out_file)?;
+        let db = TaintAnalysisDbWriter::new_from_path(ctx, &self.run.out_file)?;
 
         analyze(ctx, db, &self.run, |gdb| {
             let class = ClassName::from(self.class.as_str());

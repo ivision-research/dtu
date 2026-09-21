@@ -179,6 +179,37 @@ pub struct SourcedString {
     pub source: String,
 }
 
+/// Bounds on a path enumeration
+///
+/// Enumerating every simple path through a call graph is exponential in the depth, so these are
+/// required rather than optional. Whatever is dropped is still reachable by walking the graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PathLimits {
+    /// The longest path to build, counted in methods
+    pub max_depth: usize,
+    /// Stop once this many paths have been built
+    pub max_paths: usize,
+}
+
+impl Default for PathLimits {
+    fn default() -> Self {
+        // A route longer than this is not readable anyway, and the path cap keeps one wide
+        // method from swamping the result: real graphs have nodes with a thousand callees.
+        Self {
+            max_depth: 12,
+            max_paths: 10_000,
+        }
+    }
+}
+
+/// The result of a bounded path search
+#[derive(Debug, Clone, Default)]
+pub struct MethodCallPaths {
+    pub paths: Vec<MethodCallPath>,
+    /// Set when a [PathLimits] stopped the search, so `paths` is a subset of what exists
+    pub truncated: bool,
+}
+
 #[derive(PartialEq, Eq, Hash, Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(test, derive(PartialOrd, Ord))]
 pub struct MethodCallPath {
@@ -259,8 +290,8 @@ where
     ))
 }
 
-#[derive(Eq, Clone, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(test, derive(Debug, PartialOrd, Ord))]
+#[derive(Eq, Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(test, derive(PartialOrd, Ord))]
 pub struct FieldSpec {
     pub id: FieldId,
     pub class: ClassName,

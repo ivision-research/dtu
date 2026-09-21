@@ -6,10 +6,10 @@ use std::{
 use anyhow::bail;
 use clap::{self, Args};
 use dtu::{
-    analysis::db::taint::{
+    analysis::taint::{
         db::{
             Filter as AnalysisFilter, GraphTaintAnalysisDb, ReportIdMap, ResolvableIds,
-            UnresolvedOrigin, UnresolvedTaintRoutes, UnresolvedTaintSinkKind,
+            UnresolvedNode, UnresolvedOrigin, UnresolvedTaintGraphs, UnresolvedTaintSink,
         },
         models::{AnalyzedMethodId, MethodStatus},
     },
@@ -55,6 +55,8 @@ pub struct Filter {
 
 #[derive(serde::Serialize)]
 struct JsonTaintSink {
+    /// The node's own id, which `JsonGraph::edges` refers to
+    node: i32,
     in_method: i32,
     kind: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -62,16 +64,22 @@ struct JsonTaintSink {
 }
 
 #[derive(serde::Serialize)]
-struct JsonRoute {
+struct JsonGraph {
     source: i32,
+    entry: i32,
     sinks: Vec<JsonTaintSink>,
+    /// Every edge between two of this graph's nodes. A node can be reached more than one way and
+    /// the sink list alone does not say how, so the edges are the graph's real structure.
+    edges: Vec<(i32, i32)>,
 }
 
 #[derive(serde::Serialize)]
 struct JsonAnalyzedMethod {
     entry_method: i32,
-    origins: Option<Vec<Vec<MethodId>>>,
-    routes: Vec<JsonRoute>,
+    /// False when the call graph led here rather than the method being asked for. The routes
+    /// that reach it live in the graph database, see `UnresolvedOrigin::Indirect`.
+    direct: bool,
+    graphs: Vec<JsonGraph>,
 }
 
 #[derive(serde::Serialize)]
@@ -124,9 +132,9 @@ impl Filter {
         }
 
         let matching_anas = db.get_analysis_matching(filters)?;
-        let mut matching_routes = HashSet::new();
+        let mut matching_graphs = HashSet::new();
         for id in matching_anas.iter().copied() {
-            matching_routes.extend(db.get_routes_matching(id, filters)?);
+            matching_graphs.extend(db.get_graphs_matching(id, filters)?);
         }
         let matching_anas: HashSet<AnalyzedMethodId> =
             HashSet::from_iter(matching_anas.iter().copied());
@@ -134,6 +142,7 @@ impl Filter {
         let mut analyses = Vec::new();
 
         let mut seen_sinks = HashSet::new();
+        let mut seen_fields = HashSet::new();
         let mut seen_methods = HashSet::new();
         let mut seen_sources = HashSet::new();
 
@@ -150,69 +159,54 @@ impl Filter {
                 continue;
             }
 
-            let routes = db.get_routes_for_analysis(&ana)?;
+            let graphs = db.get_graphs_for_analysis(&ana)?;
 
-            let UnresolvedTaintRoutes { origin, routes } = routes;
+            let UnresolvedTaintGraphs { origin, graphs } = graphs;
 
-            let routes = routes
+            let graphs = graphs
                 .into_iter()
-                .filter(|it| matching_routes.contains(&it.id))
+                .filter(|it| matching_graphs.contains(&it.id))
                 .collect::<Vec<_>>();
 
-            if routes.is_empty() {
+            if graphs.is_empty() {
                 continue;
             }
 
-            let mut jroutes = Vec::new();
+            let mut jgraphs = Vec::new();
             seen_methods.insert(ana.method.raw());
 
-            for route in routes {
-                seen_sources.insert(route.source.raw());
-                let mut jsinks = Vec::new();
-                for sink in route.sinks {
-                    let (kind, id) = match sink.sink {
-                        UnresolvedTaintSinkKind::Phi => ("phi", None),
-                        UnresolvedTaintSinkKind::Array => ("array", None),
-                        UnresolvedTaintSinkKind::Field(id) => ("field", Some(id.raw())),
-                        UnresolvedTaintSinkKind::Call(id) => {
-                            seen_methods.insert(id.raw());
-                            ("call", Some(id.raw()))
-                        }
-                        UnresolvedTaintSinkKind::Instruction(id) => ("instruction", Some(id.raw())),
-                        UnresolvedTaintSinkKind::ExternalCall(id) => ("external", Some(id.raw())),
-                    };
-
-                    if let Some(id) = id {
-                        // Calls are already accounted for in the methods entry
-                        if kind != "call" {
-                            seen_sinks.insert(id);
-                        }
-                    }
-
-                    let jts = JsonTaintSink {
-                        kind,
-                        id,
-                        in_method: sink.in_method.raw(),
-                    };
-                    jsinks.push(jts);
+            for graph in graphs {
+                seen_sources.insert(graph.source.raw());
+                let mut jsinks = Vec::with_capacity(graph.nodes.len());
+                for node in &graph.nodes {
+                    jsinks.push(json_sink(
+                        node,
+                        &mut seen_methods,
+                        &mut seen_fields,
+                        &mut seen_sinks,
+                    ));
                 }
-                jroutes.push(JsonRoute {
-                    source: route.source.raw(),
+                jgraphs.push(JsonGraph {
+                    source: graph.source.raw(),
+                    entry: graph.entry.raw(),
                     sinks: jsinks,
+                    edges: graph
+                        .edges
+                        .iter()
+                        .map(|(src, dst)| (src.raw(), dst.raw()))
+                        .collect(),
                 });
             }
 
             analyses.push(JsonAnalyzedMethod {
                 entry_method: ana.method.raw(),
-                routes: jroutes,
-                origins: match origin {
-                    UnresolvedOrigin::Direct => None,
-                    UnresolvedOrigin::CallGraph { chains } => Some(chains),
-                },
+                graphs: jgraphs,
+                direct: matches!(origin, UnresolvedOrigin::Direct),
             });
         }
 
         let ReportIdMap {
+            mut fields,
             mut methods,
             mut sinks,
             mut sources,
@@ -221,6 +215,12 @@ impl Filter {
         let methods = methods.take().map(|it| {
             it.into_iter()
                 .filter(|(k, _)| seen_methods.contains(&k.raw()))
+                .collect::<HashMap<_, _>>()
+        });
+
+        let fields = fields.take().map(|it| {
+            it.into_iter()
+                .filter(|(k, _)| seen_fields.contains(&k.raw()))
                 .collect::<HashMap<_, _>>()
         });
 
@@ -239,6 +239,7 @@ impl Filter {
         let output = JsonOutput {
             results: analyses,
             map: ReportIdMap {
+                fields,
                 methods,
                 sinks,
                 sources,
@@ -274,5 +275,45 @@ impl Filter {
         }
 
         Ok(Some(mids))
+    }
+}
+
+/// Render one node as JSON, tracking which methods/fields/sinks it referenced along the way
+fn json_sink(
+    node: &UnresolvedNode,
+    seen_methods: &mut HashSet<i32>,
+    seen_fields: &mut HashSet<i32>,
+    seen_sinks: &mut HashSet<i32>,
+) -> JsonTaintSink {
+    let (kind, id) = match node.sink {
+        UnresolvedTaintSink::Phi => ("phi", None),
+        UnresolvedTaintSink::Array => ("array", None),
+        UnresolvedTaintSink::Field(id) => {
+            seen_fields.insert(id.raw());
+            ("field", Some(id.raw()))
+        }
+        UnresolvedTaintSink::Call(id) => {
+            seen_methods.insert(id.raw());
+            ("call", Some(id.raw()))
+        }
+        UnresolvedTaintSink::Instruction(id) => {
+            seen_sinks.insert(id.raw());
+            ("instruction", Some(id.raw()))
+        }
+        UnresolvedTaintSink::ExternalCall(id) => {
+            seen_sinks.insert(id.raw());
+            ("external", Some(id.raw()))
+        }
+        UnresolvedTaintSink::ExternalField(id) => {
+            seen_sinks.insert(id.raw());
+            ("external-field", Some(id.raw()))
+        }
+    };
+
+    JsonTaintSink {
+        node: node.id.raw(),
+        kind,
+        id,
+        in_method: node.location.raw(),
     }
 }

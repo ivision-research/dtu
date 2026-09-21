@@ -1,6 +1,6 @@
 use clap::{self, Args};
 use dtu::{
-    analysis::{db::GraphTaintAnalysisDb, taint::TaintSource},
+    analysis::taint::{db::TaintAnalysisDbWriter, TaintSource},
     db::{
         graph::{MethodSearch, MethodSearchParams, MethodSpec},
         meta::get_default_metadb,
@@ -20,7 +20,7 @@ pub struct ReceiverIntents {
 
 impl ReceiverIntents {
     pub fn run(self, ctx: &dyn Context) -> anyhow::Result<()> {
-        let db = GraphTaintAnalysisDb::new_from_path(ctx, &self.opts.run.out_file)?;
+        let db = TaintAnalysisDbWriter::new_from_path(ctx, &self.opts.run.out_file)?;
 
         analyze(ctx, db, &self.opts.run, |gdb| {
             // We track the passed in intent. The taint rules will cover all interesting methods and

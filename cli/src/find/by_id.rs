@@ -62,7 +62,6 @@ impl MethodById {
                             }
                             print_class(&printer, c);
                         }
-                        Type::Unknown => {}
                     }
                 }
             }

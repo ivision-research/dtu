@@ -143,12 +143,13 @@ pub trait GraphDatabase: Sync + Send {
     /// Find all callers of the given method within the set of provided methods
     ///
     /// This is similar to [GraphDatabase::find_callers] but the results are bounded by the
-    /// originating methods
+    /// originating methods. Be careful with your limits!
     fn find_callers_from(
         &self,
         method: &MethodSearch,
         methods: &[MethodId],
-    ) -> Result<Vec<MethodCallPath>>;
+        limits: PathLimits,
+    ) -> Result<MethodCallPaths>;
 
     /// Find any methods that reference the provided field within the set of provided methods
     ///
@@ -158,7 +159,30 @@ pub trait GraphDatabase: Sync + Send {
         field: &FieldSearch,
         action: FieldAccessOp,
         methods: &[MethodId],
-    ) -> Result<Vec<MethodCallPath>>;
+        limits: PathLimits,
+    ) -> Result<MethodCallPaths>;
+
+    /// Every method that directly calls one of `targets` and is itself reachable from `methods`
+    ///
+    /// This answers only the reachability question. Enumerating the paths that get there is
+    /// exponential on a real call graph, so a caller that just needs the set of entrypoints should
+    /// use this and walk the graph itself if it later wants a specific path.
+    fn find_callers_reachable_from(
+        &self,
+        targets: &[MethodId],
+        methods: &[MethodId],
+    ) -> Result<Vec<MethodSpec>>;
+
+    /// Every method that accesses one of `targets` with `action` and is itself reachable from
+    /// `methods`
+    ///
+    /// The field counterpart to [GraphDatabase::find_callers_reachable_from].
+    fn find_field_refs_reachable_from(
+        &self,
+        targets: &[FieldId],
+        action: FieldAccessOp,
+        methods: &[MethodId],
+    ) -> Result<Vec<MethodSpec>>;
 
     /// Find all calls leaving the given method up to a given depth.
     fn find_outgoing_calls(&self, from: &MethodSearch, depth: usize)

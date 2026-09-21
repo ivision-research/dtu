@@ -1,4 +1,6 @@
 use std::{
+    borrow::Cow,
+    cell::Cell,
     collections::{HashMap, HashSet},
     ops::{Deref, DerefMut},
 };
@@ -6,12 +8,12 @@ use std::{
 use anyhow::bail;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use dtu::{
-    analysis::db::taint::{
+    analysis::taint::{
         db::{AnalyzedMethodSpec, Filter, GraphTaintAnalysisDb},
-        models::{AnalyzedMethodId, MethodStatus},
+        models::AnalyzedMethodId,
     },
     db::graph::MethodSpec,
-    smalisa::Type,
+    smalisa::{ClassName as SClassName, JavaClassName, OwnedJavaClassName},
     utils::{FilterContainer, FilterVec, SmaliMethodSignatureIterator},
 };
 use ratatui::{
@@ -24,23 +26,44 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    taint::ui::{window::WindowAction, Command, CommandHandler, MethodPathsWindow, Tools},
-    ui::widgets::list::new_list,
+    taint::ui::{
+        config::{Config, Detail},
+        window::WindowAction,
+        Command, CommandHandler, GraphViewWindow, Tools,
+    },
+    ui::{fit, widgets::list::new_list},
 };
 
 use crate::taint::ui::window::Window;
 
-fn has_chains(_args: Vec<String>, _tools: &Tools, state: &mut State) -> anyhow::Result<()> {
-    state.filter_methods(Box::new(move |it| it.nchains > 0));
+const WELL_KNOWN_PACKAGES_JAVA: &[&'static str] = &["java.lang", "android.os", "android.content"];
+
+fn only_indirect(
+    _args: Vec<String>,
+    _tools: &Tools,
+    _cfg: &mut Config,
+    state: &mut State,
+) -> anyhow::Result<()> {
+    state.filter_methods(Box::new(move |it| !it.spec.direct));
     Ok(())
 }
 
-fn clear_filter(_args: Vec<String>, _tools: &Tools, state: &mut State) -> anyhow::Result<()> {
+fn clear_filter(
+    _args: Vec<String>,
+    _tools: &Tools,
+    _cfg: &mut Config,
+    state: &mut State,
+) -> anyhow::Result<()> {
     state.clear_filters();
     Ok(())
 }
 
-fn do_filter(args: Vec<String>, tools: &Tools, state: &mut State) -> anyhow::Result<()> {
+fn do_filter(
+    args: Vec<String>,
+    tools: &Tools,
+    _cfg: &mut Config,
+    state: &mut State,
+) -> anyhow::Result<()> {
     if args.len() == 0 {
         state.clear_filters();
         return Ok(());
@@ -59,6 +82,21 @@ fn do_filter(args: Vec<String>, tools: &Tools, state: &mut State) -> anyhow::Res
     state.prev_filters = Some(new_filters);
     Ok(())
 }
+
+/// Shown by `keys` and `help keys`
+static KEYS_HELP: &str = "\
+j / k          move the cursor, arrows work too
+^d / ^u        move half a screen
+PgDn / PgUp    move a whole screen
+Enter          open the selected method
+/              filter by name, Enter keeps it, Esc drops it
+d              change display detail
+H              hide or unhide the selected method
+.              show hidden methods
+Esc            clear every filter
+?              this list
+:              command, try `help`
+^C             quit";
 
 static FILTER_LONG_HELP: &'static str = r#"Filter methods by their paths, multiple filters can be applied
 
@@ -100,11 +138,11 @@ static COMMANDS: &[(&'static str, Command<State>)] = &[
         },
     ),
     (
-        "has-chains",
+        "indirect",
         Command {
-            help: Some("only show methods with chains"),
+            help: Some("only show methods the call graph led to"),
             long_help: None,
-            func: has_chains,
+            func: only_indirect,
         },
     ),
 ];
@@ -112,9 +150,21 @@ static COMMANDS: &[(&'static str, Command<State>)] = &[
 pub struct State {
     methods: FilterVec<MethodData>,
     filters: Vec<Box<dyn Fn(&MethodData) -> bool>>,
-    name_filter: Option<String>,
+    /// The name search, applied by [State::refilter] whenever it is set
+    display_filter: Option<String>,
+    /// Whether keystrokes are going into the name search. The text outlives the editing, which
+    /// is what Enter does: stop typing but keep the list narrowed.
+    editing_name: bool,
     show_hidden: bool,
+    detail: Detail,
     hidden_methods: HashSet<AnalyzedMethodId>,
+    /// Body height of the last draw, so the page keys know how far a page is
+    page: Cell<usize>,
+    /// The list's scroll offset, carried between draws.
+    ///
+    /// Rebuilding [ListState] each frame would start it at zero, and the widget only scrolls far
+    /// enough to reveal the selection, which pins the selection to the bottom of the viewport.
+    list_offset: Cell<usize>,
     prev_filters: Option<Vec<Filter>>,
 }
 
@@ -124,24 +174,41 @@ pub struct SelectMethodWindow {
 }
 
 impl State {
+    fn show_classes(&self) -> bool {
+        self.detail == Detail::Moderate || self.detail == Detail::Full
+    }
+
+    fn show_packages(&self) -> bool {
+        self.detail == Detail::Full
+    }
+
     /// Call this instead of directly calling unfilter directly on [Self::methods], as there are
     /// some default filters we want to always apply
     fn clear_filters(&mut self) {
         self.filters.clear();
+        // The parsed filters ride along to the graph view, so dropping the predicates without
+        // dropping these would open every method filtered by a search the list no longer shows
+        self.prev_filters = None;
+        // A persisted name search is a filter like any other, and this is the only way out of one
+        self.display_filter = None;
+        self.editing_name = false;
         self.refilter();
     }
 
     /// Rerun all filters on the methods
     fn refilter(&mut self) {
+        // The list is about to be a different length, so the old scroll offset means nothing
+        self.list_offset.set(0);
         // Always filter out hidden things unless we're showing hidden things.
         let hidden = &self.hidden_methods;
         let show_hidden = self.show_hidden;
+        let include_class = self.show_classes();
         self.methods.filter(|it| {
             (show_hidden || !hidden.contains(&it.analysis_id))
                 && self
-                    .name_filter
+                    .display_filter
                     .as_ref()
-                    .is_none_or(|name_filter| it.smali.contains(name_filter))
+                    .is_none_or(|display_filter| it.display.contains(display_filter, include_class))
                 && (self.filters.is_empty() || self.filters.iter().any(|func| func(it)))
         });
     }
@@ -153,56 +220,51 @@ impl State {
         self.refilter();
     }
 
-    fn update_name_filtered(&mut self) {
-        let Some(filter) = self.name_filter.take() else {
-            self.clear_filters();
-            return;
-        };
-
-        self.name_filter = Some(filter);
+    fn update_display_filtered(&mut self) {
         self.refilter();
     }
 
-    fn filering_by_name(&self) -> bool {
-        self.name_filter.is_some()
+    fn filtering_by_display(&self) -> bool {
+        self.editing_name
     }
 
-    fn stop_filering_by_name(&mut self) {
-        self.name_filter = None;
-        self.update_name_filtered();
+    /// Drop the name search entirely, leaving any other filters alone
+    fn stop_filtering_by_display(&mut self) {
+        self.display_filter = None;
+        self.editing_name = false;
+        self.refilter();
     }
 
-    fn name_filter_delete(&mut self) {
-        match &mut self.name_filter {
+    fn display_filter_delete(&mut self) {
+        match &mut self.display_filter {
             None => return,
             Some(cur) if cur.len() > 1 => {
                 cur.truncate(cur.len() - 1);
-                self.update_name_filtered();
+                self.update_display_filtered();
                 return;
             }
             Some(_) => {}
         }
 
         // Falling through means we've deleted the last char
-        self.stop_filering_by_name();
+        self.stop_filtering_by_display();
     }
 
-    fn name_filter_push(&mut self, c: char) {
-        if let Some(cur) = self.name_filter.as_mut() {
+    fn display_filter_push(&mut self, c: char) {
+        if let Some(cur) = self.display_filter.as_mut() {
             cur.push(c);
         } else {
-            self.name_filter = Some(String::from(c));
+            self.display_filter = Some(String::from(c));
         }
-        self.update_name_filtered()
+        self.update_display_filtered()
     }
 
-    fn persist_name_filter(&mut self) {
-        // Remove the filter but leave the list filtered
-        self.name_filter = None;
-    }
-
-    fn filter_status(&mut self, status: MethodStatus) {
-        self.filter_methods(Box::new(move |it| it.status == status))
+    /// Stop typing but keep the list narrowed
+    ///
+    /// The text has to stay: [State::refilter] recomputes from scratch, so clearing it here
+    /// would widen the list again on the next unrelated refilter.
+    fn persist_display_filter(&mut self) {
+        self.editing_name = false;
     }
 
     fn everything_hidden(&self) -> bool {
@@ -227,6 +289,17 @@ impl State {
     }
     fn next_method(&mut self) {
         self.methods.inc_sel();
+    }
+
+    /// Step `count` entries, used by the page and half page keys
+    fn move_method(&mut self, count: usize, forward: bool) {
+        for _ in 0..count {
+            if forward {
+                self.methods.inc_sel();
+            } else {
+                self.methods.dec_sel();
+            }
+        }
     }
 
     fn toggle_method_hidden(&mut self, tools: &Tools) -> anyhow::Result<()> {
@@ -261,10 +334,150 @@ impl DerefMut for SelectMethodWindow {
     }
 }
 
+enum JavaTypeDisplay {
+    Class(OwnedJavaClassName, u8),
+    Primitive(Cow<'static, str>),
+}
+
+impl JavaTypeDisplay {
+    fn contains(&self, needle: &str) -> bool {
+        match self {
+            Self::Primitive(p) => p.contains(needle),
+            Self::Class(c, _) => c.as_str().contains(needle),
+        }
+    }
+
+    fn width(&self) -> usize {
+        match self {
+            Self::Primitive(p) => p.width(),
+            Self::Class(class, dim) => {
+                let simple = class.get_simple_class();
+                let mut base = simple.width();
+                if let Some(pkg) = class.get_java_package() {
+                    if !WELL_KNOWN_PACKAGES_JAVA.contains(&pkg.as_ref()) {
+                        base += 1 + pkg.width();
+                    }
+                }
+                base + ((*dim as usize) * 2)
+            }
+        }
+    }
+
+    fn from_smali<T>(value: &T) -> Self
+    where
+        T: AsRef<str> + ?Sized,
+    {
+        let value = value.as_ref();
+        let trimmed = value.trim_start_matches('[');
+        let dim = value.len() - trimmed.len();
+        if trimmed.starts_with('L') {
+            let class = JavaClassName::from_raw(trimmed).into_owned();
+            return Self::Class(class, dim as u8);
+        }
+
+        let base = match trimmed {
+            "I" => "int",
+            "J" => "long",
+            "S" => "short",
+            "B" => "byte",
+            "C" => "char",
+            "F" => "float",
+            "D" => "double",
+            "Z" => "bool",
+            "V" => "void",
+            _ => "?",
+        };
+        let as_str = if dim > 0 {
+            let mut s = base.to_string();
+            s.reserve(2 * dim);
+            for _ in 0..dim {
+                s.push_str("[]");
+            }
+            Cow::Owned(s)
+        } else {
+            Cow::Borrowed(base)
+        };
+
+        Self::Primitive(as_str)
+    }
+}
+
+struct MethodDisplay {
+    class: JavaTypeDisplay,
+    name: String,
+    args: Vec<JavaTypeDisplay>,
+    ret: JavaTypeDisplay,
+    width: usize,
+}
+
+impl MethodDisplay {
+    fn contains(&self, needle: &str, include_class: bool) -> bool {
+        if include_class && self.class.contains(needle) {
+            return true;
+        }
+
+        self.name.contains(needle)
+            || self.ret.contains(needle)
+            || self.args.iter().any(|it| it.contains(needle))
+    }
+}
+
+impl From<&MethodSpec> for MethodDisplay {
+    fn from(value: &MethodSpec) -> Self {
+        // It is possible to have methods like [Lfoo/bar/Baz;->quux()
+        let class = JavaTypeDisplay::from_smali(value.class.as_str());
+        let name = value.name.clone();
+        let ret = JavaTypeDisplay::from_smali(&value.ret);
+
+        let mut width = class.width() + ret.width();
+
+        if value.signature.is_empty() {
+            return Self {
+                class,
+                name,
+                ret,
+                args: Vec::new(),
+                width,
+            };
+        }
+
+        let Ok(it) = SmaliMethodSignatureIterator::new(&value.signature) else {
+            // This branch should never be hit
+            let sig = JavaTypeDisplay::from_smali(&value.signature);
+            width += sig.width();
+            return Self {
+                class,
+                ret,
+                name,
+                width,
+                args: vec![sig],
+            };
+        };
+
+        let mut args = Vec::new();
+
+        for arg in it {
+            let disp = JavaTypeDisplay::from_smali(&arg.as_smali_str());
+            // +2 for ,
+            width += disp.width() + 2;
+            args.push(disp);
+        }
+
+        width -= 2;
+
+        Self {
+            class,
+            name,
+            args,
+            ret,
+            width,
+        }
+    }
+}
+
 struct MethodData {
     spec: AnalyzedMethodSpec,
-    smali: String,
-    width: usize,
+    display: MethodDisplay,
 }
 
 impl Deref for MethodData {
@@ -275,17 +488,16 @@ impl Deref for MethodData {
 }
 
 impl SelectMethodWindow {
-    pub fn new(db: &GraphTaintAnalysisDb) -> anyhow::Result<Self> {
+    pub fn new(db: &GraphTaintAnalysisDb, cfg: &Config) -> anyhow::Result<Self> {
         let methods = FilterContainer::new_vec(
             db.get_all_analyzed_method_specs()?
                 .into_iter()
                 .filter_map(|spec| {
-                    if spec.nroutes == 0 {
+                    if spec.ngraphs == 0 {
                         None
                     } else {
-                        let smali = spec.as_smali();
-                        let width = smali.width();
-                        Some(MethodData { spec, smali, width })
+                        let display = MethodDisplay::from(&spec.spec);
+                        Some(MethodData { spec, display })
                     }
                 })
                 .collect::<Vec<_>>(),
@@ -294,72 +506,124 @@ impl SelectMethodWindow {
         let hidden_methods = HashSet::from_iter(db.get_hidden_analyzed_methods()?.into_iter());
         // Show hidden if they all are hidden
         let show_hidden = hidden_methods.len() == methods.len();
-        let command = CommandHandler::new(HashMap::from_iter(COMMANDS.iter().copied()));
+        let command = CommandHandler::new(HashMap::from_iter(COMMANDS.iter().copied()), KEYS_HELP);
         let mut state = State {
             methods,
+            detail: cfg.methods.detail,
             show_hidden,
             hidden_methods,
+            page: Cell::new(1),
+            list_offset: Cell::new(0),
             prev_filters: None,
-            name_filter: None,
+            display_filter: None,
+            editing_name: false,
             filters: Vec::new(),
         };
         state.refilter();
         Ok(Self { command, state })
     }
 
-    fn open_paths_window(&self, tools: &Tools) -> anyhow::Result<WindowAction> {
+    fn open_paths_window(&self, cfg: &mut Config, tools: &Tools) -> anyhow::Result<WindowAction> {
         let Some(method) = self.methods.get_selected() else {
             return Ok(WindowAction::Nothing);
         };
         let filters = self.state.prev_filters.clone();
-        let window = Box::new(MethodPathsWindow::new(tools, method.analysis_id, filters)?);
+        let window = Box::new(GraphViewWindow::new(
+            tools,
+            cfg,
+            method.analysis_id,
+            filters,
+        )?);
         Ok(WindowAction::PushWindow(window))
     }
 }
 
 impl Window for SelectMethodWindow {
-    fn on_key_event(&mut self, tools: &Tools, evt: KeyEvent) -> anyhow::Result<WindowAction> {
+    fn on_key_event(
+        &mut self,
+        tools: &Tools,
+        cfg: &mut Config,
+        evt: KeyEvent,
+    ) -> anyhow::Result<WindowAction> {
         if self.command.is_active() {
             let state = &mut self.state;
             let command = &mut self.command;
-            return command.on_key_event(evt, tools, state);
+            return command.on_key_event(evt, tools, cfg, state);
         }
 
-        match evt.modifiers {
-            KeyModifiers::SHIFT if self.filering_by_name() => match evt.code {
-                KeyCode::Char(c) => self.name_filter_push(c),
-                _ => return Ok(WindowAction::default()),
-            },
-            KeyModifiers::SHIFT => match evt.code {
-                KeyCode::Char('H') => self.toggle_method_hidden(tools)?,
-                _ => return Ok(WindowAction::default()),
-            },
-            KeyModifiers::NONE => match evt.code {
-                KeyCode::Esc if self.methods.is_filtered() => self.clear_filters(),
-                KeyCode::Enter if self.filering_by_name() => self.persist_name_filter(),
-                KeyCode::Backspace if self.filering_by_name() => self.name_filter_delete(),
-                KeyCode::Char(c) if self.filering_by_name() => self.name_filter_push(c),
-                KeyCode::Char('/') if !self.filering_by_name() => {
-                    self.name_filter = Some(String::new());
-                    self.clear_filters();
-                }
+        let mycfg = &mut cfg.methods;
 
-                KeyCode::Enter => return self.open_paths_window(tools),
-                KeyCode::Char(':') => self.command.activate(),
-                KeyCode::Char('.') => self.toggle_show_hidden()?,
-                KeyCode::Char('j') | KeyCode::Down => self.next_method(),
-                KeyCode::Char('k') | KeyCode::Up => self.prev_method(),
-                KeyCode::Char('p') => self.filter_status(MethodStatus::Pending),
-                KeyCode::Char('d') => self.filter_status(MethodStatus::Done),
-                KeyCode::Char('f') => self.filter_status(MethodStatus::Failed),
-                _ => return Ok(WindowAction::default()),
-            },
+        if evt.modifiers == KeyModifiers::CONTROL {
+            match evt.code {
+                KeyCode::Char('d') => {
+                    let half = (self.page.get() / 2).max(1);
+                    self.move_method(half, true);
+                }
+                KeyCode::Char('u') => {
+                    let half = (self.page.get() / 2).max(1);
+                    self.move_method(half, false);
+                }
+                _ => return Ok(WindowAction::Nothing),
+            }
+            return Ok(WindowAction::Redraw);
+        };
+
+        if evt.modifiers != KeyModifiers::NONE && evt.modifiers != KeyModifiers::SHIFT {
+            return Ok(WindowAction::Nothing);
+        }
+
+        if self.filtering_by_display() {
+            match evt.code {
+                KeyCode::Esc => self.stop_filtering_by_display(),
+                KeyCode::Enter => self.persist_display_filter(),
+                KeyCode::Backspace => self.display_filter_delete(),
+                KeyCode::Char(c) => self.display_filter_push(c),
+
+                _ => return Ok(WindowAction::Nothing),
+            }
+            return Ok(WindowAction::Redraw);
+        }
+
+        match evt.code {
+            KeyCode::Char('?') => self.command.show_keys(),
+            KeyCode::Char(':') => self.command.activate(),
+            KeyCode::Char('H') => self.toggle_method_hidden(tools)?,
+            KeyCode::Esc if self.methods.is_filtered() => self.clear_filters(),
+            KeyCode::Char('/') => {
+                // Clear first: clearing now drops the name search too
+                self.clear_filters();
+                self.display_filter = Some(String::new());
+                self.editing_name = true;
+                self.refilter();
+            }
+
+            KeyCode::Enter => return self.open_paths_window(cfg, tools),
+            KeyCode::Char('.') => self.toggle_show_hidden()?,
+            KeyCode::Char('j') | KeyCode::Down => self.next_method(),
+            KeyCode::Char('k') | KeyCode::Up => self.prev_method(),
+            KeyCode::PageDown => {
+                let page = self.page.get();
+                self.move_method(page, true);
+            }
+            KeyCode::PageUp => {
+                let page = self.page.get();
+                self.move_method(page, false);
+            }
+            KeyCode::Char('d') => {
+                mycfg.detail.next();
+                self.detail = mycfg.detail;
+            }
             _ => return Ok(WindowAction::default()),
         }
         Ok(WindowAction::Redraw)
     }
 
-    fn on_mouse_event(&mut self, _tools: &Tools, evt: MouseEvent) -> anyhow::Result<WindowAction> {
+    fn on_mouse_event(
+        &mut self,
+        _tools: &Tools,
+        _cfg: &mut Config,
+        evt: MouseEvent,
+    ) -> anyhow::Result<WindowAction> {
         match evt.kind {
             MouseEventKind::ScrollUp => self.prev_method(),
             MouseEventKind::ScrollDown => self.next_method(),
@@ -369,7 +633,7 @@ impl Window for SelectMethodWindow {
         Ok(WindowAction::Redraw)
     }
 
-    fn draw(&self, _tools: &Tools, frame: &mut Frame) {
+    fn draw(&self, _tools: &Tools, _cfg: &mut Config, frame: &mut Frame) {
         if self.command.draw(frame) {
             return;
         }
@@ -378,33 +642,64 @@ impl Window for SelectMethodWindow {
             Constraint::Length(1),
             Constraint::Fill(1),
             Constraint::Length(1),
+            Constraint::Length(1),
         ]);
-        let [title_area, body_area, filter_area] = frame.area().layout(&layout);
+        let [title_area, body_area, filter_area, status_area] = frame.area().layout(&layout);
+
+        self.page.set((body_area.height as usize).max(1));
 
         let width = body_area.width as usize;
 
         let list_items = self.methods.iter().map(|method| {
             let is_hidden = self.hidden_methods.contains(&method.analysis_id);
 
-            let txt = if method.width < width {
-                method_names_fmt(method, is_hidden)
+            let txt = if method.display.width < width {
+                method_names_fmt(&self.state, &method.display, is_hidden)
             } else {
-                method_names_fmt_multi_line(&method.spec.spec, width, is_hidden)
+                method_names_fmt_multi_line(&self.state, &method.display, width, is_hidden)
             };
             txt
         });
 
         let list = new_list(list_items);
-        let mut state = ListState::default().with_selected(Some(self.methods.sel_index()));
+        let mut state = ListState::default()
+            .with_offset(self.list_offset.get())
+            .with_selected(Some(self.methods.sel_index()));
 
-        let title = Line::from("Select method").centered().bold();
+        let counts = format!(
+            "  [{} of {}{}]",
+            self.methods.len(),
+            self.methods.total_len(),
+            if self.show_hidden {
+                ", showing hidden"
+            } else {
+                ""
+            }
+        );
+        let title = Line::from(vec![
+            Span::styled("Select method", Style::new().bold()),
+            Span::raw(counts),
+        ])
+        .centered();
         frame.render_widget(title, title_area);
         frame.render_stateful_widget(list, body_area, &mut state);
-        if let Some(filter) = &self.name_filter {
+        self.list_offset.set(state.offset());
+
+        if let Some(filter) = &self.display_filter {
             let mut line = Line::raw("/");
             line.push_span(Span::raw(filter));
+            // The text outlives the typing, so say which one this is
+            if !self.editing_name {
+                line.push_span(Span::raw("  (applied, Esc to clear)").dim());
+            }
             frame.render_widget(line, filter_area);
         }
+
+        let status = "j/k move | Enter open | / filter | : command | H hide | . show-hidden | Esc clear | ^C quit | ? help";
+        frame.render_widget(
+            Line::raw(fit(status, status_area.width as usize)).dim(),
+            status_area,
+        );
     }
 }
 
@@ -418,60 +713,49 @@ fn set_gray(txt: &mut Text) {
     }
 }
 
-fn class_span<'a>(line: &mut Line<'a>, class: &'a str) {
-    let class_style = Style::default().fg(Color::Magenta);
-    line.push_span(Span::raw("L"));
-    line.push_span(Span::styled(&class[1..class.len() - 1], class_style));
-    line.push_span(Span::raw(";"));
-}
+fn sig_span<'a>(line: &mut Line<'a>, show_pkg: bool, args: &'a [JavaTypeDisplay]) -> usize {
+    if args.len() == 0 {
+        return 0;
+    }
 
-fn method_names_fmt<'a>(method: &'a MethodSpec, is_hidden: bool) -> Text<'a> {
-    let mut line = Line::default();
+    let mut width = 0;
+    let nargs = args.len();
 
-    let MethodSpec {
-        name,
-        signature: sig,
-        ret,
-        ..
-    } = method;
-    let class = method.class.as_str();
-
-    class_span(&mut line, class);
-
-    line.push_span(Span::raw("->"));
-    line.push_span(Span::styled(name, Style::default().fg(Color::Green)));
-    line.push_span(Span::raw("("));
-
-    if sig.len() > 0 {
-        if let Ok(iter) = SmaliMethodSignatureIterator::new(&sig) {
-            for arg in iter {
-                match arg {
-                    Type::Class(class, dim) => {
-                        if dim > 0 {
-                            line.push_span(Span::raw("[".repeat(dim as usize)));
-                        }
-                        class_span(&mut line, class.as_str());
-                    }
-                    Type::Primitive(prim, dim) => {
-                        if dim > 0 {
-                            line.push_span(Span::raw("[".repeat(dim as usize)));
-                        }
-                        line.push_span(Span::raw(prim.as_smali_str()));
-                    }
-                    Type::Unknown => {}
-                }
-            }
-        } else {
-            line.push_span(Span::raw(sig));
+    for (i, arg) in args.iter().enumerate() {
+        width += arg.to_line(line, show_pkg, Style::default().fg(Color::Yellow));
+        if i < nargs - 1 {
+            line.push_span(Span::raw(", "));
+            width += 2;
         }
     }
-    line.push_span(Span::raw(")"));
 
-    if ret.starts_with('L') {
-        class_span(&mut line, ret);
-    } else {
-        line.push_span(Span::raw(ret));
+    width
+}
+
+fn method_names_fmt<'a>(state: &State, method: &'a MethodDisplay, is_hidden: bool) -> Text<'a> {
+    let mut line = Line::default();
+
+    let MethodDisplay {
+        class,
+        ret,
+        args,
+        name,
+        ..
+    } = method;
+
+    let include_class = state.show_classes();
+    let show_pkg = state.show_packages();
+
+    if include_class {
+        class.to_line(&mut line, show_pkg, Style::default());
+        line.push_span(Span::raw("."));
     }
+    line.push_span(Span::styled(name, Style::default().fg(Color::Green)));
+    line.push_span(Span::raw("("));
+    sig_span(&mut line, show_pkg, args);
+    line.push_span(Span::raw("): "));
+
+    ret.to_line(&mut line, show_pkg, Style::default());
 
     let mut text = Text::from(line);
     if is_hidden {
@@ -481,86 +765,115 @@ fn method_names_fmt<'a>(method: &'a MethodSpec, is_hidden: bool) -> Text<'a> {
 }
 
 fn method_names_fmt_multi_line<'a>(
-    method: &'a MethodSpec,
+    state: &State,
+    method: &'a MethodDisplay,
     width: usize,
     is_hidden: bool,
 ) -> Text<'a> {
     let mut txt = Text::default();
 
-    let MethodSpec {
-        name,
-        signature: sig,
+    let MethodDisplay {
+        class,
         ret,
+        args,
+        name,
         ..
     } = method;
-    let class = method.class.as_str();
+    let include_class = state.show_classes();
+    let show_pkg = state.show_packages();
 
+    let mut cur_width = 0;
+    let name_width = name.width();
     let mut line = Line::default();
-    class_span(&mut line, class);
-    txt.push_line(line);
-
-    let mut line = Line::default();
-    line.push_span(Span::raw("   "));
-    line.push_span(Span::styled(name, Style::default().fg(Color::Green)));
-
-    let name_args_width = name.width() + sig.width() + 5;
-
-    let (mut line, cur_width) = if name_args_width <= width {
-        (line, name_args_width)
-    } else {
-        txt.push_line(line);
-        let mut line = Line::default();
-        line.push_span(Span::raw("   "));
-        (line, name_args_width - name.width())
-    };
-
-    line.push_span(Span::raw("("));
-
-    if sig.len() > 0 {
-        if let Ok(iter) = SmaliMethodSignatureIterator::new(&sig) {
-            for arg in iter {
-                match arg {
-                    Type::Class(class, dim) => {
-                        if dim > 0 {
-                            line.push_span(Span::raw("[".repeat(dim as usize)));
-                        }
-                        class_span(&mut line, class.as_str());
-                    }
-                    Type::Primitive(prim, dim) => {
-                        if dim > 0 {
-                            line.push_span(Span::raw("[".repeat(dim as usize)));
-                        }
-                        line.push_span(Span::raw(prim.as_smali_str()));
-                    }
-                    Type::Unknown => {}
-                }
-            }
+    if include_class {
+        cur_width = class.to_line(&mut line, show_pkg, Style::default()) + 1;
+        if cur_width + name_width >= width {
+            txt.push_line(line);
+            line = Line::default();
+            line.push_span(Span::raw("   "));
+            cur_width = 3;
         } else {
-            line.push_span(Span::raw(sig));
+            line.push_span(Span::raw("."));
         }
     }
-    line.push_span(Span::raw(")"));
+    line.push_span(Span::styled(name, Style::default().fg(Color::Green)));
+    cur_width += name_width;
 
-    let mut line = if cur_width + ret.width() <= width {
-        line
+    let mut sig_line = Line::default();
+    sig_line.push_span(Span::raw("("));
+    let sig_width = sig_span(&mut sig_line, show_pkg, args) + 2;
+    sig_line.push_span(Span::raw(")"));
+
+    if cur_width + sig_width <= width {
+        line.spans.reserve(sig_line.spans.len());
+        line.spans.extend(sig_line.spans.into_iter());
+        cur_width += sig_width;
     } else {
         txt.push_line(line);
-        let mut line = Line::default();
+        line = Line::default();
+        line.spans.reserve(sig_line.spans.len() + 1);
         line.push_span(Span::raw("   "));
-        line
+        line.spans.extend(sig_line.spans.into_iter());
+        cur_width = 0;
     };
 
-    if ret.starts_with('L') {
-        class_span(&mut line, ret);
-    } else {
-        line.push_span(Span::raw(ret));
-    }
+    let mut ret_line = Line::default();
+    ret_line.push_span(": ");
+    let ret_width = ret.to_line(&mut ret_line, show_pkg, Style::default()) + 2;
 
-    txt.push_line(line);
+    if cur_width + ret_width <= width {
+        line.spans.reserve(ret_line.spans.len());
+        line.spans.extend(ret_line.into_iter());
+        txt.push_line(line);
+    } else {
+        txt.push_line(line);
+        txt.push_line(ret_line);
+    }
 
     if is_hidden {
         set_gray(&mut txt);
     }
 
     txt
+}
+
+impl JavaTypeDisplay {
+    fn to_line<'a>(&'a self, line: &mut Line<'a>, show_pkg: bool, style: Style) -> usize {
+        match self {
+            JavaTypeDisplay::Class(jc, dim) => {
+                let mut width = (*dim as usize) * 2;
+
+                let class = jc.get_simple_class();
+
+                if show_pkg {
+                    match jc.get_java_package() {
+                        Some(pkg) if !WELL_KNOWN_PACKAGES_JAVA.contains(&pkg.as_ref()) => {
+                            line.push_span(Span::styled(class, style));
+                            width += class.width();
+                        }
+                        _ => {
+                            let as_java = jc.as_str();
+                            line.push_span(Span::styled(as_java, style));
+                            width += as_java.width();
+                        }
+                    }
+                } else {
+                    line.push_span(Span::styled(class, style));
+                    width += class.width();
+                }
+                if *dim > 0 {
+                    for _ in 0..*dim {
+                        line.push_span(Span::raw("[]"));
+                    }
+                }
+
+                width
+            }
+            JavaTypeDisplay::Primitive(p) => {
+                let as_str = p.as_ref();
+                line.push_span(Span::styled(as_str, style));
+                as_str.width()
+            }
+        }
+    }
 }

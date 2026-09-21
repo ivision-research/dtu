@@ -2,7 +2,10 @@ use std::collections::HashMap;
 
 use clap::{self, Args};
 use dtu::{
-    analysis::{db::GraphTaintAnalysisDb, taint::TaintSource, typing::complex_param_sources},
+    analysis::{
+        taint::{db::TaintAnalysisDbWriter, TaintSource},
+        typing::complex_param_sources,
+    },
     db::{
         device::models::{DiffSource, SystemService},
         graph::{models::MethodId, MethodSearch, MethodSearchParams, MethodSpec},
@@ -37,7 +40,7 @@ pub struct SystemServices {
 
 impl SystemServices {
     pub fn run(self, ctx: &dyn Context) -> anyhow::Result<()> {
-        let db = GraphTaintAnalysisDb::new_from_path(ctx, &self.run.out_file)?;
+        let db = TaintAnalysisDbWriter::new_from_path(ctx, &self.run.out_file)?;
         analyze(ctx, db, &self.run, |gdb| {
             let meta = get_default_metadb(ctx)?;
             meta.ensure_prereq(Prereq::SQLDatabaseSetup)?;

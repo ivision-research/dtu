@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use clap::{self, Args};
 use dtu::{
-    analysis::{db::GraphTaintAnalysisDb, taint::TaintSource},
+    analysis::taint::{db::TaintAnalysisDbWriter, TaintSource},
     db::{
         graph::{models::MethodId, GraphDatabase, MethodSpec},
         meta::get_default_metadb,
@@ -148,7 +148,7 @@ const ENTRYPOINTS: &[Entrypoint] = &[
 
 impl Providers {
     pub fn run(self, ctx: &dyn Context) -> anyhow::Result<()> {
-        let db = GraphTaintAnalysisDb::new_from_path(ctx, &self.opts.run.out_file)?;
+        let db = TaintAnalysisDbWriter::new_from_path(ctx, &self.opts.run.out_file)?;
 
         analyze(ctx, db, &self.opts.run, |gdb| {
             let meta = get_default_metadb(ctx)?;

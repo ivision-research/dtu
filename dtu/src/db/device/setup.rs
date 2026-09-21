@@ -1476,14 +1476,13 @@ impl<'a> AddApkTask<'a> {
 }
 
 fn hash_type(sha: &mut Sha256, ty: &Type) {
-    if let Some(v) = ty.as_smali_str().as_ref() {
-        sha.update(v.as_bytes());
-    }
+    let v = ty.as_smali_str();
+    sha.update(v.as_bytes());
 }
 
 fn hash_literal(sha: &mut Sha256, lit: &RawLiteral) {
     match lit {
-        RawLiteral::Null | RawLiteral::Unset | RawLiteral::Type(Type::Unknown) => sha.update(&[]),
+        RawLiteral::Null | RawLiteral::Unset => sha.update(&[]),
         RawLiteral::Char(s) | RawLiteral::String(s) | RawLiteral::Numeric(s) => sha.update(s),
         RawLiteral::Bool(z) => sha.update(if *z { &[1u8] } else { &[0u8] }),
         RawLiteral::Type(Type::Class(name, dim)) => {
