@@ -3,8 +3,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use walkdir::DirEntry;
-
 use crate::{
     smalisa_wrapper::write_analysis_files,
     tasks::{EventMonitor, TaskCancelCheck},
@@ -20,33 +18,12 @@ fn smalisa_class_ignore_func(class: &str) -> bool {
         "Landroid/support/",
         "Landroid/material/",
         "Lkotlin/",
+        "Lkotlinx/",
+        "Ljavax/",
     ];
     for it in IGNORE_LIST {
         if class.starts_with(*it) {
             log::trace!("ignoring class {} due to ignore list entry {}", class, *it);
-            return true;
-        }
-    }
-    false
-}
-
-fn smalisa_file_ignore_func(ent: &DirEntry) -> bool {
-    const IGNORE_LIST: &[&'static str] = &[
-        "androidx/",
-        "android/support/",
-        "android/material/",
-        "kotlin/",
-        "javax/",
-    ];
-
-    let path = ent.path();
-    let as_str = match path.to_str() {
-        None => return false,
-        Some(s) => s,
-    };
-    for it in IGNORE_LIST {
-        if as_str.contains(*it) {
-            log::trace!("ignoring file {} due to ignore list entry {}", as_str, *it);
             return true;
         }
     }
@@ -111,7 +88,6 @@ where
                 &self.cancel,
                 &self.opts.source_dir,
                 &self.get_import_dir()?,
-                smalisa_file_ignore_func,
                 smalisa_class_ignore_func,
             )?;
         } else {

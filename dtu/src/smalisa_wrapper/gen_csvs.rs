@@ -503,17 +503,15 @@ fn launch_writers(
     return Ok(handles);
 }
 
-fn write_analysis_files_internal<M, FF, CF>(
+fn write_analysis_files_internal<M, CF>(
     out_dir: &Path,
     monitor: &M,
     cancel_check: &TaskCancelCheck,
     input_dir: &Path,
-    file_ignore_func: FF,
     class_ignore_func: CF,
 ) -> Result<()>
 where
     M: EventMonitor<Event> + ?Sized,
-    FF: Fn(&DirEntry) -> bool + Send + Sync,
     CF: Fn(&str) -> bool + Send + Sync,
 {
     let (class_tx, class_rx) = bounded(128);
@@ -551,43 +549,37 @@ where
         field_access_rx,
     )?;
 
-    let entry_filter = |e: &walkdir::Result<DirEntry>| -> bool {
-        e.as_ref().map_or(false, |it| {
-            direntry_is_smali_file(it) && !file_ignore_func(it)
-        })
-    };
-
-    let total_count = WalkDir::new(input_dir)
+    let files = WalkDir::new(input_dir)
         .into_iter()
-        .filter(entry_filter)
-        .count();
+        .filter_map(|it| {
+            let ent = it.ok()?;
+            if direntry_is_smali_file(&ent) {
+                Some(ent)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
 
     monitor.on_event(Event::Start {
-        total_files: total_count,
+        total_files: files.len(),
     });
 
-    let iter = WalkDir::new(input_dir).into_iter();
-
-    iter.filter(entry_filter)
-        .par_bridge()
-        .into_par_iter()
-        .for_each(|d| {
-            if let Ok(ent) = d {
-                if cancel_check.was_cancelled() {
-                    return;
-                }
-                let path = ent.path().to_string_lossy().to_string();
-                monitor.on_event(Event::FileStarted { path: path.clone() });
-                let success = match handle_entry(Arc::clone(&channels), &ent, &class_ignore_func) {
-                    Err(e) => {
-                        log::error!("{}", e);
-                        false
-                    }
-                    _ => true,
-                };
-                monitor.on_event(Event::FileComplete { path, success })
+    files.into_par_iter().for_each(|ent| {
+        if cancel_check.was_cancelled() {
+            return;
+        }
+        let path = ent.path().to_string_lossy().to_string();
+        monitor.on_event(Event::FileStarted { path: path.clone() });
+        let success = match handle_entry(Arc::clone(&channels), &ent, &class_ignore_func) {
+            Err(e) => {
+                log::error!("{}", e);
+                false
             }
-        });
+            _ => true,
+        };
+        monitor.on_event(Event::FileComplete { path, success })
+    });
     if cancel_check.was_cancelled() {
         return Err(Error::Cancelled);
     }
@@ -599,29 +591,21 @@ where
 }
 
 /// Writes the CSV files required for a graph import
-pub fn write_analysis_files<M, FF, CF>(
+pub fn write_analysis_files<M, CF>(
     monitor: &M,
     cancel_check: &TaskCancelCheck,
     input_dir: &Path,
     out_dir: &Path,
-    file_ignore_func: FF,
     class_ignore_func: CF,
 ) -> Result<()>
 where
     M: EventMonitor<Event> + ?Sized,
-    FF: Fn(&DirEntry) -> bool + Send + Sync,
     CF: Fn(&str) -> bool + Send + Sync,
 {
     ensure_dir_exists(out_dir)?;
 
-    let res = write_analysis_files_internal(
-        out_dir,
-        monitor,
-        cancel_check,
-        input_dir,
-        file_ignore_func,
-        class_ignore_func,
-    );
+    let res =
+        write_analysis_files_internal(out_dir, monitor, cancel_check, input_dir, class_ignore_func);
 
     if res.is_err() {
         for csv in CSV::all() {
@@ -669,25 +653,18 @@ fn should_ignore_super(name: &str) -> bool {
     false
 }
 
-fn on_field_access<F>(
+fn on_field_access(
     chan: &Sender<MethodFieldAccess>,
-    class_ignore_func: &F,
     class: &str,
     method: &str,
     method_args: &str,
     inv: &Invocation,
-) where
-    F: Fn(&str) -> bool + Send + Sync,
-{
+) {
     let fref = match inv.args() {
         InvArgs::OneRegField(_, v) => v,
         InvArgs::TwoRegField(_, _, v) => v,
         _ => return,
     };
-
-    if class_ignore_func(fref.class.as_str()) {
-        return;
-    }
 
     let op = if inv.sets_field() {
         FieldAccessOp::Write
@@ -758,19 +735,30 @@ where
         };
     }
 
+    // The `class_ignore_func` call is intended to stop descending into methods for a given class,
+    // not to exclude it entirely from the database. We set this flag when the line `Line::Class` is
+    // found and if it is true, we just don't analyze method bodies
+    let mut is_ignored_class = false;
+    let mut in_methods = false;
+
     loop {
-        let line = match parser.parse_line() {
+        let parseres = if is_ignored_class && in_methods {
+            parser.skip_to_next_method()
+        } else {
+            parser.parse_line()
+        };
+
+        let line = match parseres {
             Err(e) if e.is_eof() => break,
             Err(e) => return Err(Error::from(e)),
             Ok(v) => v,
         };
+
         match line {
             Line::Class(flags, clazz) => {
-                if class_ignore_func(clazz.as_str()) {
-                    return Ok(());
-                }
                 class = clazz.as_str();
-                channels.send_class(clazz.as_str(), flags);
+                is_ignored_class = class_ignore_func(class);
+                channels.send_class(class, flags);
             }
 
             Line::Super(sup) => {
@@ -789,6 +777,7 @@ where
                 channels.send_field(class, field);
             }
             Line::MethodHeader(ref mh) => {
+                in_methods = true;
                 calling_method_name = mh.name;
                 calling_method_args = mh.args;
                 channels.send_method(
@@ -809,7 +798,6 @@ where
                 if inv.sets_field() || inv.gets_field() {
                     on_field_access(
                         &channels.method_field_access,
-                        class_ignore_func,
                         class,
                         calling_method_name,
                         calling_method_args,
@@ -820,10 +808,6 @@ where
                         let target_class = mref.full_class_str();
 
                         if target_class == "Ljava/lang/Object;" && mref.name == "<init>" {
-                            continue;
-                        }
-
-                        if class_ignore_func(mref.class) {
                             continue;
                         }
 
