@@ -13,6 +13,9 @@ CREATE TABLE class_fields
     FOREIGN KEY (class) REFERENCES classes (id) ON DELETE CASCADE ON UPDATE CASCADE
 );
 
+-- Useful for when building the graph
+CREATE INDEX IF NOT EXISTS class_fields_class ON class_fields(class);
+
 CREATE TABLE method_field_access
 (
     field   INTEGER NOT NULL,
