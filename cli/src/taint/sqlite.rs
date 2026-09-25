@@ -58,9 +58,9 @@ impl Sqlite {
         log::debug!("Running with -init {init_file}");
 
         self.sqlite_args.reserve(3);
-        self.sqlite_args.push("-init".into());
-        self.sqlite_args.push(init_file.into());
-        self.sqlite_args.push(self.file.clone());
+        self.sqlite_args.insert(0, "-init".into());
+        self.sqlite_args.insert(1, init_file.into());
+        self.sqlite_args.insert(2, self.file.clone());
 
         let status = Command::new(&sqlite_bin)
             .args(&self.sqlite_args)
