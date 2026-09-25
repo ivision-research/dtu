@@ -91,7 +91,7 @@ CREATE INDEX graph_metadata_analyzed_method ON graph_metadata(analyzed_method);
 
 -- A projection of each graph for all reachable nodes. This is not going to be
 -- a complete tree view, but is useful for getting some information about the
--- graph without worrying about cycles.
+-- graph without walking every path.
 CREATE TABLE reachable_nodes (
     graph       INTEGER NOT NULL,
     node        INTEGER NOT NULL,

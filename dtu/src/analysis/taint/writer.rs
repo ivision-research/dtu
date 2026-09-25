@@ -10,6 +10,7 @@ use itertools::Itertools;
 use smalisa::instructions::Instruction;
 use smalisa::RegisterNumber;
 
+use super::cycles::break_cycles;
 use super::db::{SinkDef, TaintAnalysisDb, TaintAnalysisDbWriter, UnresolvedOrigin};
 use super::engine::IdFactories;
 use super::models::*;
@@ -693,6 +694,8 @@ impl<'a> RunWriter<'a> {
             self.flush_graphs()?;
         }
 
+        self.db.write(|c| break_cycles(c, self.factories))?;
+
         self.update_reachable_nodes()?;
 
         // The other elements of sink_filters are inserted by triggers, but we can't create triggers
@@ -1009,7 +1012,7 @@ WHERE am.status = 'done'
     loop {
         let res = query!(sql_query(
             // A node can be reached by several edges at the same depth, and only one of them
-            // becomes its parent. Prefer the edge whose source node *is* the method the child
+            // becomes its parent. Prefer the edge whose source node is the method the child
             // sits in: a call recorded inside `LK/n;->c` belongs under the node for `LK/n;->c`,
             // not beside it under whatever else reached it at the same distance. Failing that,
             // order by location and then source so the choice is at least deterministic.

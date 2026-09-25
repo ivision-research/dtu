@@ -13,6 +13,20 @@ pub struct IdFactory<T> {
     _ph: PhantomData<T>,
 }
 
+pub struct IdFactoryCheckpoint<T> {
+    value: i32,
+    _ph: PhantomData<T>,
+}
+
+impl<T> IdFactoryCheckpoint<T> {
+    fn new(value: i32) -> Self {
+        Self {
+            value,
+            _ph: PhantomData,
+        }
+    }
+}
+
 impl<T: DatabaseId> IdFactory<T> {
     pub fn new(highest: Option<i32>) -> Self {
         Self {
@@ -25,14 +39,27 @@ impl<T: DatabaseId> IdFactory<T> {
         let next = self.current.fetch_add(1, Ordering::Relaxed);
         T::from_id(next)
     }
+
+    /// Create a "checkpoint" to revert any newly minted IDs for any reason
+    ///
+    /// Be careful using this functionality anywhere that there could be multiple threads!
+    pub(super) fn checkpoint_dangerous(&self) -> IdFactoryCheckpoint<T> {
+        IdFactoryCheckpoint::new(self.current.load(Ordering::Relaxed))
+    }
+
+    /// Revert back to the state of a checkpoint
+    ///
+    /// Be careful using this functionality anywhere that there could be multiple threads!
+    pub(super) fn revert_dangerous(&self, checkpoint: IdFactoryCheckpoint<T>) {
+        self.current.store(checkpoint.value, Ordering::Relaxed)
+    }
 }
 
 /// Build an [IdFactory] seeded from `MAX(column)` over `table`
 macro_rules! new_id_factory {
     ($db:expr, $table:path, $column:path) => {{
         let highest = $db.query(|c| {
-            $crate::db::query!($table
-                .select(::diesel::dsl::max($column)))
+            $crate::db::query!($table.select(::diesel::dsl::max($column)))
                 .get_result::<Option<i32>>(c)
         });
         highest.map($crate::analysis::taint::id_factory::IdFactory::new)

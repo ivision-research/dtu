@@ -227,7 +227,7 @@ impl Default for TaintAnalyzerOptions {
 }
 
 impl TaintAnalyzerOptions {
-    const MAX_CALL_DEPTH: usize = 16;
+    const MAX_CALL_DEPTH: usize = 24;
 
     pub fn set_depth(&mut self, depth: usize) {
         if depth > Self::MAX_CALL_DEPTH {
@@ -357,10 +357,10 @@ pub struct TaintSink {
 }
 
 pub(super) struct IdFactories {
-    graph: IdFactory<SubgraphId>,
-    nodes: IdFactory<NodeId>,
-    sources: IdFactory<TaintSourceId>,
-    analyzed_methods: IdFactory<AnalyzedMethodId>,
+    pub graph: IdFactory<SubgraphId>,
+    pub nodes: IdFactory<NodeId>,
+    pub sources: IdFactory<TaintSourceId>,
+    pub analyzed_methods: IdFactory<AnalyzedMethodId>,
 }
 
 impl IdFactories {
@@ -504,6 +504,11 @@ impl<'a> DerefMut for WorkerCacheState<'a> {
 }
 
 /// Global cache shared among all workers
+///
+/// Note that the way we currently use this cache means that we can, and likely will, create cycles
+/// in the graph. Those cycles are removed later over in [RunWriter::finish_run]. I consider this
+/// acceptable because the cache saves a ton of work and actually can work to expand calls deeper
+/// than MAX_CALL_DEPTH cheaply.
 struct WorkerCache<'a> {
     /// A collection of [AnalyzedMethod]s that have already been claimed by another thread. This
     /// significantly limits the amount of work done by not constantly re-analyzing the same paths.
@@ -511,8 +516,6 @@ struct WorkerCache<'a> {
 }
 
 impl<'a> WorkerCache<'a> {
-    // TODO: This shouldn't take an option, we should always be able to determine what the initial
-    // value is from the database
     fn new(nodes: &'a IdFactory<NodeId>) -> Self {
         Self {
             seen: Mutex::new(WorkerCacheState::new(nodes)),
