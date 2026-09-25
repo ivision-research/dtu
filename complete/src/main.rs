@@ -416,7 +416,15 @@ impl CompleteContext {
         Ok(())
     }
 
-    fn complete(self) -> anyhow::Result<()> {
+    fn complete(mut self) -> anyhow::Result<()> {
+        if let CompleteKind::List(list) = &self.kind {
+            if !self.incomplete.starts_with('-') {
+                if let Some(kind) = Completable::find_positional(list) {
+                    self.kind = kind.clone();
+                }
+            }
+        }
+
         match &self.kind {
             CompleteKind::Uncompletable => Ok(()),
             CompleteKind::SystemService => self.complete_system_service(),
@@ -642,6 +650,7 @@ impl CompleteContext {
                         crs.push(CompleteResult::new(s.name, Some(s.help)));
                     }
                 }
+                Completable::Positional(_) => {}
             }
         }
 

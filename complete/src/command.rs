@@ -188,6 +188,16 @@ pub struct Simple {
 pub enum Completable {
     Flag(Flag),
     Simple(Simple),
+    Positional(CompleteKind),
+}
+
+impl Completable {
+    pub fn find_positional(completions: &[Completable]) -> Option<&CompleteKind> {
+        completions.iter().find_map(|it| match it {
+            Completable::Positional(kind) => Some(kind),
+            _ => None,
+        })
+    }
 }
 
 impl Completable {

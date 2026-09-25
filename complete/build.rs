@@ -23,6 +23,7 @@ struct Command {
     options: Option<Vec<Opt>>,
     #[serde(default = "String::new")]
     help: String,
+    positional: Option<String>,
     #[serde(flatten)]
     subcommands: HashMap<String, Command>,
 }
@@ -63,6 +64,13 @@ impl Command {
         );
         s.push(',');
         s
+    }
+
+    fn positional_as_slice_elem(&self) -> String {
+        match &self.positional {
+            Some(kind) => format!("Completable::Positional(CompleteKind::{kind}),"),
+            None => String::new(),
+        }
     }
 }
 
@@ -110,6 +118,7 @@ fn write_gen_cmd_values(
 
         let flag_elems = cmddef.opts_as_flag_slice_elems();
         let subcmd_elems = cmddef.subcmds_as_simple_slice_elems();
+        let positional_elem = cmddef.positional_as_slice_elem();
 
         if !cmddef.subcommands.is_empty() {
             let mut sub_sub_matches = String::new();
@@ -129,6 +138,7 @@ fn {name}_get_completions<I: Iterator<Item = String>>(mut it: I) -> &'static [Co
         Completable::flag("--help", "-h", "Show this help and exit", CompleteKind::None),
         {flag_elems}
         {subcmd_elems}
+        {positional_elem}
     ];
 
     let Some(sub) = it.next() else {{
@@ -153,6 +163,7 @@ fn {name}_get_completions<I: Iterator<Item = String>>(mut it: I) -> &'static [Co
             Completable::flag("--help", "-h", "Show this help and exit", CompleteKind::None),
             {flag_elems}
             {subcmd_elems}
+            {positional_elem}
 
         ];
         __{name}_COMPLETIONS

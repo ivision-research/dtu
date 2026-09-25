@@ -19,8 +19,11 @@ options = [
 
 [taint]
 
+[taint.ui]
+positional = "File"
 
 [taint.sqlite]
+positional = "File"
 
 [taint.query]
 
