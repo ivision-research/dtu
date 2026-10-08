@@ -5,7 +5,7 @@ use std::io;
 
 use clap::{self, Args, Subcommand};
 
-use dtu::db::device::models::{self, Activity, Apk, DiffSource, Provider, Receiver, Service};
+use dtu::db::device::models::{Activity, Apk, DiffSource, Provider, Receiver, Service};
 use dtu::db::meta::get_default_metadb;
 use dtu::db::{ApkIPC, DeviceDatabase, Diffable, PermissionMode, PermissionProtected};
 use dtu::prereqs::Prereq;
@@ -61,24 +61,17 @@ impl CommonParams {
         Ok(get_diff_source(ctx, &meta, db, &self.diff_source)?.id)
     }
 
-    fn filter_allow<T, U>(&self, val: &T) -> bool
+    /// Filter based on -P and -E
+    fn filter_ipc<T>(&self, items: Vec<T>) -> Vec<T>
     where
-        T: AsRef<U> + Diffable + ?Sized,
-        U: ApkIPC,
+        T: ApkIPC,
     {
-        if self.only_new && val.in_diff() {
-            return false;
-        }
-        let ipc = val.as_ref();
-        if self.only_public && !ipc.is_exported() {
-            return false;
-        }
-
-        if self.only_enabled && !ipc.is_enabled() {
-            return false;
-        }
-
-        true
+        items
+            .into_iter()
+            .filter(|it| {
+                (!self.only_public || it.is_exported()) && (!self.only_enabled || it.is_enabled())
+            })
+            .collect()
     }
 
     fn do_list_json<F, R, M, MetaData>(
@@ -187,15 +180,16 @@ impl CommonParams {
     fn list_receivers(self) -> anyhow::Result<()> {
         self.do_list(
             |p, ctx, db| {
-                Ok(if p.only_new {
+                let receivers = if p.only_new {
                     db.get_receiver_diffs_by_diff_id(p.get_diff_id(ctx, db)?)?
                         .into_iter()
-                        .filter(|it| p.filter_allow(it))
+                        .filter(|it| !it.in_diff())
                         .map(|it| it.receiver)
                         .collect::<Vec<Receiver>>()
                 } else {
                     db.get_receivers()?
-                })
+                };
+                Ok(p.filter_ipc(receivers))
             },
             None::<&dyn for<'a> Fn(&'a Receiver) -> String>,
         )
@@ -204,15 +198,16 @@ impl CommonParams {
     fn list_activities(self) -> anyhow::Result<()> {
         self.do_list(
             |p, ctx, db| {
-                Ok(if p.only_new {
+                let activities = if p.only_new {
                     db.get_activity_diffs_by_diff_id(p.get_diff_id(ctx, db)?)?
                         .into_iter()
-                        .filter(|it| p.filter_allow(it))
+                        .filter(|it| !it.in_diff())
                         .map(|it| it.activity)
                         .collect::<Vec<Activity>>()
                 } else {
                     db.get_activities()?
-                })
+                };
+                Ok(p.filter_ipc(activities))
             },
             None::<&dyn for<'a> Fn(&'a Activity) -> String>,
         )
@@ -221,15 +216,16 @@ impl CommonParams {
     fn list_providers(self) -> anyhow::Result<()> {
         self.do_list(
             |p, ctx, db| {
-                Ok(if p.only_new {
+                let providers = if p.only_new {
                     db.get_provider_diffs_by_diff_id(p.get_diff_id(ctx, db)?)?
                         .into_iter()
-                        .filter(|it| p.filter_allow(it))
+                        .filter(|it| !it.in_diff())
                         .map(|it| it.provider)
                         .collect::<Vec<Provider>>()
                 } else {
                     db.get_providers()?
-                })
+                };
+                Ok(p.filter_ipc(providers))
             },
             Some(&|prov: &Provider| {
                 #[derive(serde::Serialize)]
@@ -265,27 +261,12 @@ impl CommonParams {
 
 #[derive(Args)]
 struct ServiceParams {
-    /// Only show entries that don't exist in the given diff source (or emulator by default)
-    #[arg(short = 'n', long)]
-    only_new: bool,
-
-    #[arg(short = 'S', long, value_parser = DiffSourceValueParser)]
-    diff_source: Option<DiffSource>,
-
-    /// Only show public services
-    #[arg(short = 'P', long)]
-    only_public: bool,
-
-    /// Only show enabled services
-    #[arg(short = 'E', long)]
-    only_enabled: bool,
+    #[command(flatten)]
+    common: CommonParams,
 
     /// Only show Services that return a binder
     #[arg(short = 'B', long)]
     only_returns_binder: bool,
-
-    #[arg(short = 'j', long = "json")]
-    json: bool,
 }
 
 #[derive(Subcommand)]
@@ -367,33 +348,22 @@ impl List {
 impl ServiceParams {
     fn list_services(self) -> anyhow::Result<()> {
         let only_returns_binder = self.only_returns_binder;
-        let c = CommonParams {
-            only_public: self.only_public,
-            only_enabled: self.only_enabled,
-            json: self.json,
-            only_new: self.only_new,
-            diff_source: self.diff_source.clone(),
-        };
-        c.do_list(
+        self.common.do_list(
             |p, ctx, db| {
                 let services = if p.only_new {
-                    db.get_service_diffs_by_diff_id(c.get_diff_id(ctx, db)?)?
+                    db.get_service_diffs_by_diff_id(p.get_diff_id(ctx, db)?)?
                         .into_iter()
-                        .filter(|it| c.filter_allow(it))
+                        .filter(|it| !it.in_diff())
                         .map(|it| it.service)
                         .collect::<Vec<Service>>()
                 } else {
                     db.get_services()?
                 };
 
-                if !only_returns_binder {
-                    return Ok(services);
-                }
-                let filtered = services
+                Ok(p.filter_ipc(services)
                     .into_iter()
-                    .filter(|it| it.returns_binder.is_true_or_unknown())
-                    .collect::<Vec<models::Service>>();
-                Ok(filtered)
+                    .filter(|it| !only_returns_binder || it.returns_binder.is_true_or_unknown())
+                    .collect())
             },
             None::<&dyn for<'a> Fn(&'a Service) -> String>,
         )
