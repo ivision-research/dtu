@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use dtu_proc_macro::wraps_base_error;
@@ -527,11 +528,29 @@ impl<'a> DiffTask<'a> {
         T: ApkIPC,
         F: Fn(&T, &DeviceDatabase, i32, bool, bool, bool) -> DiffResult<()>,
     {
-        let mut diff_map: HashMap<ClassName, T> = HashMap::new();
-        diff_map.extend(diff.into_iter().map(|it| (it.get_class_name().clone(), it)));
+        #[derive(Hash, PartialEq, Eq)]
+        struct DiffKey<'a> {
+            class: ClassName,
+            pkg: Cow<'a, str>,
+        }
+        let mut diff_map: HashMap<DiffKey, &T> = HashMap::new();
+
+        for it in diff.iter() {
+            diff_map.insert(
+                DiffKey {
+                    class: it.get_class_name(),
+                    pkg: it.get_package(),
+                },
+                it,
+            );
+        }
 
         for d in device.iter() {
-            self.do_apk_ipc_diff(d, diff_map.get(&d.get_class_name()), &insert)?
+            let key = DiffKey {
+                class: d.get_class_name(),
+                pkg: d.get_package(),
+            };
+            self.do_apk_ipc_diff(d, diff_map.get(&key).copied(), &insert)?
         }
 
         Ok(())
