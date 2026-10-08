@@ -1,4 +1,4 @@
-use std::fs::OpenOptions;
+use std::fs::{create_dir_all, OpenOptions};
 use std::path::PathBuf;
 
 use anyhow::Context as AnyhowContext;
@@ -287,6 +287,17 @@ impl Cli {
             Some(v) => v,
             None => ctx.get_output_dir_child("log")?,
         };
+
+        if let Some(parent) = path.parent() {
+            if !parent.exists() {
+                create_dir_all(parent).with_context(|| {
+                    format!(
+                        "creating the log file parent directory: {}",
+                        parent.display()
+                    )
+                })?;
+            }
+        }
 
         let file = OpenOptions::new()
             .append(true)
