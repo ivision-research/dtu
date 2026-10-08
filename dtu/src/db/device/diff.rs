@@ -618,10 +618,14 @@ impl<'a> DiffTask<'a> {
             count: device.len(),
         });
         let mut diff = HashMap::new();
-        diff.extend(diff_lst.into_iter().map(|it| (it.name.clone(), it)));
-
+        for prov in diff_lst.iter() {
+            for auth in prov.get_authorities() {
+                diff.insert(auth, prov);
+            }
+        }
         for d in device.iter() {
-            self.do_provider_diff(d, diff.get(&d.name))?
+            let matched = d.get_authorities().find_map(|it| diff.get(it).copied());
+            self.do_provider_diff(d, matched)?
         }
         self.trigger(Evt::ProvidersEnded);
 
