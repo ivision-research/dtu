@@ -59,12 +59,18 @@ mockall = { workspace = true }
 rstest = { workspace = true }
 rand = { workspace = true }
 env_logger = { workspace = true }
-dtu = { path = ".", features = ["graph", "sql", "filestore", "app", "app-server", "decompile", "setup" ] }
+dtu = { path = ".", features = ["graph", "sql", "filestore", "app", "app-server", "decompile", "setup", "analysis"] }
 
 [features]
-default = ["graph", "sql"]
+default = ["graph", "sql", "analysis"]
 
 sql = ["reexport_diesel", "dep:diesel", "dep:diesel_migrations"]
+
+# Build with analysis features
+analysis = []
+
+# Build with taint analysis
+taint = ["analysis"]
 
 # Build sqlite instead of using the system version. This could be helpful if
 # the system version doesn't include featues we depend on.

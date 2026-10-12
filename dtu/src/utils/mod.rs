@@ -126,6 +126,7 @@ pub(crate) fn unreplace_char(input: &str, target: char, replacement: char) -> St
     replaced
 }
 
+#[allow(unused)]
 pub(crate) fn unix_now() -> crate::Result<i64> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)

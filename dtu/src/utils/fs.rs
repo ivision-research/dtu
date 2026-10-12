@@ -1,4 +1,3 @@
-use crate::db::graph::{MethodSpec, FRAMEWORK_SOURCE};
 use crate::utils::{ClassName, DevicePath};
 use crate::Context;
 use std::borrow::Cow;
@@ -190,11 +189,12 @@ pub fn try_proj_home_relative(ctx: &dyn Context, path: &Path) -> PathBuf {
     proj_home_relative(ctx, path).unwrap_or_else(|| PathBuf::from(path))
 }
 
+#[cfg(feature = "graph")]
 pub fn find_smali_file_for_method_spec(
     ctx: &dyn Context,
-    method_spec: &MethodSpec,
+    method_spec: &crate::db::graph::MethodSpec,
 ) -> Option<PathBuf> {
-    let apk = if method_spec.source == FRAMEWORK_SOURCE {
+    let apk = if method_spec.source == crate::db::graph::FRAMEWORK_SOURCE {
         None
     } else {
         Some(DevicePath::from_squashed(&method_spec.source))

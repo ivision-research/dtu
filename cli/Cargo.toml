@@ -9,7 +9,7 @@ path = "src/main.rs"
 
 
 [dependencies]
-dtu = { path = "../dtu", features = ["filestore", "app", "setup", "reexport_askama"] }
+dtu = { path = "../dtu", features = ["filestore", "app", "setup", "reexport_askama", "taint"] }
 ratatui = "0.30"
 crossterm = "0.29"
 unicode-width = "0.2"

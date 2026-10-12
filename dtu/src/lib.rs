@@ -1,6 +1,7 @@
 pub mod manifest;
 pub use manifest::Manifest;
 
+#[cfg(feature = "analysis")]
 pub mod analysis;
 
 pub mod devicefs;
