@@ -1,11 +1,10 @@
-#![allow(dead_code)]
 use anyhow::bail;
 use std::path::PathBuf;
 
 use clap::Parser;
 
 use dtu::decompile::decompile_file;
-use dtu::devicefs::get_project_devicefs_helper;
+use dtu::devicefs::NoDeviceAccessHelper;
 use dtu::utils::fs::path_must_str;
 use dtu::DefaultContext;
 
@@ -70,7 +69,7 @@ fn main() -> anyhow::Result<()> {
     if let Some(api) = cli.api {
         ctx.set_target_api_level(api);
     }
-    let dfs = get_project_devicefs_helper(&ctx)?;
+    let dfs = NoDeviceAccessHelper;
     let success = decompile_file(&ctx, &dfs, path_must_str(&cli.file), &cli.out)?;
     if !success {
         bail!("decompilation failed, but there was no error");

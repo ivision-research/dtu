@@ -59,6 +59,26 @@ pub trait DeviceFSHelper: Send + Sync {
     }
 }
 
+/// [DeviceFSHelper] implementation that just errors
+pub struct NoDeviceAccessHelper;
+
+impl DeviceFSHelper for NoDeviceAccessHelper {
+    fn pull(&self, _device: &DevicePath, _local: &str) -> crate::Result<()> {
+        Err(crate::Error::Generic("no device access".into()))
+    }
+
+    fn find(
+        &self,
+        _dir: &str,
+        _ty: FindType,
+        _limits: Option<FindLimits>,
+        _name: Option<FindName>,
+        _on_found: &mut LineCallback,
+    ) -> crate::Result<()> {
+        Err(crate::Error::Generic("no device access".into()))
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum FindType {
     Any,
